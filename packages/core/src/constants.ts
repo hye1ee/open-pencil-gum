@@ -231,10 +231,10 @@ export const AI_PROVIDERS: AIProviderDef[] = [
     name: 'Anthropic',
     keyPlaceholder: 'sk-ant-…',
     keyURL: 'https://console.anthropic.com/settings/keys',
-    defaultModel: 'claude-sonnet-4-6-20260301',
+    defaultModel: 'claude-sonnet-4-6',
     models: [
-      { id: 'claude-sonnet-4-6-20260301', name: 'Claude Sonnet 4.6', tag: 'Best for design' },
-      { id: 'claude-opus-4-6-20260301', name: 'Claude Opus 4.6', tag: 'Smartest' }
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', tag: 'Best for design' },
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', tag: 'Smartest' }
     ]
   },
   {

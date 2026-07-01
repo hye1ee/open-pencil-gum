@@ -34,6 +34,12 @@ function desktopFetch(): typeof fetch | undefined {
   return isTauri() ? tauriFetch : undefined
 }
 
+// Anthropic blocks direct browser calls unless this header is present.
+// Safe here since the key never leaves the client either way (no server proxy).
+const ANTHROPIC_BROWSER_HEADERS = {
+  'anthropic-dangerous-direct-browser-access': 'true'
+}
+
 export function createLanguageModel(config: ModelConfig): LanguageModel {
   const effectiveModelID = resolveLanguageModelID(config)
   const fetch = desktopFetch()
@@ -51,7 +57,11 @@ export function createLanguageModel(config: ModelConfig): LanguageModel {
       return openrouter(effectiveModelID)
     }
     case 'anthropic': {
-      const anthropic = createAnthropic({ apiKey: config.apiKey, fetch })
+      const anthropic = createAnthropic({
+        apiKey: config.apiKey,
+        fetch,
+        headers: ANTHROPIC_BROWSER_HEADERS
+      })
       return anthropic(effectiveModelID)
     }
     case 'openai': {
@@ -70,7 +80,8 @@ export function createLanguageModel(config: ModelConfig): LanguageModel {
       const zai = createAnthropic({
         apiKey: config.apiKey,
         baseURL: 'https://api.z.ai/api/anthropic',
-        fetch
+        fetch,
+        headers: ANTHROPIC_BROWSER_HEADERS
       })
       return zai(effectiveModelID)
     }
@@ -96,7 +107,8 @@ export function createLanguageModel(config: ModelConfig): LanguageModel {
       const custom = createAnthropic({
         apiKey: config.apiKey,
         baseURL: config.customBaseURL,
-        fetch
+        fetch,
+        headers: ANTHROPIC_BROWSER_HEADERS
       })
       return custom(effectiveModelID)
     }
