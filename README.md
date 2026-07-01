@@ -1,305 +1,43 @@
 # OpenPencil
 
-Open-source design editor. Opens `.fig` and `.pen` design files, includes built-in AI, and ships as a programmable toolkit with a headless Vue SDK for building custom editors.
+디자인 파일(`.fig`, `.pen`)을 열고 편집할 수 있는 오픈소스 디자인 에디터. 내장 AI 채팅으로 디자인을 생성/수정할 수 있고, 헤드리스 CLI, MCP 서버, Vue SDK 등 프로그래머블 툴킷으로도 쓸 수 있음.
 
-> **Status:** Active development. Usable today, with some rough edges as features evolve.
+이 프로젝트는 데스크톱 앱(Tauri) 배포 없이 **브라우저 dev server**로만 사용함.
 
-**[Try it online →](https://app.openpencil.dev/demo)** · [Download](https://github.com/open-pencil/open-pencil/releases/latest) · [Documentation](https://openpencil.dev) · [llms.txt](https://openpencil.dev/llms.txt)
+## 설치 및 실행
 
-![OpenPencil](packages/docs/public/screenshot.png)
+### 요구 사항
 
-## Installation
+- Node.js **22+** (18에서는 빌드 도구가 깨짐 — `nvm use 22` 등으로 전환)
+- [Bun](https://bun.sh)
 
-**macOS (Homebrew):**
-
-```sh
-brew install openpencil
-```
-
-Or download from the [releases page](https://github.com/open-pencil/open-pencil/releases/latest), or [use the web app](https://app.openpencil.dev) — no install needed.
-
-## What it does
-
-- **Opens `.fig` and `.pen` files** — read and write native Figma files, open supported Pencil documents from the app or OS file browser, copy & paste nodes between apps
-- **AI builds designs** — describe what you want in chat, 90+ tools create and modify nodes. Connect OpenRouter, Anthropic, OpenAI, Google AI, Z.ai, MiniMax, or compatible endpoints
-- **Fully programmable** — headless CLI, XPath queries, Figma Plugin API via `eval`, MCP server for AI agents, and desktop agent integrations for Claude Code, Codex, and Gemini CLI
-- **Lint, convert, and extract tokens** — inspect documents, lint naming/layout/accessibility, convert between supported formats, analyze colors/typography/spacing/clusters, and extract design tokens
-- **Components and variants** — create reusable components, group variants into component sets, insert local assets as instances, and switch variants from the inspector
-- **Design-to-code export** — export selections as JSX/Tailwind, generate token outputs, and map designs into component-oriented code workflows
-- **Vue SDK for custom editors** — headless components and composables for embedding OpenPencil into other apps or building workflow-specific editing surfaces. [Read the SDK docs →](https://openpencil.dev/programmable/sdk/)
-- **Real-time collaboration** — P2P via WebRTC, no server, no account. Cursors, presence, follow mode
-- **Auto layout & CSS Grid** — flex and grid layout via Yoga WASM, with gap, padding, alignment, track sizing
-- **~7 MB desktop app** — Tauri v2 for macOS, Windows, Linux. Also runs in the browser as a PWA
-
-## CLI
-
-```sh
-npm install -g @open-pencil/cli
-# or: bun add -g @open-pencil/cli
-```
-
-### Inspect design files
-
-Browse node trees, search by name or type, dig into properties — all without opening the editor:
-
-```sh
-openpencil tree design.fig
-openpencil find design.pen --type TEXT
-openpencil node design.fig --id 1:23
-openpencil info design.fig
-```
-
-```
-[0] [page] "Getting started" (0:46566)
-  [0] [section] "" (0:46567)
-    [0] [frame] "Body" (0:46568)
-      [0] [frame] "Introduction" (0:46569)
-        [0] [frame] "Introduction Card" (0:46570)
-          [0] [frame] "Guidance" (0:46571)
-```
-
-### Query with XPath
-
-Use XPath selectors to find nodes by type, attributes, and structure:
-
-```sh
-openpencil query design.fig "//FRAME"                              # All frames
-openpencil query design.fig "//FRAME[@width < 300]"                # Frames under 300px
-openpencil query design.fig "//TEXT[contains(@name, 'Button')]"     # Text with 'Button' in name
-openpencil query design.fig "//*[@cornerRadius > 0]"               # Rounded corners
-openpencil query design.fig "//SECTION//TEXT"                       # Text inside sections
-```
-
-### Export
-
-Render to PNG, JPG, WEBP, SVG, `.fig`, or JSX — or export selections/pages as `.fig` and convert whole documents between supported formats:
-
-```sh
-openpencil export design.fig                           # PNG
-openpencil export design.fig -f jpg -s 2 -q 90        # JPG at 2x, quality 90
-openpencil export design.fig -f fig --page "Page 1"   # Export a page as .fig
-openpencil export design.fig -f jsx --style tailwind   # Tailwind JSX
-openpencil convert design.pen output.fig               # Convert between document formats
-openpencil dom page.html --css styles.css -o page.fig  # HTML/CSS → editable .fig
-```
-
-DOM/CSS input flows through `@open-pencil/dom-css`, so HTML, authored CSS, and Tailwind utility CSS can become editable OpenPencil layers:
-
-```sh
-openpencil dom card.html --css card.css -o card.fig
-openpencil dom card.html --tailwind "flex flex-col gap-3 w-80 p-6 rounded-xl bg-white" -o card.fig
-```
-
-```html
-<div className="flex flex-col gap-4 p-6 bg-white rounded-xl">
-  <p className="text-2xl font-bold text-[#1D1B20]">Card Title</p>
-  <p className="text-sm text-[#49454F]">Description text</p>
-</div>
-```
-
-### Lint design files
-
-Catch naming, layout, structure, and accessibility issues from the terminal:
-
-```sh
-openpencil lint design.fig
-openpencil lint design.pen --preset strict
-openpencil lint design.fig --rule color-contrast
-openpencil lint design.fig --list-rules
-```
-
-### Analyze and extract design tokens
-
-Audit an entire design system from the terminal — find inconsistencies, extract the real palette, and spot components waiting to be extracted:
-
-```sh
-openpencil analyze colors design.fig
-openpencil analyze typography design.fig
-openpencil analyze spacing design.fig
-openpencil analyze clusters design.fig
-openpencil analyze overlaps design.fig
-openpencil variables design.fig
-```
-
-```
-#1d1b20  ██████████████████████████████ 17155×
-#49454f  ██████████████████████████████ 9814×
-#ffffff  ██████████████████████████████ 8620×
-#6750a4  ██████████████████████████████ 3967×
-
-3771× frame "container" (100% match)
-     size: 40×40, structure: Frame > [Frame]
-
-2982× instance "Checkboxes" (100% match)
-     size: 48×48, structure: Instance > [Frame]
-```
-
-### Script with Figma Plugin API
-
-`eval` gives you the full Figma Plugin API. Modify the file, write it back:
-
-```sh
-openpencil eval design.fig -c "figma.currentPage.children.length"
-openpencil eval design.fig -c "figma.currentPage.selection.forEach(n => n.opacity = 0.5)" -w
-```
-
-### Control the running app
-
-When the desktop app is running, omit the file argument — the CLI connects via RPC and operates on the live canvas. Useful for automation scripts, CI pipelines, or AI agents that need to interact with the editor:
-
-```sh
-openpencil tree                               # Inspect the live document
-openpencil export -f png                      # Screenshot the current canvas
-openpencil eval -c "figma.currentPage.name"   # Query the editor
-```
-
-All commands support `--json` for machine-readable output.
-
-## AI & MCP
-
-### Built-in chat
-
-Press <kbd>⌘</kbd><kbd>J</kbd> to open the AI assistant. It has 100+ tools that can create shapes, set fills and strokes, manage auto-layout, work with components and variables, run boolean operations, analyze design tokens, and export assets. Bring your own API key for OpenRouter, Anthropic, OpenAI, Google AI, Z.ai, MiniMax, or compatible endpoints. No backend, no account.
-
-### Coding agents (desktop)
-
-Use Claude Code, Codex, or Gemini CLI directly in the chat panel. The agent connects to the editor's MCP server and uses all 100+ design tools. Requires the desktop app and the agent CLI installed locally.
-
-**Setup (Claude Code):**
-
-1. Install the ACP adapter: `npm install -g @agentclientprotocol/claude-agent-acp`
-2. Add MCP permission to `~/.claude/settings.json`:
-   ```json
-   {
-     "permissions": {
-       "allow": ["mcp__open-pencil__*"]
-     }
-   }
-   ```
-3. Open the desktop app → <kbd>Ctrl</kbd><kbd>J</kbd> → select **Claude Code** from the provider dropdown
-
-### MCP server
-
-Connect Claude Code, Cursor, Windsurf, or any MCP client to inspect, modify, and export design documents headlessly. 100+ tools. [Full docs →](https://openpencil.dev/reference/mcp-tools)
-
-**Stdio** (Claude Code, Cursor, Windsurf):
-
-```sh
-npm install -g @open-pencil/mcp
-claude mcp add --scope user open-pencil -- openpencil-mcp
-```
-
-For other MCP clients:
-
-```json
-{
-  "mcpServers": {
-    "open-pencil": {
-      "command": "openpencil-mcp"
-    }
-  }
-}
-```
-
-**HTTP** (scripts, CI):
-
-```sh
-openpencil-mcp-http   # http://localhost:3100/mcp
-```
-
-**File access:** Set `OPENPENCIL_MCP_ROOT` to scope file operations (`open_file`, `new_document`, export `path` param) to a directory. Defaults to the current working directory.
-
-### AI agent skill
-
-Teach your AI coding agent to use OpenPencil — inspect designs, export assets, analyze tokens, modify .fig files:
-
-```sh
-npx skills add open-pencil/skills@open-pencil
-```
-
-Works with Claude Code, Cursor, Windsurf, Codex, and any agent that supports [skills](https://skills.sh).
-
-For documentation-aware agents, the docs site publishes [llms.txt](https://openpencil.dev/llms.txt), [llms-full.txt](https://openpencil.dev/llms-full.txt), and per-page Markdown files generated from the VitePress docs.
-
-## Collaboration
-
-Share a link to co-edit in real time. No server, no account — peers connect directly via WebRTC.
-
-1. Click the share button in the top-right panel
-2. Share the generated link (`app.openpencil.dev/share/<room-id>`)
-3. Collaborators see your cursor, selection, and edits in real time
-4. Click a peer's avatar to follow their viewport
-
-## Why
-
-Figma is a closed platform that actively fights programmatic access. Their MCP server is read-only. [figma-use](https://github.com/dannote/figma-use) added full read/write automation via CDP — then [Figma 126 killed CDP](https://forum.figma.com/report-a-problem-6/remote-debugging-port-not-working-in-figma-desktop-126-1-2-50858). Your design files are in a proprietary binary format that only their software can fully read. Your workflows break when they decide to ship a point release.
-
-OpenPencil is the alternative: open source (MIT), reads .fig files natively, every operation is scriptable, and your data never leaves your machine.
-
-See the [roadmap](https://openpencil.dev/development/roadmap) for product direction and current Figma compatibility gaps.
-
-## Contributing
-
-### Setup
+### 셋업
 
 ```sh
 bun install
-bun run dev        # Dev server at localhost:1420
-bun run tauri dev  # Desktop app (requires Rust)
+bun run build:packages   # 워크스페이스 패키지(core, scene-graph, pen, fig ...) 빌드
 ```
 
-### Quality gates
+`@open-pencil/core` 같은 워크스페이스 패키지는 `dist/`를 통해서만 import되도록 되어 있어서(`package.json`의 `exports` 필드), `build:packages`를 먼저 돌리지 않으면 `bun run dev` 실행 시 `Cannot find module '@open-pencil/core/...'` 에러가 남. `core` 쪽 소스를 수정했을 때도 재실행 필요.
 
-| Command | Description |
-|---------|-------------|
-| `bun run check` | Lint + typecheck |
-| `bun run test` | E2E visual regression |
-| `bun run test:unit` | Unit tests |
-| `bun run format` | Code formatting |
-
-### Project structure
-
-```
-packages/
-  scene-graph/    @open-pencil/scene-graph — nodes, primitives, hit testing, copy/snap/undo
-  pen/            @open-pencil/pen — Pencil document format helpers
-  kiwi/           @open-pencil/kiwi — Kiwi runtime and low-level .fig container parsing
-  fig/            @open-pencil/fig — focused .fig package entrypoint
-  core/           @open-pencil/core — editor engine, renderer, layout, tools, RPC, document I/O
-  dom-css/        @open-pencil/dom-css — HTML/CSS/Tailwind to editable design documents
-  vue/            @open-pencil/vue — headless Vue SDK
-  cli/            @open-pencil/cli — headless CLI
-  mcp/            @open-pencil/mcp — MCP server (stdio + HTTP)
-  docs/           Documentation site (openpencil.dev)
-src/              Vue app (editor shell, AI, collaboration, document I/O)
-desktop/          Tauri v2 desktop app (Rust + config)
-tests/            E2E, visual, engine, and integration tests
-```
-
-### Tech stack
-
-| Layer | Tech |
-|-------|------|
-| Rendering | Skia (CanvasKit WASM) |
-| Layout | Yoga WASM (flex + grid via [fork](https://github.com/open-pencil/yoga/tree/grid)) |
-| UI | Vue 3, Reka UI, Tailwind CSS 4 |
-| File format | Kiwi binary + Zstd + ZIP |
-| Collaboration | Trystero (WebRTC P2P) + Yjs (CRDT) |
-| Desktop | Tauri v2 |
-| AI/MCP | Multi-provider (Anthropic, OpenAI, Google AI, OpenRouter), MCP SDK, Hono |
-
-### Desktop builds
-
-Requires [Rust](https://rustup.rs/) and platform-specific prerequisites ([Tauri v2 guide](https://v2.tauri.app/start/prerequisites/)).
+### 로컬 실행
 
 ```sh
-bun run tauri build
+bun run dev   # http://localhost:1420
 ```
 
-## Acknowledgments
+### AI 채팅 사용하려면
 
-Thanks to [@sld0Ant](https://github.com/sld0Ant) (Anton Soldatov) for creating and maintaining the [documentation site](https://openpencil.dev).
+앱 실행 후 AI 패널에서 Provider(Anthropic/OpenAI/Google/OpenRouter 등)와 API 키를 직접 입력. 키는 서버로 전송되지 않고 브라우저 `localStorage`에만 저장됨.
 
-## License
+- Anthropic 계열 provider는 브라우저에서 직접 API를 호출하기 때문에 CORS 우회 헤더(`anthropic-dangerous-direct-browser-access`)가 코드에 이미 반영되어 있음 ([model.ts](src/app/ai/chat/model.ts))
 
-MIT
+## 에이전트 작동 방식
+
+내장 AI는 [ai-sdk](https://ai-sdk.dev/) 기반 tool-loop 에이전트(`ToolLoopAgent`)로, 최대 50스텝까지 tool을 반복 호출하며 디자인을 만듦.
+
+- **화면을 이미지로 보지 않음** — 씬 상태를 전부 구조화된 JSON/텍스트로만 주고받음. `export_image`는 시스템 프롬프트에서 명시적으로 금지되어 있고, 대신 `describe`가 노드의 크기/위치/정렬 문제를 텍스트로 요약해줌.
+- **생성은 JSX 문자열로** — `render` tool에 `<Frame w={320} flex="col" gap={16}>...</Frame>` 같은 JSX를 문자열로 넘기면 `sucrase`로 파싱해서 Figma 노드 트리로 렌더링. React JSX와 비슷하지만 태그(`Frame`, `Text`, `Rectangle`...)와 props(`w`, `h`, `flex`, `gap`, `p`, `bg`, `rounded`...)는 디자인 전용 shorthand.
+- **읽기는 별도 tool로** — 앱이 씬 정보를 미리 프롬프트에 넣어주지 않음. 모델이 스스로 `get_selection`/`get_node`/`describe` 같은 read tool을 호출해서 현재 상태를 파악한 뒤 다음 행동을 결정함 (시스템 프롬프트가 "만들고 나면 바로 describe로 검증" 같은 워크플로우를 강제).
+- **Tool 세트는 2단계** — 기본으로는 `CORE_TOOLS`(~21개, 세션의 90%를 커버)만 로드하고, 필요할 때 `EXTENDED_TOOLS`(변수, 벡터 불리언 연산, 분석/코드젠 등 ~70개)까지 확장 ([packages/core/src/tools/registry-core.ts](packages/core/src/tools/registry-core.ts), [registry-extended.ts](packages/core/src/tools/registry-extended.ts)).
+- **Provider는 [ai-sdk](https://ai-sdk.dev/)로 통일** — Anthropic/OpenAI/Google/DeepSeek/OpenRouter/자체 호환 엔드포인트를 동일한 `LanguageModel` 인터페이스로 교체 가능 ([model.ts](src/app/ai/chat/model.ts)). Claude Code/Codex/Gemini CLI 같은 로컬 CLI 에이전트는 API 대신 ACP(Agent Client Protocol)로 별도 연결.
