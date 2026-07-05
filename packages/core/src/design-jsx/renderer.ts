@@ -59,6 +59,27 @@ export interface RenderResult {
   warnings?: string[]
 }
 
+/** Mutable state threaded through the render recursion. */
+interface RenderCtx {
+  completed: number
+  chunkSize?: number
+  onChunk?: () => Promise<void> | void
+}
+
+/**
+ * Called when a node's ENTIRE subtree is finished building (post-order). Every
+ * `chunkSize` completed elements we lay out and repaint, so the user watches the
+ * design get assembled one finished element at a time — real nodes, not opacity.
+ * We only ever paint after a subtree is complete, so a half-populated flex row is
+ * never shown (that was what collapsed `fill`/`grow` children before).
+ */
+async function maybeFlush(graph: SceneGraph, ctx: RenderCtx): Promise<void> {
+  ctx.completed++
+  if (!ctx.chunkSize || !ctx.onChunk || ctx.completed % ctx.chunkSize !== 0) return
+  computeAllLayouts(graph)
+  await ctx.onChunk()
+}
+
 export async function renderTree(
   graph: SceneGraph,
   tree: TreeNode,
@@ -66,11 +87,18 @@ export async function renderTree(
 ): Promise<RenderResult> {
   const parentId = options.parentId ?? graph.getPages()[0].id
 
-  const result = await renderNode(graph, tree, parentId)
+  const ctx: RenderCtx = {
+    completed: 0,
+    chunkSize: options.chunkSize,
+    onChunk: options.onChunk
+  }
+  const result = await renderNode(graph, tree, parentId, ctx)
 
   if (options.x !== undefined) graph.updateNode(result.id, { x: options.x })
   if (options.y !== undefined) graph.updateNode(result.id, { y: options.y })
 
+  // Final layout on the COMPLETE tree — settles any intermediate reflow so the
+  // end state is always correct regardless of the incremental build.
   computeAllLayouts(graph)
 
   return {
@@ -346,9 +374,22 @@ async function renderInstanceNode(
   return instance
 }
 
-async function renderNode(graph: SceneGraph, tree: TreeNode, parentId: string): Promise<SceneNode> {
-  if (tree.type === 'icon') return renderIconNode(graph, tree, parentId)
-  if (tree.type === 'instance') return renderInstanceNode(graph, tree, parentId)
+async function renderNode(
+  graph: SceneGraph,
+  tree: TreeNode,
+  parentId: string,
+  ctx: RenderCtx
+): Promise<SceneNode> {
+  if (tree.type === 'icon') {
+    const iconNode = await renderIconNode(graph, tree, parentId)
+    await maybeFlush(graph, ctx)
+    return iconNode
+  }
+  if (tree.type === 'instance') {
+    const instanceNode = await renderInstanceNode(graph, tree, parentId)
+    await maybeFlush(graph, ctx)
+    return instanceNode
+  }
 
   const nodeType = TYPE_MAP[tree.type]
   if (!nodeType) throw new Error(`Unknown element: <${tree.type}>`)
@@ -374,11 +415,15 @@ async function renderNode(graph: SceneGraph, tree: TreeNode, parentId: string): 
   for (const child of tree.children) {
     if (typeof child === 'string') continue
     if (isTreeNode(child)) {
-      await renderNode(graph, child, node.id)
+      await renderNode(graph, child, node.id, ctx)
     }
   }
 
   if (node.type === 'COMPONENT_SET') inferComponentSetProperties(graph, node.id)
+
+  // Post-order: this element and all its descendants are now built. Reveal it as a
+  // complete unit so a half-populated flex container is never painted.
+  await maybeFlush(graph, ctx)
 
   return node
 }
