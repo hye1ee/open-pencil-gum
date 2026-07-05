@@ -72,6 +72,13 @@ export class FigmaAPI implements NodeProxyHost {
   private _pageProxies = new WeakSet<FigmaNodeProxy>()
   private _renderer: SkiaRenderer | null = null
 
+  /**
+   * Optional progressive-render hook injected by the app. When set, `render`
+   * commits the JSX tree in batches of `size` nodes, awaiting `flush` (repaint +
+   * frame wait) between batches so the design visibly assembles on the canvas.
+   */
+  renderChunk?: { size: number; flush: () => Promise<void> | void }
+
   readonly mixed = MIXED
 
   constructor(graph: SceneGraph) {
