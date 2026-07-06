@@ -21,6 +21,7 @@ public/canvaskit-webgpu/
 
 # Editor directories and files
 .vscode/*
+.claude/*
 !.vscode/extensions.json
 .idea
 .DS_Store

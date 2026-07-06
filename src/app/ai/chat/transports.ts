@@ -7,11 +7,15 @@ import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
-import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
 import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
+
+// Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
+const SYSTEM_PROMPT = import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
 
 type ChatSessionOptions = {
   isConfigured: ComputedRef<boolean>
