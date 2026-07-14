@@ -1,11 +1,13 @@
 import { Chat } from '@ai-sdk/vue'
 import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
-import type { ChatTransport, UIMessage } from 'ai'
+import type { ChatTransport, ModelMessage, UIMessage, UserContent } from 'ai'
 import type { ComputedRef, Ref } from 'vue'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
+import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
+import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
@@ -74,6 +76,8 @@ export function createToolLoopTransport({
   maxOutputTokens
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
+  const intervention = createInterventionTracker(store)
+  const vision = createCanvasVision(store)
   const effectiveModelID = resolveLanguageModelID({ providerID, modelID, customModelID })
   const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
@@ -95,13 +99,37 @@ export function createToolLoopTransport({
     providerOptions: cacheProviderOptions,
     prepareCall: (options) => {
       resetRunSteps(store)
+      intervention.reset()
+      vision.reset()
       return {
         ...options,
         maxOutputTokens,
         providerOptions: cacheProviderOptions
       }
     },
-    onStepFinish: ({ usage }) => {
+    prepareStep: async ({ messages }) => {
+      // Drain any user edits made since the last step (also paces the build).
+      const diff = await intervention.prepareStep()
+      // Cached-by-sceneVersion canvas PNG for overall layout.
+      const image = await vision.imagePart()
+      if (!diff && !image) return undefined
+
+      const content: UserContent = []
+      if (image) {
+        content.push({
+          type: 'text',
+          text: 'Current canvas (overview only — read exact values/ids with the tools):'
+        })
+        content.push(image)
+      }
+      if (diff) content.push({ type: 'text', text: diff })
+
+      const injected: ModelMessage = { role: 'user', content }
+      return { messages: [...messages, injected] }
+    },
+    onStepFinish: (step) => {
+      intervention.onStepFinish()
+      const { usage } = step
       recordStepUsage(
         {
           inputTokens: usage.inputTokens ?? 0,
