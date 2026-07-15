@@ -8,6 +8,7 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
+import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
@@ -101,6 +102,7 @@ export function createToolLoopTransport({
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
+      clearUserMessages(store)
       return {
         ...options,
         maxOutputTokens,
@@ -110,9 +112,10 @@ export function createToolLoopTransport({
     prepareStep: async ({ messages }) => {
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
-      // Cached-by-sceneVersion canvas PNG for overall layout.
+      // Messages the user sent mid-run, and the canvas PNG for overall layout.
+      const userMessages = drainUserMessages(store)
       const image = await vision.imagePart()
-      if (!diff && !image) return undefined
+      if (!diff && !image && userMessages.length === 0) return undefined
 
       const content: UserContent = []
       if (image) {
@@ -123,6 +126,9 @@ export function createToolLoopTransport({
         content.push(image)
       }
       if (diff) content.push({ type: 'text', text: diff })
+      if (userMessages.length > 0) {
+        content.push({ type: 'text', text: buildUserMessageText(userMessages) })
+      }
 
       const injected: ModelMessage = { role: 'user', content }
       return { messages: [...messages, injected] }
