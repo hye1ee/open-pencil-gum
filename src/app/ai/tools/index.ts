@@ -8,6 +8,7 @@ import { CORE_TOOLS, toolsToAI } from '@open-pencil/core/tools'
 import type { StepBudget, ToolDef, ToolLogEntry } from '@open-pencil/core/tools'
 import type { SceneNode } from '@open-pencil/scene-graph'
 
+import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { beginAgentMutation, endAgentMutation, guardMutation } from '@/app/ai/chat/intervention'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { getActiveEditorStore } from '@/app/editor/active-store'
@@ -144,6 +145,7 @@ export function createAITools(store: EditorStore) {
         store.renderer?.aiClearActive()
         if (nodeIds.length > 0) {
           store.aiFlashDone(nodeIds)
+          setAgentCursorTarget(store, nodeIds[0])
         }
       },
       onToolLog: (entry) => {

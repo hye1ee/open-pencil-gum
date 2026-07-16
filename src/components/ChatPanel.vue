@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ScrollAreaRoot, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport } from 'reka-ui'
 import { refAutoReset } from '@vueuse/core'
-import { computed, markRaw, nextTick, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
+import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
 import { clearToolLogEntries, didHitStepLimit } from '@/app/ai/tools'
@@ -90,8 +91,12 @@ watch(
   async () => {
     const nextChat = await ensureChat()
     chat.value = nextChat ? markRaw(nextChat) : null
+    showAgentCursor(getActiveEditorStore())
   }
 )
+
+onMounted(() => showAgentCursor(getActiveEditorStore()))
+onUnmounted(() => hideAgentCursor(getActiveEditorStore()))
 
 async function handleSubmit(text: string) {
   // Mid-run: route to the intervention queue instead of a new chat turn, and

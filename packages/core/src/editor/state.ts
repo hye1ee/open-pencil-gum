@@ -17,6 +17,7 @@ export function createDefaultEditorState(pageId: string): EditorState {
     penCursorX: null,
     penCursorY: null,
     remoteCursors: [],
+    agentCursor: null,
     autoLayoutHover: null,
     documentName: 'Untitled',
     panX: 0,

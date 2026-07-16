@@ -6,6 +6,7 @@ import type { ComputedRef, Ref } from 'vue'
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
+import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
@@ -103,6 +104,7 @@ export function createToolLoopTransport({
       intervention.reset()
       vision.reset()
       clearUserMessages(store)
+      showAgentCursor(store)
       return {
         ...options,
         maxOutputTokens,

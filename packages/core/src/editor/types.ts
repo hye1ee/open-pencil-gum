@@ -66,6 +66,15 @@ export interface EditorState {
     y: number
     selection?: string[]
   }>
+  /** Synthetic cursor for the AI agent, shown while it works (rendered with the
+   * same overlay as remote peers). App-driven; null when the agent is idle. */
+  agentCursor: {
+    name: string
+    color: Color
+    x: number
+    y: number
+    selection?: string[]
+  } | null
   autoLayoutHover: {
     nodeId: string
     kind: 'frame' | 'children' | 'spacing' | 'spacing-value' | 'padding' | 'padding-value'
