@@ -91,7 +91,6 @@ function handleSubmit(e: Event) {
           test-id="chat-input"
           :placeholder="dialogs.describeChange"
           :ui="{ base: 'min-w-0 flex-1 placeholder:text-muted' }"
-          :disabled="isStreaming"
           @paste.stop
           @copy.stop
           @cut.stop
@@ -113,7 +112,7 @@ function handleSubmit(e: Event) {
             <icon-lucide-square class="size-3" />
           </button>
         </Tip>
-        <Tip v-else :label="dialogs.sendMessage">
+        <Tip :label="dialogs.sendMessage">
           <button
             type="submit"
             data-test-id="chat-send-button"
