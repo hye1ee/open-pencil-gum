@@ -7,6 +7,7 @@ import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
@@ -104,6 +105,7 @@ export function createToolLoopTransport({
       intervention.reset()
       vision.reset()
       clearUserMessages(store)
+      resumeTurn()
       showAgentCursor(store)
       return {
         ...options,
@@ -112,6 +114,8 @@ export function createToolLoopTransport({
       }
     },
     prepareStep: async ({ messages }) => {
+      // Block here while the user has paused the turn (grabbed the agent cursor).
+      await awaitTurnResume()
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
       // Messages the user sent mid-run, and the canvas PNG for overall layout.

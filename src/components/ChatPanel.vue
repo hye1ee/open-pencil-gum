@@ -5,6 +5,7 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { setTurnRunning } from '@/app/ai/chat/agent-turn'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
 import { clearToolLogEntries, didHitStepLimit } from '@/app/ai/tools'
@@ -94,6 +95,8 @@ watch(
     showAgentCursor(getActiveEditorStore())
   }
 )
+
+watch(isRunning, setTurnRunning, { immediate: true })
 
 onMounted(() => showAgentCursor(getActiveEditorStore()))
 onUnmounted(() => hideAgentCursor(getActiveEditorStore()))

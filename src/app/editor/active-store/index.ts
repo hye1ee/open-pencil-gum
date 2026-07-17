@@ -23,6 +23,11 @@ export function getActiveEditorStoreOrNull(): EditorStore | null {
 const storeProxy = new Proxy({} as EditorStore, {
   get(_, prop) {
     return Reflect.get(getActiveEditorStore(), prop)
+  },
+  // Forward `in` checks too — without this, feature detection like
+  // `'setViewportSize' in store` hits the empty target and returns false.
+  has(_, prop) {
+    return Reflect.has(getActiveEditorStore(), prop)
   }
 })
 
