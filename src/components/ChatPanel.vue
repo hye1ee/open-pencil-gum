@@ -8,7 +8,7 @@ import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { setTurnRunning } from '@/app/ai/chat/agent-turn'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
-import { clearToolLogEntries, didHitStepLimit } from '@/app/ai/tools'
+import { MAX_AGENT_STEPS, clearToolLogEntries, didHitStepLimit } from '@/app/ai/tools'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
@@ -66,6 +66,15 @@ const isThinking = computed(() => {
   if ('toolCallId' in lastPart && lastPart.state === 'output-error') return true
   return s === 'submitted'
 })
+
+const currentStep = computed(() => {
+  if (messages.value.length === 0) return 0
+  const last = messages.value[messages.value.length - 1]
+  if (last.role !== 'assistant') return 0
+  return last.parts.filter((part) => part.type === 'step-start').length
+})
+
+const showStepBar = computed(() => isRunning.value)
 
 const showContinue = computed(() => {
   if (status.value !== 'ready') return false
@@ -156,6 +165,23 @@ function handleClearChat() {
     <ProviderSetup v-if="!isConfigured" />
 
     <template v-else>
+      <!-- Agent loop progress — pinned above the scrollable messages -->
+      <div
+        v-if="showStepBar"
+        data-test-id="chat-step-bar"
+        class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+      >
+        <span class="shrink-0 text-[10px] tabular-nums text-muted">
+          Step {{ currentStep }} / {{ MAX_AGENT_STEPS }}
+        </span>
+        <div class="h-1 flex-1 overflow-hidden rounded-full bg-hover">
+          <div
+            class="h-full rounded-full bg-accent transition-[width] duration-300"
+            :style="{ width: `${Math.min(100, (currentStep / MAX_AGENT_STEPS) * 100)}%` }"
+          />
+        </div>
+      </div>
+
       <ScrollAreaRoot class="min-h-0 flex-1">
         <ScrollAreaViewport class="h-full px-3 py-3 [&>div]:h-full">
           <!-- Empty state -->
