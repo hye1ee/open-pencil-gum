@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { TooltipProvider } from 'reka-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import ProviderModelSelect from '@/components/chat/ProviderModelSelect.vue'
 import ProviderSettings from '@/components/chat/ProviderSettings/ProviderSettings.vue'
+import { useVoiceAgent } from '@/components/chat/useVoiceAgent'
 import AppInput from '@/components/ui/AppInput.vue'
 import Tip from '@/components/ui/Tip.vue'
 import { useButtonUI } from '@/components/ui/button'
 import { useAIChat } from '@/app/ai/chat/use'
+import { toast } from '@/app/shell/ui'
 import { useI18n } from '@open-pencil/vue'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
@@ -25,6 +27,35 @@ const emit = defineEmits<{
 }>()
 
 const input = ref('')
+
+const {
+  isSupported: voiceSupported,
+  enabled: voiceEnabled,
+  phase: voicePhase,
+  liveText: voiceLiveText,
+  toggle: toggleVoice
+} = useVoiceAgent({
+  onSubmit: (text) => {
+    input.value = ''
+    emit('submit', text)
+  },
+  onError: (message) => toast.error(message)
+})
+
+watch(voiceLiveText, (text) => {
+  if (voicePhase.value === 'listening') input.value = text
+})
+
+// Not in the i18n dialogs dictionary (see useVoiceAgent.ts): a pre-existing
+// @nanostores/i18n + useStore() type-inference issue makes newly added
+// `dialogs` keys fail vue-tsc (property "not found" despite being present in
+// the printed type) — reproducible with any new key, unrelated to this
+// feature. Plain strings here until that's root-caused.
+const voiceTooltip = computed(() => {
+  if (!voiceEnabled.value) return 'Enable voice mode — say "agent" to start dictating'
+  if (voicePhase.value === 'listening') return 'Listening… pauses for 4s auto-send'
+  return 'Disable voice mode'
+})
 
 const isStreaming = computed(() => status === 'streaming' || status === 'submitted')
 const isACPProvider = computed(() => providerID.value.startsWith('acp:'))
@@ -95,6 +126,23 @@ function handleSubmit(e: Event) {
           @copy.stop
           @cut.stop
         />
+        <Tip v-if="voiceSupported" :label="voiceTooltip">
+          <button
+            type="button"
+            data-test-id="chat-voice-agent-button"
+            :class="
+              useButtonUI({
+                tone: voiceEnabled ? 'accent' : 'ghost',
+                shape: 'rounded',
+                size: 'sm',
+                ui: { base: 'shrink-0 border border-border px-2 py-1.5' }
+              }).base
+            "
+            @click="toggleVoice"
+          >
+            <icon-lucide-mic class="size-3" :class="{ 'animate-pulse': voicePhase === 'listening' }" />
+          </button>
+        </Tip>
         <Tip v-if="isStreaming" :label="dialogs.stopGenerating">
           <button
             type="button"
