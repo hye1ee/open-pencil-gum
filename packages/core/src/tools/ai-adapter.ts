@@ -48,10 +48,16 @@ export interface StepBudget {
   max: number
 }
 
-export interface AIAdapterOptions {
+export interface AIAdapterOptions<TBefore = unknown> {
   getFigma: () => FigmaAPI
-  onBeforeExecute?: (def: ToolDef) => void
-  onAfterExecute?: (def: ToolDef) => Promise<void> | void
+  /**
+   * Called before a tool executes. Whatever it returns is threaded through
+   * (per-call, not shared) to the matching `onAfterExecute` for THIS
+   * invocation — safe even if multiple tool calls run concurrently in the
+   * same step. Do not stash the result in a variable outside this callback.
+   */
+  onBeforeExecute?: (def: ToolDef) => TBefore
+  onAfterExecute?: (def: ToolDef, before: TBefore) => Promise<void> | void
   onFlashNodes?: (nodeIds: string[]) => void
   onToolLog?: (entry: ToolLogEntry) => void
   getStepBudget?: () => StepBudget
@@ -102,8 +108,8 @@ function captureNodeSnapshot(
   return Object.fromEntries(Object.entries(structuredClone(raw)))
 }
 
-function emitToolLog(
-  options: AIAdapterOptions,
+function emitToolLog<TBefore>(
+  options: AIAdapterOptions<TBefore>,
   def: ToolDef,
   args: Record<string, unknown>,
   startTime: number,
@@ -138,9 +144,9 @@ function emitToolLog(
   })
 }
 
-export function toolsToAI(
+export function toolsToAI<TBefore = unknown>(
   tools: ToolDef[],
-  options: AIAdapterOptions,
+  options: AIAdapterOptions<TBefore>,
   deps: {
     v: typeof valibot
     valibotSchema: typeof createValibotSchema
@@ -165,7 +171,7 @@ export function toolsToAI(
         const nodeBefore =
           def.mutates && options.onToolLog ? captureNodeSnapshot(figma, args) : undefined
 
-        options.onBeforeExecute?.(def)
+        const before = options.onBeforeExecute?.(def) as TBefore
         try {
           let execResult = await def.execute(options.getFigma(), args)
           if (def.mutates && options.onFlashNodes) {
@@ -182,7 +188,7 @@ export function toolsToAI(
           emitToolLog(options, def, args, startTime, figma, nodeBefore, null, errorMsg)
           return { error: errorMsg }
         } finally {
-          await options.onAfterExecute?.(def)
+          await options.onAfterExecute?.(def, before)
         }
       }
     }

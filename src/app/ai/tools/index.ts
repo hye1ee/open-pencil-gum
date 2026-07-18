@@ -85,7 +85,6 @@ export function clearToolLogEntries(store?: EditorStore): void {
 }
 
 export function createAITools(store: EditorStore) {
-  let beforeSnapshot: Map<string, SceneNode> | null = null
   const runState = getRunState(store)
 
   // Drop viewport_zoom_to_fit — a cosmetic view tool the agent wastes a step on;
@@ -106,17 +105,19 @@ export function createAITools(store: EditorStore) {
       : def
   )
 
-  return toolsToAI(
+  return toolsToAI<Map<string, SceneNode> | undefined>(
     guardedTools,
     {
       getFigma: () => makeFigmaFromStore(store),
+      // Returned value is threaded per-call to the matching onAfterExecute below —
+      // NOT a shared variable — so concurrent/parallel tool calls in the same step
+      // can't clobber each other's snapshot (see ai-adapter.ts AIAdapterOptions).
       onBeforeExecute: (def) => {
-        if (def.mutates) {
-          beforeSnapshot = store.snapshotPage()
-          beginAgentMutation(store)
-        }
+        if (!def.mutates) return undefined
+        beginAgentMutation(store)
+        return store.snapshotPage()
       },
-      onAfterExecute: async (def) => {
+      onAfterExecute: async (def, beforeSnapshot) => {
         if (!def.mutates) return
         try {
           const pageId = store.state.currentPageId
@@ -132,7 +133,6 @@ export function createAITools(store: EditorStore) {
               forward: () => store.restorePageFromSnapshot(after),
               inverse: () => store.restorePageFromSnapshot(before)
             })
-            beforeSnapshot = null
           }
         } finally {
           // Always release the flag so user edits are attributed correctly,

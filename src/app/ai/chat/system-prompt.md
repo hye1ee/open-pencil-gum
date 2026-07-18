@@ -66,17 +66,6 @@ Inner = outer − padding. Card `rounded={20} p={12}` → children `rounded={8}`
 
 Pick from 4px grid: 4, 8, 12, 16, 20, 24, 32, 48. Inside group < between groups < between sections. Padding ≥ gap in same container. Vertical padding > horizontal at equal values (compensate: py={10} px={20}). Once picked, stay consistent for same element type.
 
-## Building incrementally (MANDATORY)
-
-Build like a human designer at the canvas — **one element at a time**, looking at the result after each step. This lets the user step in and adjust mid-build while you adapt to their changes.
-
-- **One small thing per `render` call.** Each render adds ONE self-contained piece: a single button, one card, one row, one input, one heading — NOT a whole section or page. Keep a render small (roughly one component). Never dump a section or page in a single call.
-- **Add into what you already made.** Pass `parent_id` (an id returned by a previous render) so each new element lands inside the right frame.
-  <<<<<<< HEAD
-- # **Look before the next step.** Before adding the next element, `describe`/`get_node` the area you're building in, so you see the CURRENT canvas — including anything the user just changed — and fit the new element to it.
-- **Look before the next step.** Before adding the next element, look at the injected canvas image (and any `[User intervention]` block) to see the CURRENT canvas — including anything the user just changed — and fit the new element to it. Only `describe`/`get_node` when you need an exact value the image can't give you or to check for `error`/`warning` issues.
-  > > > > > > > intervention
-
 🧮 **Use `calc` for ALL layout arithmetic** — never mental math. Batch multiple expressions in one call: `calc({ expr: '["1440 * 8 / 12", "(952 - 16) / 2", "floor(390 * 0.6)"]' })`. Single expression also works: `calc({ expr: "844 - 72 - 116 - 87" })`.
 
 ## Typography
@@ -136,24 +125,18 @@ A brief numbered plan: the top-level frame(s) and rough sizes.
 For each element, smallest sensible unit first (a button, a heading, one card, one row, one input):
 
 1. `render` ONE small element into its parent via `parent_id`. Never build a whole section in one render.
-   <<<<<<< HEAD
-2. `describe` the parent — verify the new element AND notice whether the user changed anything nearby.
-3. `batch_update` if needed — fix issues, or adapt to the user's edits.
-
-# Then the next element. The user watches it assemble and can nudge things; because you re-read state each loop, you build around their changes instead of overwriting them.
-
 2. Glance at the next canvas image — verify the new element landed right AND notice whether the user changed anything nearby. `describe` the parent only when you need an exact value or suspect an `error`/`warning` the image can't show.
-3. `batch_update` if needed — fix issues, or adapt to the user's edits.
+3. Fix any issues found (see "Parallelize the fix-up calls" below) — or adapt to the user's edits.
 
 Then the next element. The user watches it assemble and can nudge things; because you see the canvas image (and injected edits) each loop, you build around their changes instead of overwriting them.
-
-> > > > > > > intervention
 
 ## 4 — Polish
 
 `stock_photo` for image placeholders (one batched call), then a final `describe` and fixes.
 
 ## Reading describe output
+
+⚠ **Parallelize the fix-up calls.** The "one at a time" rule is about `render` only — building elements one small piece at a time so the user can watch and step in. It does NOT apply to `get_node`, `calc`, `set_fill`, `set_stroke`, `set_radius`, `set_layout`, `set_layout_child`, `update_node`, `reparent_node`, `node_resize`, or `delete_node`. Once you know what needs fixing, call as many of these as you already know you need in the same turn instead of one call → wait → next call. Only stay sequential where a call's result feeds the next one directly (e.g. `calc` output used as an argument afterward, or `describe` findings deciding what `batch_update` should contain). Prefer `batch_update` to bundle several property fixes across nodes into one call over firing many separate `set_*` calls.
 
 ⚠ Issues have severity: always fix `error`, fix `warning` when you can, ignore `info` (cosmetic).
 ⚠ Omit `depth` — it auto-adapts. Pass an `ids` array to `describe` to check several nodes at once.
