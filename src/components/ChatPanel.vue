@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ScrollAreaRoot, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport } from 'reka-ui'
 import { refAutoReset } from '@vueuse/core'
-import { computed, markRaw, nextTick, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
+import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { setTurnRunning } from '@/app/ai/chat/agent-turn'
+import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
 import { clearToolLogEntries, didHitStepLimit } from '@/app/ai/tools'
+import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
@@ -36,6 +40,18 @@ const acpLogCopied = refAutoReset(false, 1500)
 
 const messages = computed(() => chat.value?.messages ?? [])
 const status = computed(() => chat.value?.status ?? 'ready')
+const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
+
+// Messages the user typed while a run was in progress. They're injected into the
+// running loop (not the persisted history), so we echo them here optimistically.
+const queuedBubbles = ref<string[]>([])
+const queuedMessages = computed<UIMessage[]>(() =>
+  queuedBubbles.value.map((text, i) => ({
+    id: `queued-${i}`,
+    role: 'user',
+    parts: [{ type: 'text', text }]
+  }))
+)
 const isThinking = computed(() => {
   const s = status.value
   if (s !== 'submitted' && s !== 'streaming') return false
@@ -76,11 +92,26 @@ watch(
   async () => {
     const nextChat = await ensureChat()
     chat.value = nextChat ? markRaw(nextChat) : null
+    showAgentCursor(getActiveEditorStore())
   }
 )
 
+watch(isRunning, setTurnRunning, { immediate: true })
+
+onMounted(() => showAgentCursor(getActiveEditorStore()))
+onUnmounted(() => hideAgentCursor(getActiveEditorStore()))
+
 async function handleSubmit(text: string) {
-  if (status.value === 'streaming' || status.value === 'submitted') return
+  // Mid-run: route to the intervention queue instead of a new chat turn, and
+  // echo the bubble so the user sees what they sent. The agent picks it up at
+  // its next step boundary and adapts its remaining tool calls.
+  if (isRunning.value) {
+    enqueueUserMessage(getActiveEditorStore(), text)
+    queuedBubbles.value = [...queuedBubbles.value, text]
+    return
+  }
+
+  queuedBubbles.value = []
   try {
     const c = await ensureChat()
     if (c) chat.value = markRaw(c)
@@ -116,6 +147,7 @@ function handleClearChat() {
   resetChat()
   clearToolLogEntries()
   clearAcpDebugLog()
+  queuedBubbles.value = []
 }
 </script>
 
@@ -139,6 +171,9 @@ function handleClearChat() {
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
             <ChatMessage v-for="msg in messages" :key="msg.id" :message="msg" />
+
+            <!-- Mid-run messages the user queued while the agent is working -->
+            <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />
 
             <!-- Thinking indicator: shown when AI is working but no visible activity -->
             <div v-if="isThinking" data-test-id="chat-typing-indicator" class="flex gap-2">

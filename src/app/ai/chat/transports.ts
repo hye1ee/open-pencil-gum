@@ -1,17 +1,26 @@
 import { Chat } from '@ai-sdk/vue'
 import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
-import type { ChatTransport, UIMessage } from 'ai'
+import type { ChatTransport, ModelMessage, UIMessage, UserContent } from 'ai'
 import type { ComputedRef, Ref } from 'vue'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
+import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
+import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
+import { createInterventionTracker } from '@/app/ai/chat/intervention'
+import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
-import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
 import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
+
+// Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
+const SYSTEM_PROMPT = import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
 
 type ChatSessionOptions = {
   isConfigured: ComputedRef<boolean>
@@ -70,6 +79,8 @@ export function createToolLoopTransport({
   maxOutputTokens
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
+  const intervention = createInterventionTracker(store)
+  const vision = createCanvasVision(store)
   const effectiveModelID = resolveLanguageModelID({ providerID, modelID, customModelID })
   const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
@@ -91,13 +102,46 @@ export function createToolLoopTransport({
     providerOptions: cacheProviderOptions,
     prepareCall: (options) => {
       resetRunSteps(store)
+      intervention.reset()
+      vision.reset()
+      clearUserMessages(store)
+      resumeTurn()
+      showAgentCursor(store)
       return {
         ...options,
         maxOutputTokens,
         providerOptions: cacheProviderOptions
       }
     },
-    onStepFinish: ({ usage }) => {
+    prepareStep: async ({ messages }) => {
+      // Block here while the user has paused the turn (grabbed the agent cursor).
+      await awaitTurnResume()
+      // Drain any user edits made since the last step (also paces the build).
+      const diff = await intervention.prepareStep()
+      // Messages the user sent mid-run, and the canvas PNG for overall layout.
+      const userMessages = drainUserMessages(store)
+      const image = await vision.imagePart()
+      if (!diff && !image && userMessages.length === 0) return undefined
+
+      const content: UserContent = []
+      if (image) {
+        content.push({
+          type: 'text',
+          text: 'Current canvas (overview only — read exact values/ids with the tools):'
+        })
+        content.push(image)
+      }
+      if (diff) content.push({ type: 'text', text: diff })
+      if (userMessages.length > 0) {
+        content.push({ type: 'text', text: buildUserMessageText(userMessages) })
+      }
+
+      const injected: ModelMessage = { role: 'user', content }
+      return { messages: [...messages, injected] }
+    },
+    onStepFinish: (step) => {
+      intervention.onStepFinish()
+      const { usage } = step
       recordStepUsage(
         {
           inputTokens: usage.inputTokens ?? 0,

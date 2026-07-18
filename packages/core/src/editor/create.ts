@@ -258,6 +258,7 @@ export function createEditor(options?: EditorOptions) {
 
     // Viewport
     ...viewport,
+    getViewportSize: _getViewportSize,
 
     // Undo — bridge functions that need cross-module refs
     ...undoBridge,
