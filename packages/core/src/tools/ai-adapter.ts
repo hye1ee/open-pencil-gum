@@ -55,19 +55,38 @@ export interface AIAdapterOptions {
   onFlashNodes?: (nodeIds: string[]) => void
   onToolLog?: (entry: ToolLogEntry) => void
   getStepBudget?: () => StepBudget
+  /** True when this exact tool+args pair has already run in this session. */
+  isRepeatCall?: (tool: string, args: Record<string, unknown>) => boolean
 }
 
 const STEP_WARNING_THRESHOLD = 5
 
-function appendStepWarning(result: unknown, budget: StepBudget): unknown {
-  const remaining = budget.max - budget.current
-  if (remaining > STEP_WARNING_THRESHOLD) return result
-  const warning = `⚠ ${remaining} steps remaining out of ${budget.max}. Wrap up: finish critical fixes, skip polish. User can send "continue" for more steps.`
+function withWarning(result: unknown, warning: string): unknown {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
     return { ...result, _warning: warning }
   }
   return { result, _warning: warning }
 }
+
+function appendStepWarning(result: unknown, budget: StepBudget): unknown {
+  const remaining = budget.max - budget.current
+  if (remaining > STEP_WARNING_THRESHOLD) return result
+  return withWarning(
+    result,
+    `⚠ ${remaining} steps remaining out of ${budget.max}. Wrap up: finish critical fixes, skip polish. User can send "continue" for more steps.`
+  )
+}
+
+/**
+ * Flag an identical call the model has already made. The result is unchanged —
+ * this only tells the model it is repeating itself, because nothing else does. A
+ * measured run called `eval` ten times to read the same node positions, six of
+ * them byte-identical, and every one came back looking like fresh information.
+ */
+const REPEAT_WARNING =
+  '⚠ You already called this tool with exactly these arguments and got this same result. ' +
+  'It is still in your context — scroll back and use it instead of calling again. ' +
+  'If you are stuck, do something different rather than re-reading.'
 
 function extractIdsFromArray(arr: unknown[]): string[] {
   const ids: string[] = []
@@ -164,6 +183,8 @@ export function toolsToAI(
         const figma = options.getFigma()
         const nodeBefore =
           def.mutates && options.onToolLog ? captureNodeSnapshot(figma, args) : undefined
+        // Checked before the call is logged, or it would always match itself.
+        const isRepeat = options.isRepeatCall?.(def.name, args) ?? false
 
         options.onBeforeExecute?.(def)
         try {
@@ -173,6 +194,7 @@ export function toolsToAI(
             if (ids.length > 0) options.onFlashNodes(ids)
           }
           emitToolLog(options, def, args, startTime, figma, nodeBefore, execResult)
+          if (isRepeat) execResult = withWarning(execResult, REPEAT_WARNING)
           if (options.getStepBudget) {
             execResult = appendStepWarning(execResult, options.getStepBudget())
           }

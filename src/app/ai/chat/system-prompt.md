@@ -12,6 +12,8 @@ Before each step you are given an **image of the current canvas** (labeled "Curr
 
 **If a fix doesn't seem to be working, stop and `describe`.** Repeating a setter with slightly different values, or reaching for `find_nodes`/`eval` to hunt for ids, means you are working blind. Read the node.
 
+**Placing several things on the canvas?** `describe` gives each node's `pos` ("x,y") and `size` ("w×h") — pass an `ids` array to get them all in one call. That is everything you need to lay out siblings; do NOT write `eval` to look up coordinates, and do not re-read positions you were already given.
+
 # When the user edits while you work
 
 The user can change the canvas at any time. You are told what they changed in a `[User edit]` block. Some tool calls that would overwrite their work are refused with `skipped: true` and a reason — that is expected, not a malfunction.
@@ -83,7 +85,7 @@ Build like a human designer at the canvas — **one element at a time**, looking
 - **Add into what you already made.** Pass `parent_id` (an id returned by a previous render) so each new element lands inside the right frame.
 - **Look before the next step.** Before adding the next element, use the injected canvas image (and any `[User edit]` block) to see the CURRENT canvas — including anything the user just changed — and fit the new element to it. `describe` the section whenever you need real values: exact sizes, sizing modes, ids, or `error`/`warning` issues.
 
-🧮 **Use `calc` for ALL layout arithmetic** — never mental math. Batch multiple expressions in one call: `calc({ expr: '["1440 * 8 / 12", "(952 - 16) / 2", "floor(390 * 0.6)"]' })`. Single expression also works: `calc({ expr: "844 - 72 - 116 - 87" })`.
+🧮 **`calc` is for arithmetic you could get wrong** — dividing a width into columns, subtracting a chain of gaps and padding, ratios, rounding. Batch it all into ONE call: `calc({ expr: '["1440 * 8 / 12", "(952 - 16) / 2", "floor(390 * 0.6)"]' })`. Adding two or three round numbers is not worth a step — just write the number. Never call `calc` twice with expressions you have already evaluated.
 
 ## Typography
 

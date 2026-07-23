@@ -175,7 +175,15 @@ export function createAITools(store: EditorStore) {
       getStepBudget: (): StepBudget => ({
         current: runState.currentSteps,
         max: MAX_AGENT_STEPS
-      })
+      }),
+      // The tool log spans the whole chat, which is the same window the model's
+      // transcript spans — so a match really does mean it already has the result.
+      isRepeatCall: (toolName, args) => {
+        const key = JSON.stringify(args)
+        return runState.toolLog.some(
+          (entry) => entry.tool === toolName && !entry.error && JSON.stringify(entry.args) === key
+        )
+      }
     },
     { v, valibotSchema, tool }
   )

@@ -112,6 +112,34 @@ function buildStepContent(args: {
   return content
 }
 
+/**
+ * Put Anthropic's cache breakpoint at the end of the stable transcript, just
+ * before the block we inject for this step.
+ *
+ * The provider only reads `cacheControl` off a message or a message part
+ * (`@ai-sdk/anthropic` `convertToAnthropicMessages`) — a call-level
+ * `providerOptions` never reaches it. And everything before a breakpoint is what
+ * gets cached, so one mark here covers the system prompt, the tool schemas and
+ * the whole conversation so far.
+ *
+ * It has to go *before* the injected message: that block carries a fresh canvas
+ * image and the latest user edits, so it differs every step and is dropped from
+ * the next step's list entirely. Marking the end of the list instead cached a
+ * prefix that could never recur — a measured run spent 924,613 input tokens with
+ * a 0% hit rate. The mark moves forward each step, writing a longer entry and
+ * reading the previous one.
+ */
+function withCacheBreakpoint(
+  messages: readonly ModelMessage[],
+  cacheOptions: ModelMessage['providerOptions']
+): ModelMessage[] {
+  const history = [...messages]
+  const last = history.at(-1)
+  if (!last || !cacheOptions) return history
+  history[history.length - 1] = { ...last, providerOptions: cacheOptions }
+  return history
+}
+
 export async function createACPTransport(providerID: AIProviderID) {
   const agentId = providerID.replace('acp:', '') as ACPAgentID
   const agentDef = ACP_AGENTS.find((a) => a.id === agentId)
@@ -211,11 +239,12 @@ export function createToolLoopTransport({
         ].filter(Boolean)
       )
 
+      const history = withCacheBreakpoint(messages, cacheProviderOptions)
       const content = buildStepContent({ plan, image, diff, userMessages })
-      if (content.length === 0) return undefined
+      if (content.length === 0) return { messages: history }
 
       const injected: ModelMessage = { role: 'user', content }
-      return { messages: [...messages, injected] }
+      return { messages: [...history, injected] }
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()

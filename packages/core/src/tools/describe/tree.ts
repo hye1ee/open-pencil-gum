@@ -66,6 +66,13 @@ export function describeOneNode(
     name: raw.name,
     type: raw.type,
     role,
+    // Position of the node itself, in its parent's coordinates. Only on the root
+    // of a describe, not on every child — children of an auto-layout frame are
+    // positioned for you, and repeating x,y down the tree just bloats the output.
+    // Without it the only way to find out where a frame sits was `eval`, and a
+    // measured run laying several cards out side by side called `eval` ten times,
+    // six of them byte-identical, because describe could not answer "where is it".
+    pos: `${Math.round(raw.x)},${Math.round(raw.y)}`,
     size: `${raw.width}×${raw.height}`,
     visual
   }
