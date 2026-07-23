@@ -11,6 +11,7 @@ import type { SceneNode } from '@open-pencil/scene-graph'
 import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logBlocked, logToolCall, logToolError, logToolResult } from '@/app/ai/chat/agent-log'
 import { beginAgentMutation, endAgentMutation, guardMutation } from '@/app/ai/chat/intervention'
+import { createAttentionTool } from '@/app/ai/tools/attention'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -124,7 +125,9 @@ export function createAITools(store: EditorStore) {
       : def
   )
 
-  return toolsToAI(
+  // set_attention is merged in below rather than living in CORE_TOOLS: it writes
+  // app UI state, which a ToolDef's FigmaAPI can't reach.
+  const coreTools = toolsToAI(
     guardedTools,
     {
       getFigma: () => makeFigmaFromStore(store),
@@ -187,6 +190,8 @@ export function createAITools(store: EditorStore) {
     },
     { v, valibotSchema, tool }
   )
+
+  return { ...coreTools, set_attention: createAttentionTool(store) }
 }
 
 export type AITools = ReturnType<typeof createAITools>

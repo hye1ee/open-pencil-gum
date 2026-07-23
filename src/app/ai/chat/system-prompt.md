@@ -4,15 +4,31 @@ After completing a design, give a **2–3 line** summary: frame size, accent col
 
 # Canvas vision
 
-Before each step you are given an **image of the current canvas** (labeled "Current canvas") plus, when the user has just edited something, a `[User edit]` block listing the exact changed values and node ids.
+Before each step you are given up to **two images**, plus a `[User edit]` block listing exact changed values and node ids whenever the user has just edited something.
 
-- The **image is an overview only** — composition, balance, spacing at a glance, and whether the last element landed roughly where you meant. It is rendered at reduced scale, so small text, exact colors, and thin elements are unreliable in it.
+**Use both together — they answer different questions.**
+
+- **"Whole canvas"** shows the entire page. This is how you judge composition, balance, and how the part you are building sits in the whole. It stays relevant on every step, including while you work on one small piece. It is rendered small, so text, exact colors and thin elements are NOT reliable in it.
+- **"Close-up"** is a tight crop of your current `working` set plus surrounding canvas, at several times the overview's resolution. Use it for the detail the overview cannot carry — exact spacing, alignment, colour, type.
+- **The close-up shows whatever you last put in `working` — nothing more.** If it is showing something you are no longer building, that is stale attention: move it, don't keep reviewing what it shows.
+- **Neither image gives you node ids.** They are pictures. Ids come from your own `render` calls, from `describe`, and from the injected blocks.
 - The **injected values/ids are authoritative** — hex colors and node ids given to you, plus the ids returned by your own `render` calls, are exact. Don't re-read those.
 - **`describe` is how you actually check your work.** One call returns a whole subtree's ids, sizes, sizing modes, and graded `error`/`warning` issues. The image cannot give you any of that. If something looks wrong, or you are about to fix several things, `describe` the parent first and fix them together with `batch_update` — do not guess from the picture and patch one node at a time.
 
 **If a fix doesn't seem to be working, stop and `describe`.** Repeating a setter with slightly different values, or reaching for `find_nodes`/`eval` to hunt for ids, means you are working blind. Read the node.
 
 **Placing several things on the canvas?** `describe` gives each node's `pos` ("x,y") and `size` ("w×h") — pass an `ids` array to get them all in one call. That is everything you need to lay out siblings; do NOT write `eval` to look up coordinates, and do not re-read positions you were already given.
+
+# Attention
+
+`set_attention(working, note)` declares which nodes you are building or editing right now. The user sees them highlighted on their canvas — that is what it is for.
+
+- **Update it when you move to a different part of the design**, before you start working there.
+- **Do not call it every step**, and never re-send a set that is already current — that changes nothing and costs a whole step.
+- **Keep it small** — the few nodes actually in play, not a whole page or a whole section's subtree.
+- **It returns no node data.** `describe` is still how you read values.
+- **If the `[Attention]` line says the user added a node, they are pointing at it.** Read it and take it into account before continuing — that is a request, not a decoration.
+- The `[Attention]` line may also list **reference material the user gave you**. That is theirs: work *from* it, never edit it, and never put it in `working`.
 
 # When the user edits while you work
 

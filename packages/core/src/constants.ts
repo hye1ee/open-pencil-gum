@@ -134,6 +134,17 @@ export const AI_DONE_COLOR = { r: 0.16, g: 0.73, b: 0.36 }
 export const AI_PULSE_PERIOD_MS = 1500
 export const AI_DONE_DURATION_MS = 800
 
+/** Nodes the agent has declared it is working on. Purple to match the agent
+ * cursor — the glow and the cursor are the same presence, not two systems. */
+export const AI_ATTENTION_COLOR = { r: 0.49, g: 0.36, b: 0.96 }
+/** Blur sigma of the outer glow, in screen px (kept constant across zoom). */
+export const AI_ATTENTION_BLUR_SIGMA = 7
+export const AI_ATTENTION_GLOW_WIDTH = 10
+export const AI_ATTENTION_EDGE_WIDTH = 1.5
+export const AI_ATTENTION_PADDING = 3
+/** Beyond a handful the glow reads as noise and the injected line gets long. */
+export const AI_ATTENTION_MAX_NODES = 8
+
 export const TEXT_SELECTION_COLOR = { r: 0.26, g: 0.52, b: 0.96, a: 0.3 }
 export const TEXT_CARET_COLOR = BLACK
 export const TEXT_CARET_WIDTH = 1

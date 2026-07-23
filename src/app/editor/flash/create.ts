@@ -41,11 +41,28 @@ export function createFlashActions(editor: Editor, state: EditorState) {
     editor.renderer?.aiClearAll()
   }
 
+  function aiSetAttention(nodeIds: string[]) {
+    if (!editor.renderer) return
+    editor.renderer.aiSetAttention(nodeIds)
+    if (!flashRafId) pumpFlashes()
+  }
+
+  function aiSetAttentionVisible(visible: boolean) {
+    if (!editor.renderer) return
+    editor.renderer.aiSetAttentionVisible(visible)
+    // Bump once on the way out too, so the last frame clears the glow instead of
+    // leaving it painted until something else asks for a render.
+    state.renderVersion++
+    if (!flashRafId) pumpFlashes()
+  }
+
   return {
     flashNodes,
     aiMarkActive,
     aiMarkDone,
     aiFlashDone,
-    aiClearAll
+    aiClearAll,
+    aiSetAttention,
+    aiSetAttentionVisible
   }
 }

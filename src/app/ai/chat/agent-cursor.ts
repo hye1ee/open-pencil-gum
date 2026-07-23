@@ -1,5 +1,6 @@
 import type { Vector } from '@open-pencil/scene-graph/primitives'
 
+import { agentAttention, clearAttention } from '@/app/ai/chat/agent-attention'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -123,7 +124,8 @@ function frame(store: EditorStore, state: AgentCursorState, t: number): void {
     color: COLOR,
     x: state.cur.x + amp * Math.sin(t / 900),
     y: state.cur.y + amp * Math.cos(t / 1300),
-    emphasis: state.emphasis
+    emphasis: state.emphasis,
+    watching: agentAttention.working.length
   }
   store.requestRepaint()
 
@@ -144,7 +146,14 @@ export function dragAgentCursor(store: EditorStore, x: number, y: number): void 
   state.cur = { x, y }
   // Carry the swell through — this write lands between frames, and dropping it
   // here would flicker the halo off on every pointermove.
-  store.state.agentCursor = { name: 'Agent', color: COLOR, x, y, emphasis: state.emphasis }
+  store.state.agentCursor = {
+    name: 'Agent',
+    color: COLOR,
+    x,
+    y,
+    emphasis: state.emphasis,
+    watching: agentAttention.working.length
+  }
   store.requestRepaint()
 }
 
@@ -183,6 +192,9 @@ export function hideAgentCursor(store: EditorStore): void {
   state.emphasis = 0
   store.state.agentCursor = null
   clearAgentSpeech() // no bubble floating where the cursor used to be
+  // Node ids are document-scoped, so a tab switch (which hides the old store's
+  // cursor first) must not carry a glow over to a different document.
+  clearAttention(store)
   store.requestRepaint()
   if (shownStore === store) shownStore = null
 }

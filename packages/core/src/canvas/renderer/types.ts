@@ -71,5 +71,9 @@ export interface RenderOverlays {
     /** 0–1 hover swell. Only the agent cursor sets it — a remote peer's cursor
      * isn't something you can grab, so it stays undefined. */
     emphasis?: number
+    /** How many nodes the agent is attending to. Drawn as an eye + count inside
+     * the nameplate, so the cursor stays one object instead of growing a
+     * separate floating chip. */
+    watching?: number
   }>
 }

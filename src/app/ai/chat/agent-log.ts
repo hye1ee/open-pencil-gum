@@ -116,6 +116,10 @@ export function logAgentText(text: string): void {
   writeBlock('AGENT', text)
 }
 
+export function logAttention(text: string): void {
+  writeBlock('ATTN', text)
+}
+
 export function logToolCall(tool: string, args: Record<string, unknown>): void {
   const pairs = Object.entries(args)
     .filter(([, value]) => value !== undefined)

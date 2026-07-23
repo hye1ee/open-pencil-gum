@@ -69,8 +69,25 @@ export function aiClearActive(r: SkiaRenderer): void {
 export function aiClearAll(r: SkiaRenderer): void {
   r._aiActiveNodes.clear()
   r._aiDoneFlashes = []
+  r._aiAttentionNodes.clear()
+  r._aiAttentionVisible = false
 }
 
+export function aiSetAttention(r: SkiaRenderer, nodeIds: string[]): void {
+  r._aiAttentionNodes = new Set(nodeIds)
+}
+
+export function aiSetAttentionVisible(r: SkiaRenderer, visible: boolean): void {
+  r._aiAttentionVisible = visible
+}
+
+/** Drives the rAF pump in the app's flash actions. The attention glow pulses, so
+ * it has to keep the loop alive for as long as it is on screen. */
 export function hasActiveFlashes(r: SkiaRenderer): boolean {
-  return r._flashes.length > 0 || r._aiActiveNodes.size > 0 || r._aiDoneFlashes.length > 0
+  return (
+    r._flashes.length > 0 ||
+    r._aiActiveNodes.size > 0 ||
+    r._aiDoneFlashes.length > 0 ||
+    (r._aiAttentionVisible && r._aiAttentionNodes.size > 0)
+  )
 }

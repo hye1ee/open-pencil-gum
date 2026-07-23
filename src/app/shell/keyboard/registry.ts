@@ -6,6 +6,7 @@ import { editorCommandMetadata } from '@open-pencil/vue'
 import type { EditorCommandId } from '@open-pencil/vue'
 
 import { TOOL_SHORTCUTS } from '@/app/editor/session'
+import { bindAttentionPeek } from '@/app/shell/keyboard/attention-peek'
 import { isEditing } from '@/app/shell/keyboard/focus'
 import { bindSpaceHandTool } from '@/app/shell/keyboard/space-tool'
 import type {
@@ -66,6 +67,8 @@ function bindToolShortcuts(bindings: KeyBindingMap, options: KeyboardShortcutRun
 
 export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
   const spaceTool = bindSpaceHandTool(options.inputFocused, options.store)
+  // Hold-to-peek, so it lives outside the tinykeys table (which is keydown-only).
+  bindAttentionPeek(options.inputFocused, options.store)
   const runOptions = (event: KeyboardEvent): KeyboardShortcutRunOptions => ({
     ...options,
     keyEvent: event,

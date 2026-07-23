@@ -76,6 +76,8 @@ export interface EditorState {
     selection?: string[]
     /** 0–1 hover swell, eased by the cursor's own animation loop. */
     emphasis?: number
+    /** Node count in the agent's attention; shown as an eye in the nameplate. */
+    watching?: number
   } | null
   autoLayoutHover: {
     nodeId: string

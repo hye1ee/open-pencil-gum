@@ -168,6 +168,14 @@ export class SkiaRenderer {
   _flashPaint: Paint | null = null
   _aiActiveNodes: Set<string> = new Set()
   _aiDoneFlashes: Array<{ nodeId: string; startTime: number }> = []
+  /** Nodes the agent has declared as its attention. Deliberately NOT
+   * `_aiActiveNodes`: `onFlashNodes` clears that set after every mutating tool,
+   * which would wipe the attention the moment the agent renders anything. */
+  _aiAttentionNodes: Set<string> = new Set()
+  /** Attention only draws while the user is peeking (` held) or during the
+   * brief auto-reveal after the agent moves it. */
+  _aiAttentionVisible = false
+  _aiAttentionPaint: Paint | null = null
 
   readonly DEFAULT_FONT_SIZE = DEFAULT_FONT_SIZE
   readonly COMPONENT_SET_BORDER_WIDTH = COMPONENT_SET_BORDER_WIDTH
@@ -457,6 +465,14 @@ export class SkiaRenderer {
 
   aiClearAll(): void {
     RendererState.aiClearAll(this)
+  }
+
+  aiSetAttention(nodeIds: string[]): void {
+    RendererState.aiSetAttention(this, nodeIds)
+  }
+
+  aiSetAttentionVisible(visible: boolean): void {
+    RendererState.aiSetAttentionVisible(this, visible)
   }
 
   get hasActiveFlashes(): boolean {

@@ -104,7 +104,10 @@ export function createExportTargetActions(editor: Editor, state: EditorState, io
   async function renderExportImage(
     nodeIds: string[],
     scale: number,
-    format: RasterExportFormat
+    format: RasterExportFormat,
+    /** Keeps surrounding nodes in frame, cropping to the ids' bounds grown by
+     * this many world px. Used by the agent's attention capture. */
+    contextPadding?: number
   ): Promise<Uint8Array | null> {
     const renderer = editor.renderer
     if (!renderer) return null
@@ -113,7 +116,8 @@ export function createExportTargetActions(editor: Editor, state: EditorState, io
     if (ids.length === 0) return null
     return renderNodesToImage(renderer.ck, renderer, editor.graph, state.currentPageId, ids, {
       scale,
-      format
+      format,
+      contextPadding
     })
   }
 
