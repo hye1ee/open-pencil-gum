@@ -10,7 +10,8 @@ import type { SceneNode } from '@open-pencil/scene-graph'
 
 import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logBlocked, logToolCall, logToolError, logToolResult } from '@/app/ai/chat/agent-log'
-import { beginAgentMutation, endAgentMutation, guardMutation } from '@/app/ai/chat/intervention'
+import { guardMutation } from '@/app/ai/chat/guard'
+import { beginAgentMutation, endAgentMutation } from '@/app/ai/chat/intervention'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -115,10 +116,18 @@ export function createAITools(store: EditorStore) {
     def.mutates
       ? {
           ...def,
-          execute: (figma: FigmaAPI, args: Record<string, unknown>) => {
+          execute: async (figma: FigmaAPI, args: Record<string, unknown>) => {
             const guard = guardMutation(store, def.name, args)
             if (guard.blocked) return { skipped: true, reason: guard.reason }
-            return def.execute(figma, guard.modifiedArgs ?? args)
+            const result = await def.execute(figma, guard.modifiedArgs ?? args)
+            // The call went through with some of its arguments removed. Say so,
+            // or the model reads the trimmed-away part as done and moves on —
+            // or, worse, tries the same write again a step later.
+            if (!guard.reason) return result
+            if (!result || typeof result !== 'object' || Array.isArray(result)) {
+              return { result, _warning: guard.reason }
+            }
+            return { ...result, _warning: guard.reason }
           }
         }
       : def

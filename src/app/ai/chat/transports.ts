@@ -224,8 +224,7 @@ export function createToolLoopTransport({
       } else if (plan && (diff || userMessages.length > 0)) {
         // Only on an intervention. The agent runs for twenty-odd steps, so
         // reconciling the directive every step would cost more than the build.
-        const change = [diff, ...userMessages].filter(Boolean).join('\n')
-        plan = await runPlanUpdate(model, store, plan, change)
+        plan = await runPlanUpdate(model, store, plan, { edits: diff, messages: userMessages })
         logPlan(plan, true)
       }
 
