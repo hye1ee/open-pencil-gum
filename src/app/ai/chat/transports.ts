@@ -17,21 +17,27 @@ import {
   logUsage,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
+import { clearAgentSpeech, sayAgent } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
-import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
-import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
-import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
+import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import {
+  buildUserMessageText,
+  clearUserMessages,
+  drainUserMessages
+} from '@/app/ai/chat/user-messages'
 import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
 // Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
-const SYSTEM_PROMPT = import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
+const SYSTEM_PROMPT =
+  import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
 
 type ChatSessionOptions = {
   isConfigured: ComputedRef<boolean>
@@ -199,6 +205,7 @@ export function createToolLoopTransport({
       clearUserMessages(store)
       plan = null
       resumeTurn()
+      clearAgentSpeech()
       showAgentCursor(store)
       return {
         ...options,
@@ -249,6 +256,8 @@ export function createToolLoopTransport({
     onStepFinish: (step) => {
       intervention.onStepFinish()
       logAgentText(step.text)
+      // Same text the chat shows, mirrored onto the canvas next to the cursor.
+      sayAgent(step.text)
       const { usage } = step
       const recorded = {
         inputTokens: usage.inputTokens ?? 0,

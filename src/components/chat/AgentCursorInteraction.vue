@@ -3,6 +3,7 @@ import { refAutoReset, useEventListener } from '@vueuse/core'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 import { dragAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { agentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn, pauseTurn, promptResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore, useEditorStore } from '@/app/editor/active-store'
 
@@ -22,10 +23,35 @@ const pokeMessage = refAutoReset('', POKE_MS)
 const screen = computed(() => {
   const c = store.state.agentCursor
   if (!c) return null
-  return { x: c.x * store.state.zoom + store.state.panX, y: c.y * store.state.zoom + store.state.panY }
+  return {
+    x: c.x * store.state.zoom + store.state.panX,
+    y: c.y * store.state.zoom + store.state.panY
+  }
 })
 
 const dragging = ref(false)
+
+const BUBBLE_MAX_PX = 260
+
+// One bubble, two sources: while the agent works it speaks its own step text;
+// while idle it only reacts to being poked. The resume prompt takes the same
+// spot, so it wins when it's up.
+const bubble = computed(() => {
+  if (agentTurn.askResume) return ''
+  if (agentTurn.running || agentTurn.paused) return agentSpeech.text
+  return pokeMessage.value
+})
+
+// Anchored to the right of the cursor and clamped so a long line doesn't run off
+// the canvas — the cursor itself can sit near the edge.
+const bubblePos = computed(() => {
+  if (!screen.value) return null
+  const width = canvasEl?.clientWidth ?? Infinity
+  return {
+    left: Math.max(8, Math.min(screen.value.x + 14, width - BUBBLE_MAX_PX - 8)),
+    top: screen.value.y - 6
+  }
+})
 
 function toWorld(e: PointerEvent) {
   const rect = canvasEl?.getBoundingClientRect()
@@ -99,13 +125,17 @@ onUnmounted(() => clearTimeout(idleTimer))
     <!-- Grab target over the cursor arrow -->
     <div
       class="pointer-events-auto absolute size-8 -translate-x-1/4 -translate-y-1/4"
-      :style="{ left: `${screen.x}px`, top: `${screen.y}px`, cursor: dragging ? 'grabbing' : 'grab' }"
+      :style="{
+        left: `${screen.x}px`,
+        top: `${screen.y}px`,
+        cursor: dragging ? 'grabbing' : 'grab'
+      }"
       @pointerdown="onGrab"
       @pointermove="onMove"
       @pointerup="onRelease"
     />
 
-    <!-- Playful reaction when the user pokes the idle cursor -->
+    <!-- What the agent is saying (or its reaction to being poked while idle) -->
     <Transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="translate-y-1 scale-95 opacity-0"
@@ -113,11 +143,15 @@ onUnmounted(() => clearTimeout(idleTimer))
       leave-to-class="translate-y-1 scale-95 opacity-0"
     >
       <div
-        v-if="pokeMessage && !agentTurn.running"
-        class="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-2xl rounded-bl-sm bg-panel px-3 py-1.5 text-xs font-medium whitespace-nowrap text-surface shadow-lg ring-1 ring-border"
-        :style="{ left: `${screen.x + 10}px`, top: `${screen.y - 4}px` }"
+        v-if="bubble && bubblePos"
+        class="pointer-events-none absolute -translate-y-full rounded-2xl rounded-bl-sm bg-panel px-3 py-1.5 text-xs leading-snug font-medium text-balance text-surface shadow-lg ring-1 ring-border"
+        :style="{
+          left: `${bubblePos.left}px`,
+          top: `${bubblePos.top}px`,
+          maxWidth: `${BUBBLE_MAX_PX}px`
+        }"
       >
-        {{ pokeMessage }}
+        {{ bubble }}
       </div>
     </Transition>
 

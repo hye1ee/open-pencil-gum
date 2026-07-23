@@ -1,5 +1,6 @@
 import type { Vector } from '@open-pencil/scene-graph/primitives'
 
+import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import type { EditorStore } from '@/app/editor/active-store'
 
@@ -145,6 +146,7 @@ export function hideAgentCursor(store: EditorStore): void {
   state.parked = null
   state.cur = null
   store.state.agentCursor = null
+  clearAgentSpeech() // no bubble floating where the cursor used to be
   store.requestRepaint()
   if (shownStore === store) shownStore = null
 }
