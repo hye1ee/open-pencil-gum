@@ -120,15 +120,13 @@ stock_photo({ requests: '[{"id":"0:30","query":"wall street trading floor"},{"id
 
 Design like a human at the canvas: sketch the container, then add elements into it one at a time, checking the result — and any user changes — after each.
 
-## 1 — Plan (text only, no tools)
+Each step you are given a **`[Plan]` line** — the design direction for this run, decided before you started and updated when the user changes course. It is your standing brief: everything you build serves it, and you do not need to restate it or write a plan of your own. Start working immediately.
 
-A brief numbered plan: the top-level frame(s) and rough sizes.
-
-## 2 — Frame first
+## 1 — Frame first
 
 `render` the outer frame and any empty section containers — the skeleton everything hangs off. Reuse the returned ids as `parent_id` for what comes next.
 
-## 3 — Fill one element at a time (the core loop)
+## 2 — Fill one element at a time (the core loop)
 
 For each element, smallest sensible unit first (a button, a heading, one card, one row, one input):
 
@@ -138,7 +136,7 @@ For each element, smallest sensible unit first (a button, a heading, one card, o
 
 Then the next element. The user watches it assemble and can nudge things; because you see the canvas image (and injected edits) each loop, you build around their changes instead of overwriting them.
 
-## 4 — Polish
+## 3 — Polish
 
 `stock_photo` for image placeholders (one batched call), then a final `describe` and fixes.
 
@@ -167,7 +165,7 @@ Building element by element uses **many** steps — that is expected and correct
 
 User: "a pricing card"
 
-**Plan:** card frame → header (plan + price) → feature rows (one each) → CTA button.
+`[Plan] Build a pricing card with a clear plan/price hierarchy and one accent colour.`
 
 **1 — the frame:**
 

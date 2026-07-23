@@ -35,6 +35,12 @@ class RunState {
     this.currentSteps++
   }
 
+  /** Tokens from a call that isn't a step — the planning calls, which cost money
+   * but execute no tools and must not eat into the step budget. */
+  recordAux(usage: StepUsage): void {
+    this.stepUsages.push(usage)
+  }
+
   resetSteps(): void {
     this.currentSteps = 0
   }
@@ -71,6 +77,10 @@ export function getStepUsages(store?: EditorStore): StepUsage[] {
 
 export function recordStepUsage(usage: StepUsage, store?: EditorStore): void {
   getRunState(store).recordStep(usage)
+}
+
+export function recordAuxUsage(usage: StepUsage, store?: EditorStore): void {
+  getRunState(store).recordAux(usage)
 }
 
 export function resetRunSteps(store?: EditorStore): void {

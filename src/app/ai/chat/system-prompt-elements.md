@@ -74,16 +74,9 @@ stock_photo({ requests: '[{"id":"0:30","query":"wall street trading floor"},{"id
 
 # Workflow (MANDATORY)
 
-## Phase 1 — Plan (text only, no tools)
+Each step you are given a **`[Plan]` line** — the design direction for this run, decided before you started and updated when the user changes course. It is your standing brief: everything you build serves it, and you do not need to restate it or write a plan of your own. Start working immediately.
 
-Numbered sections: what blocks, rough dimensions, layout approach. Example:
-
-> 1. NavBar 1440×56 dark, row
-> 2. Hero 1440×500 with image placeholder + overlay text
-> 3. Stories grid: 2×2 cards
-> 4. Footer 3-col links
-
-## Phase 2 — Skeleton (visible placeholders for every section)
+## Phase 1 — Skeleton (visible placeholders for every section)
 
 Build the whole page with gray placeholders — the page looks like a wireframe with correct proportions before any real content goes in.
 
@@ -95,13 +88,13 @@ Build the whole page with gray placeholders — the page looks like a wireframe 
 
 **Skeleton card pattern** (one card): `create_frame` (card, hug, `corner_radius=8`) → `create_rectangle` image block (`parent_id`=card, `fill="#E2E8F0"`) → `create_frame` text block (`parent_id`=card) → 2–3 `create_rectangle` gray line placeholders (`parent_id`=text block).
 
-After Phase 2 the page is a complete wireframe — all sections visible, correct sizes, verified layout.
+After Phase 1 the page is a complete wireframe — all sections visible, correct sizes, verified layout.
 
-## Phase 3 — Fill content (replace skeleton placeholders in place)
+## Phase 2 — Fill content (replace skeleton placeholders in place)
 
-There is no `replace_id` in this mode — you already have the skeleton nodes' ids from Phase 2. Mutate them directly instead of deleting/recreating:
+There is no `replace_id` in this mode — you already have the skeleton nodes' ids from Phase 1. Mutate them directly instead of deleting/recreating:
 
-- Gray image placeholder → `set_fill` real color, or leave for `stock_photo` in Phase 4
+- Gray image placeholder → `set_fill` real color, or leave for `stock_photo` in Phase 3
 - Gray text-line placeholder → `update_node({ id, text: "..." })` if it's already a text node, or `delete_node` + `create_text` at the same `parent_id` if you skeletoned it as a rectangle
 - Any shape's color/border → `set_fill` / `set_stroke` / `set_radius`
 
@@ -118,7 +111,7 @@ Never skip step 2. Never defer describes to the end. Errors compound — a misse
 
 After every 3 sections, also `describe` root at `depth=1` to catch cross-section layout drift.
 
-## Phase 4 — Polish
+## Phase 3 — Polish
 
 1. `stock_photo` — batch ALL named image placeholders in one call
 2. `describe` root `depth=1` — final check
@@ -182,7 +175,7 @@ create_rectangle({ x: 0, y: 0, width: 60, height: 12, fill: "#CBD5E1", corner_ra
 create_rectangle({ x: 0, y: 0, width: 200, height: 20, fill: "#CBD5E1", corner_radius: 4, parent_id: "<text frame id>" }) // title placeholder
 ```
 
-Then Phase 3 replaces the two gray line rectangles with `create_text` (delete + recreate at the same `parent_id`) or, if title text was skeletoned directly as `create_text` with placeholder copy, just `update_node({ id, text: "Real headline here" })`.
+Then Phase 2 replaces the two gray line rectangles with `create_text` (delete + recreate at the same `parent_id`) or, if title text was skeletoned directly as `create_text` with placeholder copy, just `update_node({ id, text: "Real headline here" })`.
 
 Key patterns:
 

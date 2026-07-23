@@ -1,6 +1,6 @@
 import { Chat } from '@ai-sdk/vue'
 import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
-import type { ChatTransport, ModelMessage, UIMessage, UserContent } from 'ai'
+import type { ChatTransport, ImagePart, ModelMessage, UIMessage, UserContent } from 'ai'
 import type { ComputedRef, Ref } from 'vue'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
@@ -10,6 +10,7 @@ import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
+import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
 import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
@@ -58,6 +59,49 @@ function supportsAnthropicCaching(providerID: AIProviderID, modelID: string): bo
   )
 }
 
+/** The newest user turn — what the planning call is asked to plan for. */
+function lastUserText(messages: readonly ModelMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role !== 'user') continue
+    if (typeof message.content === 'string') return message.content
+    const text = message.content
+      .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+    if (text) return text
+  }
+  return ''
+}
+
+/**
+ * The user message injected before each step: the run's directive, the canvas
+ * image, and anything the user changed or said since the last step. Assembled
+ * here so all of it shares one message rather than accumulating separately.
+ */
+function buildStepContent(args: {
+  plan: string | null
+  image: ImagePart | null
+  diff: string | null
+  userMessages: string[]
+}): UserContent {
+  const content: UserContent = []
+  // First, so it is never buried under the image or a long intervention block.
+  if (args.plan) content.push({ type: 'text', text: `[Plan] ${args.plan}` })
+  if (args.image) {
+    content.push({
+      type: 'text',
+      text: 'Current canvas (overview only — read exact values/ids with the tools):'
+    })
+    content.push(args.image)
+  }
+  if (args.diff) content.push({ type: 'text', text: args.diff })
+  if (args.userMessages.length > 0) {
+    content.push({ type: 'text', text: buildUserMessageText(args.userMessages) })
+  }
+  return content
+}
+
 export async function createACPTransport(providerID: AIProviderID) {
   const agentId = providerID.replace('acp:', '') as ACPAgentID
   const agentDef = ACP_AGENTS.find((a) => a.id === agentId)
@@ -86,15 +130,22 @@ export function createToolLoopTransport({
     ? ANTHROPIC_CACHE_CONTROL
     : undefined
 
+  // Hoisted so the planning calls run against the same model as the agent.
+  const model = createLanguageModel({
+    providerID,
+    apiKey,
+    modelID,
+    customModelID,
+    customBaseURL,
+    customAPIType
+  })
+
+  // This run's design directive. Owned here rather than written by the agent
+  // into its own transcript, so it can be re-injected every step.
+  let plan: string | null = null
+
   const agent = new ToolLoopAgent({
-    model: createLanguageModel({
-      providerID,
-      apiKey,
-      modelID,
-      customModelID,
-      customBaseURL,
-      customAPIType
-    }),
+    model,
     instructions: SYSTEM_PROMPT,
     tools,
     stopWhen: stepCountIs(MAX_AGENT_STEPS),
@@ -105,6 +156,7 @@ export function createToolLoopTransport({
       intervention.reset()
       vision.reset()
       clearUserMessages(store)
+      plan = null
       resumeTurn()
       showAgentCursor(store)
       return {
@@ -113,7 +165,7 @@ export function createToolLoopTransport({
         providerOptions: cacheProviderOptions
       }
     },
-    prepareStep: async ({ messages }) => {
+    prepareStep: async ({ messages, stepNumber }) => {
       // Block here while the user has paused the turn (grabbed the agent cursor).
       await awaitTurnResume()
       // Drain any user edits made since the last step (also paces the build).
@@ -121,20 +173,18 @@ export function createToolLoopTransport({
       // Messages the user sent mid-run, and the canvas PNG for overall layout.
       const userMessages = drainUserMessages(store)
       const image = await vision.imagePart()
-      if (!diff && !image && userMessages.length === 0) return undefined
 
-      const content: UserContent = []
-      if (image) {
-        content.push({
-          type: 'text',
-          text: 'Current canvas (overview only — read exact values/ids with the tools):'
-        })
-        content.push(image)
+      if (stepNumber === 0) {
+        plan = await runPlan(model, store, lastUserText(messages), image)
+      } else if (plan && (diff || userMessages.length > 0)) {
+        // Only on an intervention. The agent runs for twenty-odd steps, so
+        // reconciling the directive every step would cost more than the build.
+        const change = [diff, ...userMessages].filter(Boolean).join('\n')
+        plan = await runPlanUpdate(model, store, plan, change)
       }
-      if (diff) content.push({ type: 'text', text: diff })
-      if (userMessages.length > 0) {
-        content.push({ type: 'text', text: buildUserMessageText(userMessages) })
-      }
+
+      const content = buildStepContent({ plan, image, diff, userMessages })
+      if (content.length === 0) return undefined
 
       const injected: ModelMessage = { role: 'user', content }
       return { messages: [...messages, injected] }
