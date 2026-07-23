@@ -68,5 +68,8 @@ export interface RenderOverlays {
     x: number
     y: number
     selection?: string[]
+    /** 0–1 hover swell. Only the agent cursor sets it — a remote peer's cursor
+     * isn't something you can grab, so it stays undefined. */
+    emphasis?: number
   }>
 }

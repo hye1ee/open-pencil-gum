@@ -74,6 +74,8 @@ export interface EditorState {
     x: number
     y: number
     selection?: string[]
+    /** 0–1 hover swell, eased by the cursor's own animation loop. */
+    emphasis?: number
   } | null
   autoLayoutHover: {
     nodeId: string

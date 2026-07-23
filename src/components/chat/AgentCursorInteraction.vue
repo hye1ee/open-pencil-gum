@@ -2,7 +2,7 @@
 import { refAutoReset, useEventListener } from '@vueuse/core'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
-import { dragAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { dragAgentCursor, setAgentCursorHover } from '@/app/ai/chat/agent-cursor'
 import { agentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn, pauseTurn, promptResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore, useEditorStore } from '@/app/editor/active-store'
@@ -15,7 +15,12 @@ const IDLE_MS = 3000
 const POKE_MS = 3200
 
 // Playful lines the agent "says" when the user pokes it while it's idle.
-const POKE_LINES = ['뭐 도와줄까요?', '다음은 뭘 만들어 볼까요?', '시킬 일 있어요?', '준비됐어요!']
+const POKE_LINES = [
+  'Need a hand?',
+  'What should we build next?',
+  'Got something for me?',
+  'Ready when you are!'
+]
 let pokeIdx = 0
 const pokeMessage = refAutoReset('', POKE_MS)
 
@@ -52,6 +57,12 @@ const bubblePos = computed(() => {
     top: screen.value.y - 6
   }
 })
+
+// Pointer capture suppresses boundary events during a drag, so hover stays on
+// for the whole grab and only lifts once the pointer really leaves.
+function onHover(hover: boolean) {
+  setAgentCursorHover(getActiveEditorStore(), hover)
+}
 
 function toWorld(e: PointerEvent) {
   const rect = canvasEl?.getBoundingClientRect()
@@ -117,7 +128,10 @@ watch(
   }
 )
 
-onUnmounted(() => clearTimeout(idleTimer))
+onUnmounted(() => {
+  clearTimeout(idleTimer)
+  onHover(false) // the grab target is going away; don't leave the swell stuck on
+})
 </script>
 
 <template>
@@ -131,6 +145,8 @@ onUnmounted(() => clearTimeout(idleTimer))
         cursor: dragging ? 'grabbing' : 'grab'
       }"
       @pointerdown="onGrab"
+      @pointerenter="onHover(true)"
+      @pointerleave="onHover(false)"
       @pointermove="onMove"
       @pointerup="onRelease"
     />

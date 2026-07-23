@@ -22,11 +22,17 @@ import type { EditorStore } from '@/app/editor/active-store'
 const COLOR = { r: 0.49, g: 0.36, b: 0.96, a: 1 }
 const FOLLOW = 0.08 // easing toward the goal per frame
 const WANDER_SCREEN_PX = 22 // orbit radius, kept constant in screen space
+const EMPHASIS_FOLLOW = 0.2 // hover swell easing per frame
+/** How much of the wander the hover cancels. A drifting target is annoying to
+ * grab, so pointing at it makes it settle — the swell alone would fight you. */
+const HOVER_CALM = 0.85
 
 interface AgentCursorState {
   nodeAnchor: Vector | null // node the agent is currently building (world space)
   parked: Vector | null // where the user dragged it to (world space); overrides the viewport center
   cur: Vector | null // eased position (world space)
+  hover: boolean // pointer is over the grab target
+  emphasis: number // eased 0–1 toward `hover`; what the renderer draws
   rafId: number
   active: boolean
 }
@@ -38,7 +44,15 @@ let shownStore: EditorStore | null = null
 function getState(store: EditorStore): AgentCursorState {
   let state = states.get(store)
   if (!state) {
-    state = { nodeAnchor: null, parked: null, cur: null, rafId: 0, active: false }
+    state = {
+      nodeAnchor: null,
+      parked: null,
+      cur: null,
+      hover: false,
+      emphasis: 0,
+      rafId: 0,
+      active: false
+    }
     states.set(store, state)
   }
   return state
@@ -67,40 +81,58 @@ function isOnScreen(store: EditorStore, p: Vector): boolean {
 
 function frame(store: EditorStore, state: AgentCursorState, t: number): void {
   if (!state.active) return
+  const next = () => {
+    state.rafId = requestAnimationFrame((n) => frame(store, state, n))
+  }
+
+  // Runs even while paused — the swell is the grab affordance, so it has to
+  // answer the pointer whether or not the agent is working.
+  state.emphasis += ((state.hover ? 1 : 0) - state.emphasis) * EMPHASIS_FOLLOW
 
   // Paused: freeze wherever it is (the user is holding / has parked it).
-  if (agentTurn.paused) {
-    state.rafId = requestAnimationFrame((next) => frame(store, state, next))
+  if (!agentTurn.paused) {
+    // While the agent is actually running a turn, it always tracks the node it's
+    // building — no viewport blending. Otherwise (idle) it rests wherever the user
+    // parked it, else the middle of whatever the user is currently looking at. A
+    // park is honored only while still on screen — once the user pans it out of
+    // view we drop it so the cursor rejoins them at the viewport center.
+    let goal: Vector
+    if (agentTurn.running && state.nodeAnchor) goal = state.nodeAnchor
+    else if (state.parked && isOnScreen(store, state.parked)) goal = state.parked
+    else {
+      state.parked = null
+      goal = viewportCenter(store)
+    }
+
+    if (!state.cur) state.cur = { ...goal }
+    state.cur.x += (goal.x - state.cur.x) * FOLLOW
+    state.cur.y += (goal.y - state.cur.y) * FOLLOW
+  }
+
+  if (!state.cur) {
+    next()
     return
   }
 
-  // While the agent is actually running a turn, it always tracks the node it's
-  // building — no viewport blending. Otherwise (idle) it rests wherever the user
-  // parked it, else the middle of whatever the user is currently looking at. A
-  // park is honored only while still on screen — once the user pans it out of
-  // view we drop it so the cursor rejoins them at the viewport center.
-  let goal: Vector
-  if (agentTurn.running && state.nodeAnchor) goal = state.nodeAnchor
-  else if (state.parked && isOnScreen(store, state.parked)) goal = state.parked
-  else {
-    state.parked = null
-    goal = viewportCenter(store)
-  }
-
-  if (!state.cur) state.cur = { ...goal }
-  state.cur.x += (goal.x - state.cur.x) * FOLLOW
-  state.cur.y += (goal.y - state.cur.y) * FOLLOW
-
-  const amp = WANDER_SCREEN_PX / (store.state.zoom || 1)
+  // Frozen while paused, and damped toward still while the pointer is on it.
+  const amp = agentTurn.paused
+    ? 0
+    : (WANDER_SCREEN_PX / (store.state.zoom || 1)) * (1 - HOVER_CALM * state.emphasis)
   store.state.agentCursor = {
     name: 'Agent',
     color: COLOR,
     x: state.cur.x + amp * Math.sin(t / 900),
-    y: state.cur.y + amp * Math.cos(t / 1300)
+    y: state.cur.y + amp * Math.cos(t / 1300),
+    emphasis: state.emphasis
   }
   store.requestRepaint()
 
-  state.rafId = requestAnimationFrame((next) => frame(store, state, next))
+  next()
+}
+
+/** Pointer entered/left the cursor's grab target. */
+export function setAgentCursorHover(store: EditorStore, hover: boolean): void {
+  getState(store).hover = hover
 }
 
 /** Move the cursor to a world position (user dragging it). Parks it there so it
@@ -110,7 +142,9 @@ export function dragAgentCursor(store: EditorStore, x: number, y: number): void 
   const state = getState(store)
   state.parked = { x, y }
   state.cur = { x, y }
-  store.state.agentCursor = { name: 'Agent', color: COLOR, x, y }
+  // Carry the swell through — this write lands between frames, and dropping it
+  // here would flicker the halo off on every pointermove.
+  store.state.agentCursor = { name: 'Agent', color: COLOR, x, y, emphasis: state.emphasis }
   store.requestRepaint()
 }
 
@@ -145,6 +179,8 @@ export function hideAgentCursor(store: EditorStore): void {
   state.nodeAnchor = null
   state.parked = null
   state.cur = null
+  state.hover = false
+  state.emphasis = 0
   store.state.agentCursor = null
   clearAgentSpeech() // no bubble floating where the cursor used to be
   store.requestRepaint()
