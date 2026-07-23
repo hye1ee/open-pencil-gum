@@ -33,24 +33,51 @@ function formatValue(value: unknown): string {
   return json.length > 60 ? `${json.slice(0, 60)}…` : json
 }
 
-/** Render a single paint as a readable token (hex for solids) so the model can
- * actually understand and propagate the user's color choice. */
+type RawColor = { r?: number; g?: number; b?: number }
+type RawPaint = {
+  type?: string
+  color?: RawColor
+  gradientStops?: Array<{ color?: RawColor }>
+  opacity?: number
+  visible?: boolean
+}
+
+function colorToHex(color: RawColor): string {
+  const { r = 0, g = 0, b = 0 } = color
+  const channel = (c: number) =>
+    Math.max(0, Math.min(255, Math.round(c * 255)))
+      .toString(16)
+      .padStart(2, '0')
+  return `#${channel(r)}${channel(g)}${channel(b)}`.toUpperCase()
+}
+
+/**
+ * Render a single paint as a readable token so the model can understand what the
+ * user actually chose.
+ *
+ * Anything that isn't a hex here is a dead end for the model — a measured run
+ * produced `strokes=paint`, which says nothing about what changed, because the
+ * old fallback returned the paint's type name. So we reach for a colour wherever
+ * one exists: solids by their own colour, gradients by their end stops, and a
+ * paint with no `type` (but a colour) by that colour rather than the literal
+ * word "paint".
+ */
 function paintToString(paint: unknown): string {
   if (!paint || typeof paint !== 'object') return 'none'
-  const p = paint as {
-    type?: string
-    color?: { r?: number; g?: number; b?: number }
-    opacity?: number
-    visible?: boolean
-  }
+  const p = paint as RawPaint
   if (p.visible === false) return 'hidden'
-  if (p.type === 'SOLID' && p.color) {
-    const { r = 0, g = 0, b = 0 } = p.color
-    const h = (c: number) => Math.max(0, Math.min(255, Math.round(c * 255))).toString(16).padStart(2, '0')
-    const hex = `#${h(r)}${h(g)}${h(b)}`.toUpperCase()
+
+  if (p.color) {
+    const hex = colorToHex(p.color)
     return p.opacity !== undefined && p.opacity < 1 ? `${hex}@${p.opacity.toFixed(2)}` : hex
   }
-  if (p.type?.startsWith('GRADIENT')) return 'gradient'
+  const stops = p.gradientStops
+  if (stops?.length) {
+    const first = stops[0].color
+    const last = stops.at(-1)?.color
+    const ends = [first, last].filter((c): c is RawColor => !!c).map(colorToHex)
+    return `gradient(${[...new Set(ends)].join('→')})`
+  }
   if (p.type === 'IMAGE') return 'image'
   return p.type ?? 'paint'
 }
@@ -93,18 +120,24 @@ const KEY_CATEGORY: Record<string, string> = {
   bottomLeftRadius: 'radius',
   independentCorners: 'radius',
   cornerSmoothing: 'radius',
+  // 'text' is the copy itself and the face it is set in — rewriting either
+  // destroys what the user wrote. 'text-style' is everything about how that copy
+  // is laid out. They are split because a user who centres a heading must not
+  // thereby lock the agent out of centring its siblings: with both in one
+  // category, `set_text_properties` was blocked from applying the user's *own*
+  // alignment to the rest of the design.
   text: 'text',
-  fontSize: 'text',
   fontFamily: 'text',
   fontWeight: 'text',
   italic: 'text',
-  textAlignHorizontal: 'text',
-  textAlignVertical: 'text',
-  textCase: 'text',
-  textDecoration: 'text',
-  lineHeight: 'text',
-  letterSpacing: 'text',
-  maxLines: 'text',
+  fontSize: 'text-style',
+  textAlignHorizontal: 'text-style',
+  textAlignVertical: 'text-style',
+  textCase: 'text-style',
+  textDecoration: 'text-style',
+  lineHeight: 'text-style',
+  letterSpacing: 'text-style',
+  maxLines: 'text-style',
   layoutMode: 'layout',
   layoutDirection: 'layout',
   layoutWrap: 'layout',
@@ -149,7 +182,8 @@ function isReorder(before: string[], after: string[]): boolean {
   return after.every((id) => set.has(id))
 }
 
-/** Add the categories of `keys` to the node's protected set (guard input). */
+/** Add the categories of `keys` to the node's protected set (guard input), and
+ * stamp the step so the protection can expire once it has been reported. */
 function protectCategories(state: InterventionState, id: string, keys: string[]): void {
   let cats = state.protectedProps.get(id)
   for (const key of keys) {
@@ -158,7 +192,35 @@ function protectCategories(state: InterventionState, id: string, keys: string[])
     cats ??= new Set()
     cats.add(cat)
   }
-  if (cats) state.protectedProps.set(id, cats)
+  if (!cats) return
+  state.protectedProps.set(id, cats)
+  state.protectedAt.set(id, state.currentStep)
+}
+
+/**
+ * Drop property protections the model has already been told about.
+ *
+ * A protection has to survive from the moment the edit is detected through the
+ * end of the step whose injected `[User edit]` block reports it — that is the
+ * window where the model doesn't yet know, and would overwrite blindly. After
+ * that the prompt rule ("leave the user's changes alone") is what keeps them
+ * safe; this is how previous_agent works too, clearing `userActionHistory` every
+ * turn.
+ *
+ * Holding them for the whole run instead meant an edit at step 3 was still
+ * silently blocking tools at step 30 — in the measured run a fill change was
+ * still refusing a call 73 seconds later, and the agent read that as "the tool
+ * doesn't work" and rebuilt the design from scratch.
+ *
+ * `userCreated` is deliberately not expired: deleting a node the user made or
+ * copied is unrecoverable, so that guard stands for the whole run.
+ */
+function expireProtections(state: InterventionState): void {
+  for (const [id, at] of state.protectedAt) {
+    if (at >= state.currentStep - 1) continue
+    state.protectedProps.delete(id)
+    state.protectedAt.delete(id)
+  }
 }
 
 /**
@@ -216,22 +278,27 @@ function setBaseline(state: InterventionState, snapshot: PageSnapshot, version: 
   for (const id of snapshot.keys()) state.everSeenIds.add(id)
 }
 
+/**
+ * Report what the user changed — as fact, not as instruction.
+ *
+ * This block used to carry four lines of standing policy, re-sent with every
+ * single edit. Two of them actively caused damage: "apply that same decision to
+ * the remaining elements" fought the guard, which then blocked the agent from
+ * matching the user's own value; and "if the user recolored something, that
+ * color is now the design's accent" promoted a recoloured icon to the whole
+ * design's accent — twice in one run, costing ten steps of re-painting that the
+ * next intervention then undid.
+ *
+ * The policy now lives once in the system prompt (see "When the user edits while
+ * you work"). Here we only say what changed, so the diff isn't buried under
+ * boilerplate the model has already read.
+ */
 function buildInterventionText(diff: string): string {
   return (
-    `[User intervention] While you were working, the user manually edited the canvas. ` +
-    `The following changes were made by the user, not by you:\n${diff}\n\n` +
-    `Treat these edits as the user's intent and the new source of truth. Carry them forward: ` +
-    `everything you build or change from here on must stay consistent with them, and you must ` +
-    `not revert or overwrite them. Whatever the user changed — a color, size, text, spacing, ` +
-    `position, structure, anything — apply that same decision to the remaining elements so the ` +
-    `design follows the user's direction, not your original plan.\n` +
-    `In particular, if the user recolored something, that color is now the design's accent: use ` +
-    `it (or a shade of it) for the colored elements you still add — buttons, tags, highlights, ` +
-    `icons — instead of the accent from your original plan. Do NOT keep your old accent alongside ` +
-    `the user's new one.\n` +
-    `If the user added or duplicated nodes, that is intentional — they are building a variation. ` +
-    `Do NOT treat them as an accidental duplicate and do NOT delete them; leave them and continue. ` +
-    `The exact values and node ids above are authoritative — do NOT call describe just to re-confirm them.`
+    `[User edit] The user changed the canvas while you were working. ` +
+    `These changes are theirs, not yours:\n${diff}\n\n` +
+    `Leave them as they are and carry on with what is still missing. The ids and values ` +
+    `above are exact — do not re-read them to confirm.`
   )
 }
 
@@ -251,6 +318,11 @@ interface InterventionState {
   /** node id → property CATEGORIES the user changed (fill, text, layout…); the
    * guard blocks a tool only if it overwrites one of these, not the whole node. */
   protectedProps: Map<string, Set<string>>
+  /** node id → the step its protection was last refreshed in, so a protection
+   * can expire once the model has been told about it. See `expireProtections`. */
+  protectedAt: Map<string, number>
+  /** Steps finished so far in this run — the clock `protectedAt` is measured on. */
+  currentStep: number
   /** Nodes the user deliberately created; the guard blocks delete/replace so the
    * agent can't wipe the user's variation. */
   userCreated: Set<string>
@@ -270,6 +342,8 @@ function getState(store: EditorStore): InterventionState {
     baselineVersion: store.state.sceneVersion,
     pending: [],
     protectedProps: new Map(),
+    protectedAt: new Map(),
+    currentStep: 0,
     userCreated: new Set(),
     everSeenIds: new Set()
   }
@@ -319,7 +393,7 @@ const TOOL_CATEGORIES: Record<string, ReadonlySet<string>> = {
   stock_photo: new Set(['fill']),
   set_stroke: new Set(['stroke']),
   set_text: new Set(['text']),
-  set_text_properties: new Set(['text']),
+  set_text_properties: new Set(['text-style']),
   set_radius: new Set(['radius']),
   set_layout: new Set(['layout']),
   set_layout_child: new Set(['layout']),
@@ -484,25 +558,27 @@ export interface InterventionTracker {
 
 export function createInterventionTracker(store: EditorStore): InterventionTracker {
   const state = getState(store)
-  let stepCount = 0
 
   return {
     reset() {
       state.pending = []
       state.protectedProps.clear()
+      state.protectedAt.clear()
       state.userCreated.clear()
       state.everSeenIds.clear()
       setBaseline(state, store.snapshotPage(), store.state.sceneVersion)
-      stepCount = 0
+      state.currentStep = 0
     },
     onStepFinish() {
-      stepCount++
+      state.currentStep++
     },
     async prepareStep() {
       // First step: nothing built yet, no pacing needed.
-      if (stepCount === 0) return null
+      if (state.currentStep === 0) return null
 
       await sleep(STEP_DELAY_MS)
+
+      expireProtections(state)
 
       // Diff the current page against the agent's baseline (= user edits since
       // its last mutation / pause), then combine with anything captured while the

@@ -9,6 +9,7 @@ import type { StepBudget, ToolDef, ToolLogEntry } from '@open-pencil/core/tools'
 import type { SceneNode } from '@open-pencil/scene-graph'
 
 import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
+import { logBlocked, logToolCall, logToolError, logToolResult } from '@/app/ai/chat/agent-log'
 import { beginAgentMutation, endAgentMutation, guardMutation } from '@/app/ai/chat/intervention'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { getActiveEditorStore } from '@/app/editor/active-store'
@@ -95,6 +96,12 @@ export function clearToolLogEntries(store?: EditorStore): void {
   getRunState(store).clear()
 }
 
+/** A call the intervention guard refused — `{ skipped: true, reason }` rather
+ * than a real tool result. */
+function isSkipped(result: unknown): result is { skipped: true; reason?: unknown } {
+  return typeof result === 'object' && result !== null && 'skipped' in result
+}
+
 export function createAITools(store: EditorStore) {
   let beforeSnapshot: Map<string, SceneNode> | null = null
   const runState = getRunState(store)
@@ -160,6 +167,10 @@ export function createAITools(store: EditorStore) {
       },
       onToolLog: (entry) => {
         runState.toolLog.push(entry)
+        logToolCall(entry.tool, entry.args)
+        if (entry.error) logToolError(entry.tool, entry.error, entry.durationMs)
+        else if (isSkipped(entry.result)) logBlocked(entry.tool, String(entry.result.reason ?? ''))
+        else logToolResult(entry.tool, entry.result, entry.durationMs)
       },
       getStepBudget: (): StepBudget => ({
         current: runState.currentSteps,

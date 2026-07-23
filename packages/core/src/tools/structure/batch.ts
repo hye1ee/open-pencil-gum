@@ -14,6 +14,31 @@ function num(value: unknown): number {
   return typeof value === 'number' ? value : 0
 }
 
+/**
+ * Every prop key `applyBatchProps` understands. Anything else in an op is
+ * silently dropped, so this list is reported back when nothing applied — a run
+ * where the model passed `{color: "#10172E"}` got `{updated: 0}` with no error,
+ * read it as success, and spent fifteen steps working around a change that had
+ * never happened.
+ */
+const SUPPORTED_PROPS = [
+  'spacing',
+  'padding',
+  'padding_horizontal',
+  'padding_vertical',
+  'align',
+  'counter_align',
+  'sizing_horizontal',
+  'sizing_vertical',
+  'grow',
+  'name',
+  'visible',
+  'corner_radius',
+  'opacity',
+  'auto_resize',
+  'direction'
+] as const
+
 function applyBatchProps(node: FigmaNodeProxy, props: Record<string, unknown>): string[] {
   const updated: string[] = []
 
@@ -91,7 +116,7 @@ export const batchUpdate = defineTool({
   name: 'batch_update',
   mutates: true,
   description:
-    'Execute multiple modifications in one call. Each operation is {id, props} where props can include: spacing, padding, padding_horizontal, padding_vertical, counter_align, sizing_horizontal, sizing_vertical, grow, name, visible, corner_radius, auto_resize (for text), direction. Runs all updates with one layout recompute.',
+    `Execute multiple modifications in one call. Each operation is {id, props}. Props MUST come from this list — anything else is ignored: ${SUPPORTED_PROPS.join(', ')}. Colors, strokes, radius per-corner and text content are NOT here — use set_fill / set_stroke / set_radius / set_text / set_text_properties for those. Runs all updates with one layout recompute.`,
   params: {
     operations: {
       type: 'string',
@@ -110,6 +135,7 @@ export const batchUpdate = defineTool({
     if (!Array.isArray(ops)) return { error: 'operations must be a JSON array' }
 
     const results: Array<{ id: string; updated: string[] }> = []
+    const ignored: Array<{ id: string; props: string[] }> = []
     const errors: string[] = []
 
     for (const op of ops) {
@@ -120,11 +146,25 @@ export const batchUpdate = defineTool({
       }
       const updated = applyBatchProps(node, op.props)
       if (updated.length > 0) results.push({ id: op.id, updated })
+      const dropped = Object.keys(op.props ?? {}).filter((key) => !updated.includes(key))
+      if (dropped.length > 0) ignored.push({ id: op.id, props: dropped })
     }
 
     const out: Record<string, unknown> = { updated: results.length }
     if (results.length > 0) out.results = results
+    if (ignored.length > 0) out.ignored = ignored
     if (errors.length > 0) out.errors = errors
+
+    // Nothing applied and nothing else to report: say so as an error. Returning a
+    // bare {updated: 0} reads as success, and the model moves on believing the
+    // canvas changed when it did not.
+    if (results.length === 0 && errors.length === 0) {
+      const dropped = [...new Set(ignored.flatMap((entry) => entry.props))]
+      out.error =
+        `No property was applied. batch_update ignored: ${dropped.join(', ') || '(no props given)'}. ` +
+        `It only handles ${SUPPORTED_PROPS.join(', ')} — use set_fill / set_stroke / set_radius / ` +
+        `set_text / set_text_properties for anything else.`
+    }
     return out
   }
 })

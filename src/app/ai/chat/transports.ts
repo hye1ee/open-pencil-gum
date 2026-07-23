@@ -7,6 +7,16 @@ import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import {
+  logAgentText,
+  logIntervention,
+  logPlan,
+  logRunEnd,
+  logRunStart,
+  logStep,
+  logUsage,
+  logUserMessage
+} from '@/app/ai/chat/agent-log'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
@@ -152,6 +162,9 @@ export function createToolLoopTransport({
     maxOutputTokens,
     providerOptions: cacheProviderOptions,
     prepareCall: (options) => {
+      // First, so the log reset it performs can't wipe lines written below it.
+      const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
+      logRunStart(lastUserText(sent))
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
@@ -174,14 +187,29 @@ export function createToolLoopTransport({
       const userMessages = drainUserMessages(store)
       const image = await vision.imagePart()
 
+      if (diff) logIntervention(diff)
+      for (const text of userMessages) logUserMessage(text)
+
       if (stepNumber === 0) {
         plan = await runPlan(model, store, lastUserText(messages), image)
+        logPlan(plan)
       } else if (plan && (diff || userMessages.length > 0)) {
         // Only on an intervention. The agent runs for twenty-odd steps, so
         // reconciling the directive every step would cost more than the build.
         const change = [diff, ...userMessages].filter(Boolean).join('\n')
         plan = await runPlanUpdate(model, store, plan, change)
+        logPlan(plan, true)
       }
+
+      logStep(
+        stepNumber,
+        [
+          image ? '[image]' : '',
+          diff ? '[user-edit]' : '',
+          userMessages.length > 0 ? `[user-msg ×${userMessages.length}]` : '',
+          plan ? '[plan]' : ''
+        ].filter(Boolean)
+      )
 
       const content = buildStepContent({ plan, image, diff, userMessages })
       if (content.length === 0) return undefined
@@ -191,17 +219,21 @@ export function createToolLoopTransport({
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()
+      logAgentText(step.text)
       const { usage } = step
-      recordStepUsage(
-        {
-          inputTokens: usage.inputTokens ?? 0,
-          outputTokens: usage.outputTokens ?? 0,
-          cacheReadTokens: usage.inputTokenDetails.cacheReadTokens ?? 0,
-          cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens ?? 0,
-          timestamp: Date.now()
-        },
-        store
-      )
+      const recorded = {
+        inputTokens: usage.inputTokens ?? 0,
+        outputTokens: usage.outputTokens ?? 0,
+        cacheReadTokens: usage.inputTokenDetails.cacheReadTokens ?? 0,
+        cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens ?? 0,
+        timestamp: Date.now()
+      }
+      logUsage(recorded)
+      recordStepUsage(recorded, store)
+    },
+    onFinish: ({ finishReason, steps }) => {
+      // Also flushes the buffer, so the file is complete the moment a run ends.
+      logRunEnd(`${finishReason}  ${steps.length} steps`)
     }
   })
 

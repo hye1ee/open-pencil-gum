@@ -52,3 +52,6 @@ scratch/
 
 # OpenCode
 .opencode/
+
+# Dev trace of a single agent run (vite/agent-log.ts)
+agent-log.txt

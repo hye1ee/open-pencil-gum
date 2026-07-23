@@ -8,6 +8,7 @@ import Components from 'unplugin-vue-components/vite'
 import { defineConfig } from 'vite'
 
 import packageJson from './package.json'
+import { agentLogPlugin } from './vite/agent-log'
 import { createOpenPencilAliases } from './vite/aliases'
 import { localAutomationToken, openPencilAutomationPlugin } from './vite/automation'
 import { copyCanvasKitAssetsPlugin } from './vite/canvaskit-assets'
@@ -26,6 +27,7 @@ export default defineConfig(async ({ command }) => ({
     __OPENPENCIL_LOCAL_AUTOMATION_TOKEN__: JSON.stringify(localAutomationToken(command))
   },
   plugins: [
+    agentLogPlugin(__dirname),
     rawMarkdownPlugin(),
     copyCanvasKitAssetsPlugin(),
     tailwindcss(),

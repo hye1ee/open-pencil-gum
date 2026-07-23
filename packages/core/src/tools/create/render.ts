@@ -39,9 +39,7 @@ export const render = defineTool({
     const results = await renderJSX(figma.graph, args.jsx, {
       parentId,
       x: args.x,
-      y: args.y,
-      chunkSize: figma.renderChunk?.size,
-      onChunk: figma.renderChunk?.flush
+      y: args.y
     })
     const result = results[0]
 
