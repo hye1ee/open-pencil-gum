@@ -38,13 +38,15 @@ const dragging = ref(false)
 
 const BUBBLE_MAX_PX = 260
 
-// One bubble, two sources: while the agent works it speaks its own step text;
-// while idle it only reacts to being poked. The resume prompt takes the same
-// spot, so it wins when it's up.
+// One bubble, three sources: while the agent works it streams its reasoning and
+// then speaks its own line; while idle it only reacts to being poked. The resume
+// prompt takes the same spot, so it wins when it's up. `thinking` is styled
+// down — it's the agent talking to itself, not to the user.
 const bubble = computed(() => {
-  if (agentTurn.askResume) return ''
-  if (agentTurn.running || agentTurn.paused) return agentSpeech.text
-  return pokeMessage.value
+  if (agentTurn.askResume) return null
+  const text = agentTurn.running || agentTurn.paused ? agentSpeech.text : pokeMessage.value
+  if (!text) return null
+  return { text, thinking: agentSpeech.thinking && !!agentTurn.running }
 })
 
 // Anchored to the right of the cursor and clamped so a long line doesn't run off
@@ -160,14 +162,25 @@ onUnmounted(() => {
     >
       <div
         v-if="bubble && bubblePos"
-        class="pointer-events-none absolute -translate-y-full rounded-2xl rounded-bl-sm bg-panel px-3 py-1.5 text-xs leading-snug font-medium text-balance text-surface shadow-lg ring-1 ring-border"
+        class="pointer-events-none absolute -translate-y-full rounded-2xl rounded-bl-sm px-3 py-1.5 text-xs leading-snug text-balance shadow-lg ring-1 transition-colors"
+        :class="
+          bubble.thinking
+            ? 'bg-panel/80 font-normal text-muted italic ring-border/60'
+            : 'bg-panel font-medium text-surface ring-border'
+        "
         :style="{
           left: `${bubblePos.left}px`,
           top: `${bubblePos.top}px`,
           maxWidth: `${BUBBLE_MAX_PX}px`
         }"
       >
-        {{ bubble }}
+        {{ bubble.text
+        }}<span
+          v-if="bubble.thinking"
+          class="ml-0.5 inline-block animate-pulse not-italic"
+          aria-hidden="true"
+          >▌</span
+        >
       </div>
     </Transition>
 

@@ -116,6 +116,18 @@ export function logAgentText(text: string): void {
   writeBlock('AGENT', text)
 }
 
+/** The model's reasoning summary, written when the block closes — i.e. while the
+ * step is still running, before the tool calls it led to. */
+export function logThinking(text: string): void {
+  writeBlock('THINK', text)
+}
+
+/** One line, not the prompt itself: it is ~10k chars and identical every step,
+ * so the full text goes to the console once instead of burying the timeline. */
+export function logSystemPrompt(chars: number): void {
+  write('SYSTEM', `${chars.toLocaleString()} chars`)
+}
+
 export function logAttention(text: string): void {
   writeBlock('ATTN', text)
 }

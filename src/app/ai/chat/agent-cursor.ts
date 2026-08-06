@@ -8,9 +8,10 @@ import type { EditorStore } from '@/app/editor/active-store'
 /**
  * Visual "presence" for the AI agent: a cursor + "Agent" nameplate that lives on
  * the canvas. While the agent is actually running a turn it tracks whatever node
- * it's building; when idle it rests at the center of the user's current view (or
- * wherever the user parked it) and drifts in a small orbit so it feels alive —
- * always visible on screen, wherever the user has panned/zoomed. Rendered by the
+ * it's building and drifts in a small orbit so it feels alive; when idle it
+ * comes to rest at the center of the user's current view (or wherever the user
+ * parked it) — always visible on screen, wherever the user has panned/zoomed.
+ * Rendered by the
  * existing remote-cursor overlay (it reads store.state.agentCursor) — we never
  * create real scene nodes, so nothing here touches the graph, the intervention
  * diff, the guard, or exports.
@@ -115,10 +116,13 @@ function frame(store: EditorStore, state: AgentCursorState, t: number): void {
     return
   }
 
-  // Frozen while paused, and damped toward still while the pointer is on it.
-  const amp = agentTurn.paused
-    ? 0
-    : (WANDER_SCREEN_PX / (store.state.zoom || 1)) * (1 - HOVER_CALM * state.emphasis)
+  // Only while it is actually working. An idle cursor circling on its own reads
+  // as a spinner — something loading — rather than as presence. Frozen while
+  // paused, and damped toward still while the pointer is on it.
+  const amp =
+    agentTurn.paused || !agentTurn.running
+      ? 0
+      : (WANDER_SCREEN_PX / (store.state.zoom || 1)) * (1 - HOVER_CALM * state.emphasis)
   store.state.agentCursor = {
     name: 'Agent',
     color: COLOR,

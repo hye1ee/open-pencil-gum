@@ -9,7 +9,6 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 import { agentAttention, buildAttentionText, clearAttention } from '@/app/ai/chat/agent-attention'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
-  logAgentText,
   logAttention,
   logIntervention,
   logPlan,
@@ -19,11 +18,12 @@ import {
   logUsage,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
-import { clearAgentSpeech, sayAgent } from '@/app/ai/chat/agent-speech'
+import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
+import { anthropicThinkingOptions } from '@/app/ai/chat/model-trace'
 import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
 import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
@@ -195,6 +195,13 @@ export function createToolLoopTransport({
   const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
     : undefined
+  // Call-level options. Thinking has to go here rather than on a message —
+  // it configures the request, not a block within it — and only the first-party
+  // provider is known to accept the adaptive form.
+  const callProviderOptions =
+    providerID === 'anthropic' && anthropicThinkingOptions
+      ? { anthropic: { ...ANTHROPIC_CACHE_CONTROL.anthropic, ...anthropicThinkingOptions } }
+      : cacheProviderOptions
 
   // Hoisted so the planning calls run against the same model as the agent.
   const model = createLanguageModel({
@@ -216,7 +223,7 @@ export function createToolLoopTransport({
     tools,
     stopWhen: stepCountIs(MAX_AGENT_STEPS),
     maxOutputTokens,
-    providerOptions: cacheProviderOptions,
+    providerOptions: callProviderOptions,
     prepareCall: (options) => {
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
@@ -233,7 +240,7 @@ export function createToolLoopTransport({
       return {
         ...options,
         maxOutputTokens,
-        providerOptions: cacheProviderOptions
+        providerOptions: callProviderOptions
       }
     },
     prepareStep: async ({ messages, stepNumber }) => {
@@ -293,9 +300,9 @@ export function createToolLoopTransport({
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()
-      logAgentText(step.text)
-      // Same text the chat shows, mirrored onto the canvas next to the cursor.
-      sayAgent(step.text)
+      // The log line and the canvas bubble are both driven from the stream tap
+      // in `model-trace.ts` — doing it here would put them after the tool calls
+      // they came before.
       const { usage } = step
       const recorded = {
         inputTokens: usage.inputTokens ?? 0,
