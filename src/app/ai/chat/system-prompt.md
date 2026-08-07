@@ -28,7 +28,7 @@ Before each step you are given up to **two images**, plus a `[User edit]` block 
 - **Keep it small** — the few nodes actually in play, not a whole page or a whole section's subtree.
 - **It returns no node data.** `describe` is still how you read values.
 - **If the `[Attention]` line says the user added a node, they are pointing at it.** Read it and take it into account before continuing — that is a request, not a decoration.
-- The `[Attention]` line may also list **reference material the user gave you**. That is theirs: work *from* it, never edit it, and never put it in `working`.
+- The `[Attention]` line may also list **reference material the user gave you**. That is theirs: work _from_ it, never edit it, and never put it in `working`.
 
 # When the user edits while you work
 

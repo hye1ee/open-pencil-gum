@@ -66,7 +66,13 @@ interface Candidate {
 
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
-  propose(input: { system: string; images: Blob[]; instruction: string }): Promise<string>
+  propose(input: {
+    system: string
+    images: Blob[]
+    instruction: string
+    /** What else was happening while these frames were taken, if anything. */
+    context: string[]
+  }): Promise<string>
   /** Text call. Returns the model's raw text. */
   revise(input: { system: string; prompt: string }): Promise<string>
   /** One request for all the texts, in order. */
@@ -87,13 +93,24 @@ export interface UserModelOptions {
 
 export type PipelineStage = 'idle' | 'proposing' | 'revising'
 
-export interface UserModel {
+export interface FrameMeta {
   /**
-   * `signature` is a small greyscale thumbnail (see `page-capture`). Supplying
-   * it lets a batch where nothing moved be dropped before any model call;
-   * without it every batch runs.
+   * A small greyscale thumbnail (see `page-capture`). Supplying it lets a batch
+   * where nothing moved be dropped before any model call; without it every
+   * batch runs.
    */
-  addFrame(frame: Blob, signature?: Uint8Array): void
+  signature?: Uint8Array
+  /**
+   * Anything the caller knows about this moment that the pixels do not say —
+   * above all, whether something other than the user was driving. Screenshots
+   * cannot tell "the user did this" from "the user watched this happen", and
+   * a user model built without that distinction learns the wrong person.
+   */
+  note?: string
+}
+
+export interface UserModel {
+  addFrame(frame: Blob, meta?: FrameMeta): void
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -295,6 +312,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
   let propositions: Proposition[] = []
   let buffer: Blob[] = []
   let signatures: Uint8Array[] = []
+  let notes: string[] = []
   /** The last frame we actually spent a model call on. */
   let lastLooked: Uint8Array | null = null
   /** One batch at a time: revisions mutate the same set, so they cannot race. */
@@ -341,7 +359,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     return touched
   }
 
-  async function run(frames: Blob[]): Promise<void> {
+  async function run(frames: Blob[], context: string[]): Promise<void> {
     running = true
     try {
       stage('proposing')
@@ -349,7 +367,8 @@ export function createUserModel(options: UserModelOptions): UserModel {
         await deps.propose({
           system: PROPOSE_SYSTEM,
           images: frames,
-          instruction: PROPOSE_INSTRUCTION
+          instruction: PROPOSE_INSTRUCTION,
+          context
         })
       )
       if (candidates.length === 0) return
@@ -429,25 +448,32 @@ export function createUserModel(options: UserModelOptions): UserModel {
       propositions = []
       buffer = []
       signatures = []
+      notes = []
       lastLooked = null
     },
 
-    addFrame(frame, signature) {
+    addFrame(frame, meta) {
       buffer.push(frame)
-      if (signature) signatures.push(signature)
+      if (meta?.signature) signatures.push(meta.signature)
+      if (meta?.note) notes.push(meta.note)
       if (buffer.length < batchSize) return
       if (running) {
         // Drop the oldest instead of queueing: falling behind should cost
         // history, not memory, and the recent frames are the relevant ones.
         buffer = buffer.slice(-batchSize)
         signatures = signatures.slice(-batchSize)
+        notes = notes.slice(-batchSize)
         return
       }
 
       const batch = buffer
       const batchSignatures = signatures
+      // The same note repeats across a batch — the agent does not start and
+      // stop between frames — so it is the distinct ones that carry meaning.
+      const batchNotes = [...new Set(notes)]
       buffer = []
       signatures = []
+      notes = []
 
       // A partly-signed batch is not evidence of stillness — the frames we
       // cannot see might be the ones that moved.
@@ -462,7 +488,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
         return
       }
       lastLooked = batchSignatures.at(-1) ?? lastLooked
-      void run(batch)
+      void run(batch, batchNotes)
     }
   }
 }

@@ -186,9 +186,7 @@ export function buildAttentionText(store: EditorStore): string | null {
   }
   if (agentAttention.reference.length > 0) {
     const listed = agentAttention.reference.map((id) => nodeLabel(store, id)).join(', ')
-    lines.push(
-      `Working from (reference, not yours to judge or change): ${listed}`
-    )
+    lines.push(`Working from (reference, not yours to judge or change): ${listed}`)
   }
 
   const { added, removed } = pendingUserEdits

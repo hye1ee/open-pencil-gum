@@ -115,7 +115,11 @@ export function createCanvasVision(store: EditorStore): CanvasVision {
 
       const sceneVersion = store.state.sceneVersion
       const key = live.join(',')
-      if (attentionCache && attentionCache.sceneVersion === sceneVersion && attentionCache.key === key) {
+      if (
+        attentionCache &&
+        attentionCache.sceneVersion === sceneVersion &&
+        attentionCache.key === key
+      ) {
         return attentionCache.part
       }
 

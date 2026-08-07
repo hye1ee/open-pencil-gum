@@ -2,6 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { embedMany, generateText } from 'ai'
 import type { LanguageModel, UserContent } from 'ai'
 
+import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import {
   apiKey,
@@ -12,21 +13,16 @@ import {
   modelID,
   providerID
 } from '@/app/ai/chat/storage'
-import {
-  createUserModel,
-  type Proposition,
-  type SavedProposition,
-  type UserModel
-} from '@/app/user-model/pipeline'
+import { userEditsSince } from '@/app/ai/chat/user-edits'
+import { getToolLogEntries } from '@/app/ai/tools'
+import { createUserModel, type UserModel } from '@/app/user-model/pipeline'
+import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 
 /**
  * The app-specific half of the user model: which models it calls and where the
  * propositions are kept. `pipeline.ts` knows none of this.
  */
-
-const ENDPOINT = '/__user-model'
-const AUDIT_ENDPOINT = '/__propositions'
 
 /**
  * Both stages run on the cheapest capable model rather than whatever the user
@@ -82,14 +78,55 @@ function noThinkingOptions() {
     : undefined
 }
 
+/** A frame's worth of tool history; the capture cadence is five seconds. */
+const NOTE_WINDOW_MS = 6000
+
+/**
+ * What this moment looks like from inside the app, for the frames to be read
+ * against — the thing screenshots can never show, which is who was acting.
+ *
+ * Both can be true at once: the agent builds over many steps and the user is
+ * free to edit the canvas the whole time, which is what `intervention.ts`
+ * exists to untangle. So the note reports both sides rather than declaring the
+ * canvas to be one party's work.
+ */
+export function frameNote(): string | undefined {
+  const since = Date.now() - NOTE_WINDOW_MS
+  const edits = userEditsSince(since)
+  if (!agentTurn.running && edits.length === 0) return undefined
+
+  const parts: string[] = []
+  if (agentTurn.running) {
+    const tools = [
+      ...new Set(
+        getToolLogEntries()
+          .filter((entry) => entry.mutates && entry.timestamp >= since)
+          .map((entry) => entry.tool)
+      )
+    ]
+    parts.push(
+      tools.length === 0
+        ? "An AI agent is carrying out the user's request."
+        : `An AI agent is carrying out the user's request, changing the canvas with: ${tools.join(', ')}.`
+    )
+  }
+  if (edits.length > 0) {
+    parts.push(`Meanwhile the user edited the canvas by hand:\n${edits.join('\n')}`)
+  }
+  return parts.join('\n')
+}
+
 export function createPropositionSink(sessionId: string): UserModel {
   const model = createUserModel({
     deps: {
-      propose: async ({ system, images, instruction }) => {
+      propose: async ({ system, images, instruction, context }) => {
         const frames = await Promise.all(images.map((image) => image.arrayBuffer()))
         // Each image is labelled with its position. Unlabelled, the model tends
         // to describe the last frame; numbered, it talks about what changed.
         const content: UserContent = [{ type: 'text', text: instruction }]
+        // Before the frames, so it colours how they are read rather than
+        // arriving as an afterthought once conclusions are formed.
+        if (context.length > 0) content.push({ type: 'text', text: context.join('\n') })
         for (const [i, data] of frames.entries()) {
           content.push({ type: 'text', text: `Frame ${i + 1} of ${frames.length}:` })
           content.push({ type: 'image', image: new Uint8Array(data) })
@@ -159,68 +196,4 @@ export function createPropositionSink(sessionId: string): UserModel {
   return model
 }
 
-/** The whole model, rewritten each time. It is small and this is a dev tool. */
-function save(propositions: Proposition[]): Promise<void> {
-  return fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ updatedAt: new Date().toISOString(), propositions }, null, 2)
-  })
-    .then(() => undefined)
-    .catch((error: unknown) => {
-      console.warn('[user-model] could not save:', error)
-    })
-}
-
-interface SavedModel {
-  propositions?: unknown
-}
-
-function isSaved(value: unknown): value is SavedModel {
-  return typeof value === 'object' && value !== null
-}
-
-export function load(): Promise<SavedProposition[]> {
-  return fetch(ENDPOINT)
-    .then((response) => (response.ok ? response.json() : null))
-    .then((data: unknown) =>
-      isSaved(data) && Array.isArray(data.propositions)
-        ? (data.propositions as SavedProposition[])
-        : []
-    )
-    .catch((error: unknown) => {
-      console.warn('[user-model] could not load:', error)
-      return []
-    })
-}
-
-export function clearSaved(): Promise<void> {
-  return save([])
-}
-
-/**
- * A per-session record of what the model looked like after each batch, kept
- * alongside the frames it was inferred from. The snapshot above is the state;
- * this is the history, and it is the only way to see how a proposition got its
- * current wording.
- */
-function appendAudit(sessionId: string, propositions: Proposition[]): Promise<void> {
-  const line = JSON.stringify({
-    at: new Date().toISOString(),
-    propositions: propositions.map((p) => ({
-      id: p.id,
-      text: p.text,
-      confidence: p.confidence,
-      decay: p.decay,
-      observations: p.observations,
-      revisions: p.revisions
-    }))
-  })
-  return fetch(`${AUDIT_ENDPOINT}?session=${encodeURIComponent(sessionId)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: line + '\n'
-  })
-    .then(() => undefined)
-    .catch(() => undefined)
-}
+export { clearSaved }

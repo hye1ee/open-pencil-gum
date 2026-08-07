@@ -15,7 +15,11 @@ interface AgentTurnState {
   askResume: boolean
 }
 
-export const agentTurn: AgentTurnState = reactive({ running: false, paused: false, askResume: false })
+export const agentTurn: AgentTurnState = reactive({
+  running: false,
+  paused: false,
+  askResume: false
+})
 
 let resolvers: Array<() => void> = []
 
