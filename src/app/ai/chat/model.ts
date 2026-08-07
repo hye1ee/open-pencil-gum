@@ -44,10 +44,15 @@ const ANTHROPIC_BROWSER_HEADERS = {
 export function createLanguageModel(config: ModelConfig): LanguageModel {
   // Wrapped so a dev build streams the model's thinking and text into the run
   // log as it arrives; a no-op in production.
-  return withModelTrace(createProviderModel(config))
+  return withModelTrace(createUntracedLanguageModel(config))
 }
 
-function createProviderModel(config: ModelConfig) {
+/**
+ * The model without the trace wrapper. Background work (the user model) uses
+ * this directly — its calls are not the agent's turn, and routing them through
+ * the tap would put their text in the agent's speech bubble and run log.
+ */
+export function createUntracedLanguageModel(config: ModelConfig) {
   const effectiveModelID = resolveLanguageModelID(config)
   const fetch = desktopFetch()
 

@@ -22,7 +22,10 @@ import { createChatSessionManager } from '@/app/ai/chat/transports'
 import { exposeChatTransportOverride } from '@/app/browser-bridge'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 
-const activeTab = ref<'design' | 'code' | 'ai'>('design')
+/** The right-hand panel's tabs. `user-model` only exists in dev builds. */
+export type PanelTab = 'design' | 'code' | 'ai' | 'user-model'
+
+const activeTab = ref<PanelTab>('design')
 
 const chatSession = createChatSessionManager({
   isConfigured,

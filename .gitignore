@@ -55,3 +55,6 @@ scratch/
 
 # Dev trace of a single agent run (vite/agent-log.ts)
 agent-log.txt
+
+# Page capture frames (vite/page-capture.ts)
+captures/

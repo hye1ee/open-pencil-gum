@@ -35,12 +35,26 @@ type CallParams = Parameters<WrapStream>[0]['params']
 type StreamPart =
   Awaited<ReturnType<WrapStream>>['stream'] extends ReadableStream<infer Part> ? Part : never
 
+const THINKING_REQUESTED = import.meta.env.VITE_AI_THINKING === 'true'
+
 /** On 4.6+ the summary is opt-in twice over: `thinking` enables the block,
  * `display` decides whether it carries text (default `omitted` streams empty). */
-export const anthropicThinkingOptions =
-  import.meta.env.VITE_AI_THINKING === 'true'
-    ? ({ thinking: { type: 'adaptive', display: 'summarized' } } as const)
-    : undefined
+export const anthropicThinkingOptions = THINKING_REQUESTED
+  ? ({ thinking: { type: 'adaptive', display: 'summarized' } } as const)
+  : undefined
+
+/**
+ * Gemini thinks by default but keeps it to itself; `includeThoughts` is what
+ * puts the summary on the wire. The budget is left unset so the model decides
+ * how long to think, which is what a reasoning model is for.
+ *
+ * Nothing downstream needs to know which provider this came from — the SDK's
+ * Google adapter already turns thought parts into the same `reasoning-*` chunks
+ * the tap below reads.
+ */
+export const googleThinkingOptions = THINKING_REQUESTED
+  ? ({ thinkingConfig: { includeThoughts: true } } as const)
+  : undefined
 
 /**
  * Beats between the three things that happen in a step. Without them the model

@@ -23,7 +23,7 @@ import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
-import { anthropicThinkingOptions } from '@/app/ai/chat/model-trace'
+import { anthropicThinkingOptions, googleThinkingOptions } from '@/app/ai/chat/model-trace'
 import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
 import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
@@ -75,6 +75,28 @@ function supportsAnthropicCaching(providerID: AIProviderID, modelID: string): bo
     providerID === 'anthropic-compatible' ||
     (providerID === 'openrouter' && modelID.startsWith('anthropic/'))
   )
+}
+
+/**
+ * Call-level options. Thinking belongs here rather than on a message — it
+ * configures the request, not a block within it — and every provider spells it
+ * differently, so this is the one place that has to know which one it is.
+ * Downstream is spared: the SDK turns both into the same `reasoning-*` chunks.
+ *
+ * Only the first-party providers are known to accept these forms; anyone else
+ * gets caching alone, and the thinking bubble stays quiet.
+ */
+function thinkingCallOptions(
+  providerID: AIProviderID,
+  caching: typeof ANTHROPIC_CACHE_CONTROL | undefined
+) {
+  if (providerID === 'anthropic' && anthropicThinkingOptions) {
+    return { anthropic: { ...ANTHROPIC_CACHE_CONTROL.anthropic, ...anthropicThinkingOptions } }
+  }
+  if (providerID === 'google' && googleThinkingOptions) {
+    return { google: googleThinkingOptions }
+  }
+  return caching
 }
 
 /** The newest user turn — what the planning call is asked to plan for. */
@@ -195,13 +217,7 @@ export function createToolLoopTransport({
   const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
     : undefined
-  // Call-level options. Thinking has to go here rather than on a message —
-  // it configures the request, not a block within it — and only the first-party
-  // provider is known to accept the adaptive form.
-  const callProviderOptions =
-    providerID === 'anthropic' && anthropicThinkingOptions
-      ? { anthropic: { ...ANTHROPIC_CACHE_CONTROL.anthropic, ...anthropicThinkingOptions } }
-      : cacheProviderOptions
+  const callProviderOptions = thinkingCallOptions(providerID, cacheProviderOptions)
 
   // Hoisted so the planning calls run against the same model as the agent.
   const model = createLanguageModel({

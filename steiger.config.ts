@@ -17,7 +17,8 @@ export default defineConfig([
       'desktop/**',
       'public/**',
       'scratch/**',
-      'demo-recordings/**'
+      'demo-recordings/**',
+      'captures/**'
     ]
   },
   {

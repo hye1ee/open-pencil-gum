@@ -7,14 +7,17 @@ import type { EditorStore } from '@/app/editor/active-store'
 
 /**
  * Visual "presence" for the AI agent: a cursor + "Agent" nameplate that lives on
- * the canvas. While the agent is actually running a turn it tracks whatever node
- * it's building and drifts in a small orbit so it feels alive; when idle it
- * comes to rest at the center of the user's current view (or wherever the user
- * parked it) — always visible on screen, wherever the user has panned/zoomed.
- * Rendered by the
- * existing remote-cursor overlay (it reads store.state.agentCursor) — we never
- * create real scene nodes, so nothing here touches the graph, the intervention
- * diff, the guard, or exports.
+ * the canvas. While the agent is running a turn it tracks whatever node it's
+ * building; when idle it rests at the center of the user's current view (or
+ * wherever the user parked it) — always visible on screen, wherever the user has
+ * panned/zoomed. Rendered by the existing remote-cursor overlay (it reads
+ * store.state.agentCursor) — we never create real scene nodes, so nothing here
+ * touches the graph, the intervention diff, the guard, or exports.
+ *
+ * It only ever moves toward something. An earlier version drifted in a small
+ * orbit to feel alive, but a cursor circling on its own — including between
+ * actions, which is most of a step — reads as a loading spinner, and it made the
+ * grab target squirm away from the pointer.
  *
  * Each frame we call store.requestRepaint() (an overlay-only repaint that emits
  * the render event the loop actually listens to — bumping renderVersion alone is
@@ -23,11 +26,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 
 const COLOR = { r: 0.49, g: 0.36, b: 0.96, a: 1 }
 const FOLLOW = 0.08 // easing toward the goal per frame
-const WANDER_SCREEN_PX = 22 // orbit radius, kept constant in screen space
 const EMPHASIS_FOLLOW = 0.2 // hover swell easing per frame
-/** How much of the wander the hover cancels. A drifting target is annoying to
- * grab, so pointing at it makes it settle — the swell alone would fight you. */
-const HOVER_CALM = 0.85
 
 interface AgentCursorState {
   nodeAnchor: Vector | null // node the agent is currently building (world space)
@@ -81,10 +80,10 @@ function isOnScreen(store: EditorStore, p: Vector): boolean {
   )
 }
 
-function frame(store: EditorStore, state: AgentCursorState, t: number): void {
+function frame(store: EditorStore, state: AgentCursorState): void {
   if (!state.active) return
   const next = () => {
-    state.rafId = requestAnimationFrame((n) => frame(store, state, n))
+    state.rafId = requestAnimationFrame(() => frame(store, state))
   }
 
   // Runs even while paused — the swell is the grab affordance, so it has to
@@ -116,18 +115,11 @@ function frame(store: EditorStore, state: AgentCursorState, t: number): void {
     return
   }
 
-  // Only while it is actually working. An idle cursor circling on its own reads
-  // as a spinner — something loading — rather than as presence. Frozen while
-  // paused, and damped toward still while the pointer is on it.
-  const amp =
-    agentTurn.paused || !agentTurn.running
-      ? 0
-      : (WANDER_SCREEN_PX / (store.state.zoom || 1)) * (1 - HOVER_CALM * state.emphasis)
   store.state.agentCursor = {
     name: 'Agent',
     color: COLOR,
-    x: state.cur.x + amp * Math.sin(t / 900),
-    y: state.cur.y + amp * Math.cos(t / 1300),
+    x: state.cur.x,
+    y: state.cur.y,
     emphasis: state.emphasis,
     watching: agentAttention.working.length
   }
@@ -180,7 +172,7 @@ export function showAgentCursor(store: EditorStore): void {
   state.nodeAnchor = null // fresh slate: don't chase a node left over from a prior run
   if (state.active) return
   state.active = true
-  state.rafId = requestAnimationFrame((t) => frame(store, state, t))
+  state.rafId = requestAnimationFrame(() => frame(store, state))
 }
 
 /** Stop and clear the agent cursor. */
