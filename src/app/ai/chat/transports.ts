@@ -6,10 +6,8 @@ import type { ComputedRef, Ref } from 'vue'
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
-import { agentAttention, buildAttentionText, clearAttention } from '@/app/ai/chat/agent-attention'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
-  logAttention,
   logIntervention,
   logPlan,
   logRunEnd,
@@ -21,6 +19,7 @@ import {
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
+import { clearMismatch } from '@/app/ai/chat/mismatch'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import { anthropicThinkingOptions, googleThinkingOptions } from '@/app/ai/chat/model-trace'
@@ -121,39 +120,19 @@ function lastUserText(messages: readonly ModelMessage[]): string {
  */
 function buildStepContent(args: {
   plan: string | null
-  attention: string | null
   image: ImagePart | null
-  attentionImage: ImagePart | null
   diff: string | null
   userMessages: string[]
 }): UserContent {
   const content: UserContent = []
   // First, so it is never buried under the image or a long intervention block.
   if (args.plan) content.push({ type: 'text', text: `[Plan] ${args.plan}` })
-  // Directly under the directive: both are short standing context the agent has
-  // to reconcile before it decides what to do this step.
-  if (args.attention) content.push({ type: 'text', text: args.attention })
   if (args.image) {
     content.push({
       type: 'text',
       text: 'Whole canvas (composition only — too small to read text or judge exact colour):'
     })
     content.push(args.image)
-  }
-  // After the overview, so the pair reads as "here is everything, now here is
-  // the part you said you were working on".
-  //
-  // The wording matters more than it looks. An earlier version called this "the
-  // reliable one for spacing, alignment and colour"; the agent had put a card it
-  // was copying from into its attention, so every step it received a big sharp
-  // picture of someone else's work labelled "judge by this" — and spent nine
-  // steps reviewing the reference instead of building.
-  if (args.attentionImage) {
-    content.push({
-      type: 'text',
-      text: 'Close-up of your current `working` set, with surrounding canvas for context. Use it for detail the overview above cannot carry — exact spacing, alignment, colour. It does not replace the overview: keep judging how this sits in the whole page from that. It shows whatever you last put in `working`, so if that is stale, move the attention. Node ids come from the tools, not from here:'
-    })
-    content.push(args.attentionImage)
   }
   if (args.diff) content.push({ type: 'text', text: args.diff })
   if (args.userMessages.length > 0) {
@@ -251,7 +230,7 @@ export function createToolLoopTransport({
       plan = null
       resumeTurn()
       clearAgentSpeech()
-      clearAttention(store)
+      clearMismatch(store)
       showAgentCursor(store)
       return {
         ...options,
@@ -268,14 +247,8 @@ export function createToolLoopTransport({
       const userMessages = drainUserMessages(store)
       const image = await vision.imagePart()
 
-      // Drains the user's add/remove edits, so it must be built once per step.
-      // Also prunes dead ids, so the capture below never chases a deleted node.
-      const attention = buildAttentionText(store)
-      const attentionImage = await vision.attentionPart(agentAttention.working)
-
       if (diff) logIntervention(diff)
       for (const text of userMessages) logUserMessage(text)
-      if (attention) logAttention(attention)
 
       if (stepNumber === 0) {
         plan = await runPlan(model, store, lastUserText(messages), image)
@@ -294,18 +267,14 @@ export function createToolLoopTransport({
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',
           userMessages.length > 0 ? `[user-msg ×${userMessages.length}]` : '',
-          plan ? '[plan]' : '',
-          attention ? '[attention]' : '',
-          attentionImage ? '[attention-image]' : ''
+          plan ? '[plan]' : ''
         ].filter(Boolean)
       )
 
       const history = withCacheBreakpoint(messages, cacheProviderOptions)
       const content = buildStepContent({
         plan,
-        attention,
         image,
-        attentionImage,
         diff,
         userMessages
       })

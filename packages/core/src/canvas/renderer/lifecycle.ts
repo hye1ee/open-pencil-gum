@@ -71,7 +71,7 @@ export function destroyRenderer(r: SkiaRenderer): void {
   r.nodePictureCache.clear()
   clearSubtreePictureCache(r)
   clearRetainedSceneState(r)
-  for (const paint of [r._flashPaint, r._aiAttentionPaint]) paint?.delete()
+  for (const paint of [r._flashPaint, r._aiGlowPaint]) paint?.delete()
   r.profiler.destroy()
   r.surface.delete()
 }

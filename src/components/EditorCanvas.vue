@@ -30,7 +30,6 @@ import IconLucidePanelBottom from '~icons/lucide/panel-bottom'
 import IconLucidePanelLeft from '~icons/lucide/panel-left'
 import IconLucidePanelRight from '~icons/lucide/panel-right'
 import IconLucidePanelTop from '~icons/lucide/panel-top'
-import AgentAttentionOverlay from './chat/AgentAttentionOverlay.vue'
 import AgentCursorInteraction from './chat/AgentCursorInteraction.vue'
 import CanvasMenu from './CanvasMenu.vue'
 import ScrubInput from './ScrubInput.vue'
@@ -122,7 +121,6 @@ const cursor = computed(() => toolCursor(store.state.activeTool, cursorOverride.
           :style="{ cursor }"
           class="absolute inset-0 block size-full touch-none outline-none"
         />
-        <AgentAttentionOverlay :canvas-el="canvasRef" />
         <AgentCursorInteraction :canvas-el="canvasRef" />
         <Transition
           enter-active-class="transition-opacity duration-150"

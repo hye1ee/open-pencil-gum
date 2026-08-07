@@ -106,7 +106,7 @@ export function createExportTargetActions(editor: Editor, state: EditorState, io
     scale: number,
     format: RasterExportFormat,
     /** Keeps surrounding nodes in frame, cropping to the ids' bounds grown by
-     * this many world px. Used by the agent's attention capture. */
+     * this many world px. No caller passes it today. */
     contextPadding?: number
   ): Promise<Uint8Array | null> {
     const renderer = editor.renderer

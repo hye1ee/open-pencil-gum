@@ -15,15 +15,15 @@ export function ensureFlashPaint(r: SkiaRenderer): Paint {
   return r._flashPaint
 }
 
-/** Separate from the flash paint because the attention pass hangs a blur mask
+/** Separate from the flash paint because the glow pass hangs a blur mask
  * filter on it — sharing one paint would leak that blur into every flash. */
-export function ensureAttentionPaint(r: SkiaRenderer): Paint {
-  if (!r._aiAttentionPaint) {
-    r._aiAttentionPaint = new r.ck.Paint()
-    r._aiAttentionPaint.setStyle(r.ck.PaintStyle.Stroke)
-    r._aiAttentionPaint.setAntiAlias(true)
+export function ensureGlowPaint(r: SkiaRenderer): Paint {
+  if (!r._aiGlowPaint) {
+    r._aiGlowPaint = new r.ck.Paint()
+    r._aiGlowPaint.setStyle(r.ck.PaintStyle.Stroke)
+    r._aiGlowPaint.setAntiAlias(true)
   }
-  return r._aiAttentionPaint
+  return r._aiGlowPaint
 }
 
 export function drawNodeHighlightRect(

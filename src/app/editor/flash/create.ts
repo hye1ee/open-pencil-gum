@@ -1,14 +1,18 @@
-import type { Editor, EditorState } from '@open-pencil/core/editor'
+import type { Editor } from '@open-pencil/core/editor'
 
-export function createFlashActions(editor: Editor, state: EditorState) {
+export function createFlashActions(editor: Editor) {
   let flashRafId = 0
 
+  // `requestRepaint`, not a bare `renderVersion++`: the render loop only wakes on
+  // an editor event (`render-loop.ts` subscribes to `repaint:requested`), so
+  // bumping the counter leaves every frame of the animation unpainted until
+  // something unrelated asks for one.
   function pumpFlashes() {
     if (!editor.renderer?.hasActiveFlashes) {
       flashRafId = 0
       return
     }
-    state.renderVersion++
+    editor.requestRepaint()
     flashRafId = requestAnimationFrame(pumpFlashes)
   }
 
@@ -41,19 +45,18 @@ export function createFlashActions(editor: Editor, state: EditorState) {
     editor.renderer?.aiClearAll()
   }
 
-  function aiSetAttention(nodeIds: string[]) {
+  function aiSetMismatch(entries: Array<[string, number]>) {
     if (!editor.renderer) return
-    editor.renderer.aiSetAttention(nodeIds)
+    editor.renderer.aiSetMismatch(entries)
     if (!flashRafId) pumpFlashes()
   }
 
-  function aiSetAttentionVisible(visible: boolean) {
+  function aiClearMismatch() {
     if (!editor.renderer) return
-    editor.renderer.aiSetAttentionVisible(visible)
-    // Bump once on the way out too, so the last frame clears the glow instead of
-    // leaving it painted until something else asks for a render.
-    state.renderVersion++
-    if (!flashRafId) pumpFlashes()
+    editor.renderer.aiClearMismatch()
+    // The pump stops on its own once the set is empty, but it stops *before*
+    // drawing the empty frame — without this the last glow stays painted.
+    editor.requestRepaint()
   }
 
   return {
@@ -62,7 +65,7 @@ export function createFlashActions(editor: Editor, state: EditorState) {
     aiMarkDone,
     aiFlashDone,
     aiClearAll,
-    aiSetAttention,
-    aiSetAttentionVisible
+    aiSetMismatch,
+    aiClearMismatch
   }
 }

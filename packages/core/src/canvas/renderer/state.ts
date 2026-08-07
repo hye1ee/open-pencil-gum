@@ -69,25 +69,26 @@ export function aiClearActive(r: SkiaRenderer): void {
 export function aiClearAll(r: SkiaRenderer): void {
   r._aiActiveNodes.clear()
   r._aiDoneFlashes = []
-  r._aiAttentionNodes.clear()
-  r._aiAttentionVisible = false
+  r._aiMismatch.clear()
 }
 
-export function aiSetAttention(r: SkiaRenderer, nodeIds: string[]): void {
-  r._aiAttentionNodes = new Set(nodeIds)
+/** Replaces the whole set, so a node the meta-agent has taken back simply is
+ * not in `entries` — there is no separate unflag path to keep in step. */
+export function aiSetMismatch(r: SkiaRenderer, entries: Array<[string, number]>): void {
+  r._aiMismatch = new Map(entries)
 }
 
-export function aiSetAttentionVisible(r: SkiaRenderer, visible: boolean): void {
-  r._aiAttentionVisible = visible
+export function aiClearMismatch(r: SkiaRenderer): void {
+  r._aiMismatch.clear()
 }
 
-/** Drives the rAF pump in the app's flash actions. The attention glow pulses, so
- * it has to keep the loop alive for as long as it is on screen. */
+/** Drives the rAF pump in the app's flash actions. The mismatch glow pulses,
+ * so it has to keep the loop alive for as long as a marker is on screen. */
 export function hasActiveFlashes(r: SkiaRenderer): boolean {
   return (
     r._flashes.length > 0 ||
     r._aiActiveNodes.size > 0 ||
     r._aiDoneFlashes.length > 0 ||
-    (r._aiAttentionVisible && r._aiAttentionNodes.size > 0)
+    r._aiMismatch.size > 0
   )
 }

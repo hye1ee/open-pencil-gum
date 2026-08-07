@@ -10,8 +10,7 @@ import {
 
 import { LayerTreeRoot, LayerTreeItem, useInlineRename } from '@open-pencil/vue'
 import type { LayerDragInstruction, LayerNode } from '@open-pencil/vue'
-import { agentAttention, toggleAttentionNode } from '@/app/ai/chat/agent-attention'
-import { getActiveEditorStore, useEditorStore } from '@/app/editor/active-store'
+import { useEditorStore } from '@/app/editor/active-store'
 import CanvasMenu from '../CanvasMenu.vue'
 import LayerTreeNodeRow from './LayerTreeNodeRow.vue'
 import LayerTreeRenameRow from './LayerTreeRenameRow.vue'
@@ -53,13 +52,6 @@ function isAdditiveSelect(e: CustomEvent): boolean {
 
 function onTreeSelect(e: CustomEvent, id: string, select: (id: string, additive: boolean) => void) {
   e.preventDefault()
-  // Same gesture as on the canvas: while ` is held a click retargets the agent's
-  // attention instead of changing the selection. The tree is often the easier
-  // place to hit a small or buried node.
-  if (agentAttention.peeking) {
-    toggleAttentionNode(getActiveEditorStore(), id)
-    return
-  }
   select(id, isAdditiveSelect(e))
 }
 

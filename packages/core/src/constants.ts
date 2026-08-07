@@ -134,16 +134,24 @@ export const AI_DONE_COLOR = { r: 0.16, g: 0.73, b: 0.36 }
 export const AI_PULSE_PERIOD_MS = 1500
 export const AI_DONE_DURATION_MS = 800
 
-/** Nodes the agent has declared it is working on. Purple to match the agent
- * cursor — the glow and the cursor are the same presence, not two systems. */
-export const AI_ATTENTION_COLOR = { r: 0.49, g: 0.36, b: 0.96 }
+/** Nodes where what the agent is about to do looks unlike what the user model
+ * says this person wants. Red, and deliberately not the agent's own blue/green:
+ * this is the one glow that is not the agent reporting on itself. */
+export const AI_MISMATCH_COLOR = { r: 0.94, g: 0.27, b: 0.27 }
 /** Blur sigma of the outer glow, in screen px (kept constant across zoom). */
-export const AI_ATTENTION_BLUR_SIGMA = 7
-export const AI_ATTENTION_GLOW_WIDTH = 10
-export const AI_ATTENTION_EDGE_WIDTH = 1.5
-export const AI_ATTENTION_PADDING = 3
-/** Beyond a handful the glow reads as noise and the injected line gets long. */
-export const AI_ATTENTION_MAX_NODES = 8
+export const AI_MISMATCH_BLUR_SIGMA = 7
+export const AI_MISMATCH_GLOW_WIDTH = 10
+export const AI_MISMATCH_EDGE_WIDTH = 1.5
+export const AI_MISMATCH_PADDING = 3
+/** Hits at which the glow stops deepening. Past this the node is already as
+ * loud as the canvas can make it without drowning the design underneath. */
+export const AI_MISMATCH_MAX_HITS = 4
+/** Slower than the agent's own flashes: this marker stands until the user
+ * answers it, and a fast blink on something that is not going away nags. */
+export const AI_MISMATCH_PULSE_MS = 2400
+/** How far the pulse dips. Shallow, so the hit count stays the louder signal —
+ * a pulsing one-hit node must never read brighter than a steady four-hit one. */
+export const AI_MISMATCH_PULSE_DEPTH = 0.35
 
 export const TEXT_SELECTION_COLOR = { r: 0.26, g: 0.52, b: 0.96, a: 0.3 }
 export const TEXT_CARET_COLOR = BLACK

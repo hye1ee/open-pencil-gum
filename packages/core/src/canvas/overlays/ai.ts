@@ -2,53 +2,63 @@ import type { Canvas } from 'canvaskit-wasm'
 
 import type { SceneGraph } from '@open-pencil/scene-graph'
 
-import { drawNodeHighlightRect, ensureAttentionPaint } from '#core/canvas/highlight-rect'
+import { drawNodeHighlightRect, ensureGlowPaint } from '#core/canvas/highlight-rect'
 import type { SkiaRenderer } from '#core/canvas/renderer'
 import {
   AI_ACTIVE_COLOR,
-  AI_ATTENTION_BLUR_SIGMA,
-  AI_ATTENTION_COLOR,
-  AI_ATTENTION_EDGE_WIDTH,
-  AI_ATTENTION_GLOW_WIDTH,
-  AI_ATTENTION_PADDING,
+  AI_MISMATCH_BLUR_SIGMA,
+  AI_MISMATCH_COLOR,
+  AI_MISMATCH_EDGE_WIDTH,
+  AI_MISMATCH_GLOW_WIDTH,
+  AI_MISMATCH_MAX_HITS,
+  AI_MISMATCH_PADDING,
+  AI_MISMATCH_PULSE_DEPTH,
+  AI_MISMATCH_PULSE_MS,
   AI_DONE_COLOR,
   AI_PULSE_PERIOD_MS,
   AI_DONE_DURATION_MS
 } from '#core/constants'
 
 /**
- * The agent's attention: nodes it has declared it is working on, drawn as a
- * soft pulsing glow. Only visible while the user peeks (` held) or during the
- * brief auto-reveal right after the agent moves it — the rest of the time the
- * canvas stays clean.
+ * Where what the agent is about to do looks unlike what this user wants.
+ *
+ * Brightness comes from the hit count, not the pulse: the agent reasons in
+ * several chunks before it acts, each one is judged on its own, and a node that
+ * comes up in three of them is a stronger signal than one that came up once.
+ * The pulse rides on top at a fixed depth, so it says "still waiting on you"
+ * without ever making a one-hit node look like a four-hit one. Slower than the
+ * agent's own flashes — this stands for as long as the marker does, and a fast
+ * blink on something that is not going away is just nagging.
  *
  * Two passes per node: a wide blurred stroke for the glow, then a thin crisp
  * one so the shape stays readable against busy artwork.
  */
-function drawAttention(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: number): void {
-  if (!r._aiAttentionVisible || r._aiAttentionNodes.size === 0) return
+function drawMismatch(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: number): void {
+  if (r._aiMismatch.size === 0) return
+  const paint = ensureGlowPaint(r)
+  const phase = (now % AI_MISMATCH_PULSE_MS) / AI_MISMATCH_PULSE_MS
+  const pulse = 1 - AI_MISMATCH_PULSE_DEPTH * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2))
+  const strength = (hits: number) => Math.min(1, hits / AI_MISMATCH_MAX_HITS)
 
-  const phase = (now % AI_PULSE_PERIOD_MS) / AI_PULSE_PERIOD_MS
-  const pulse = 0.5 + 0.5 * Math.sin(phase * Math.PI * 2)
-  const paint = ensureAttentionPaint(r)
-
-  paint.setMaskFilter(r.getCachedMaskBlur(AI_ATTENTION_BLUR_SIGMA))
-  for (const nodeId of r._aiAttentionNodes) {
-    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_ATTENTION_COLOR, 0.3 + 0.35 * pulse, 0, {
+  paint.setMaskFilter(r.getCachedMaskBlur(AI_MISMATCH_BLUR_SIGMA))
+  for (const [nodeId, hits] of r._aiMismatch) {
+    const opacity = (0.12 + 0.33 * strength(hits)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_MISMATCH_COLOR, opacity, 0, {
       paint,
-      strokeWidth: AI_ATTENTION_GLOW_WIDTH,
-      padding: AI_ATTENTION_PADDING
+      strokeWidth: AI_MISMATCH_GLOW_WIDTH,
+      padding: AI_MISMATCH_PADDING
     })
   }
 
   // Always reset — the paint is reused next frame and a stale filter would blur
   // the crisp edge too (same convention as the shadow renderer).
   paint.setMaskFilter(null)
-  for (const nodeId of r._aiAttentionNodes) {
-    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_ATTENTION_COLOR, 0.5 + 0.4 * pulse, 0, {
+  for (const [nodeId, hits] of r._aiMismatch) {
+    const opacity = (0.25 + 0.45 * strength(hits)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_MISMATCH_COLOR, opacity, 0, {
       paint,
-      strokeWidth: AI_ATTENTION_EDGE_WIDTH,
-      padding: AI_ATTENTION_PADDING
+      strokeWidth: AI_MISMATCH_EDGE_WIDTH,
+      padding: AI_MISMATCH_PADDING
     })
   }
 }
@@ -57,7 +67,7 @@ export function drawAiOverlays(r: SkiaRenderer, canvas: Canvas, graph: SceneGrap
   const now = performance.now()
 
   // First, so a done-flash on the same node still reads on top of the glow.
-  drawAttention(r, canvas, graph, now)
+  drawMismatch(r, canvas, graph, now)
 
   for (const nodeId of r._aiActiveNodes) {
     const phase = (now % AI_PULSE_PERIOD_MS) / AI_PULSE_PERIOD_MS

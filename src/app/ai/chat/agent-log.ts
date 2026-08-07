@@ -128,10 +128,6 @@ export function logSystemPrompt(chars: number): void {
   write('SYSTEM', `${chars.toLocaleString()} chars`)
 }
 
-export function logAttention(text: string): void {
-  writeBlock('ATTN', text)
-}
-
 export function logToolCall(tool: string, args: Record<string, unknown>): void {
   const pairs = Object.entries(args)
     .filter(([, value]) => value !== undefined)
