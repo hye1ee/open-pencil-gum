@@ -1,14 +1,18 @@
-import type { Editor, EditorState } from '@open-pencil/core/editor'
+import type { Editor } from '@open-pencil/core/editor'
 
-export function createFlashActions(editor: Editor, state: EditorState) {
+export function createFlashActions(editor: Editor) {
   let flashRafId = 0
 
+  // `requestRepaint`, not a bare `renderVersion++`: the render loop only wakes on
+  // an editor event (`render-loop.ts` subscribes to `repaint:requested`), so
+  // bumping the counter leaves every frame of the animation unpainted until
+  // something unrelated asks for one.
   function pumpFlashes() {
     if (!editor.renderer?.hasActiveFlashes) {
       flashRafId = 0
       return
     }
-    state.renderVersion++
+    editor.requestRepaint()
     flashRafId = requestAnimationFrame(pumpFlashes)
   }
 
@@ -41,11 +45,32 @@ export function createFlashActions(editor: Editor, state: EditorState) {
     editor.renderer?.aiClearAll()
   }
 
+  function aiSetMismatch(entries: Array<[string, number]>) {
+    if (!editor.renderer) return
+    editor.renderer.aiSetMismatch(entries)
+    // Emptying the set is the same case as `aiClearMismatch` below: the pump
+    // reads it, sees nothing to animate and stops one frame too early, leaving
+    // the last glow painted. Glows come and go on hover now, so this happens
+    // every time the pointer leaves a badge.
+    if (entries.length === 0) editor.requestRepaint()
+    else if (!flashRafId) pumpFlashes()
+  }
+
+  function aiClearMismatch() {
+    if (!editor.renderer) return
+    editor.renderer.aiClearMismatch()
+    // The pump stops on its own once the set is empty, but it stops *before*
+    // drawing the empty frame — without this the last glow stays painted.
+    editor.requestRepaint()
+  }
+
   return {
     flashNodes,
     aiMarkActive,
     aiMarkDone,
     aiFlashDone,
-    aiClearAll
+    aiClearAll,
+    aiSetMismatch,
+    aiClearMismatch
   }
 }

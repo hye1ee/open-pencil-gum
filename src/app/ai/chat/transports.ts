@@ -1,5 +1,5 @@
 import { Chat } from '@ai-sdk/vue'
-import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
+import { DirectChatTransport, ToolLoopAgent } from 'ai'
 import type { ChatTransport, ImagePart, ModelMessage, UIMessage, UserContent } from 'ai'
 import type { ComputedRef, Ref } from 'vue'
 
@@ -8,30 +8,46 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
-  logAgentText,
   logIntervention,
   logPlan,
+  logRunContinue,
   logRunEnd,
   logRunStart,
   logStep,
+  logTurnAbandoned,
   logUsage,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
+import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
-import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
-import { buildUserMessageText, clearUserMessages, drainUserMessages } from '@/app/ai/chat/user-messages'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
-import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import { anthropicThinkingOptions, googleThinkingOptions } from '@/app/ai/chat/model-trace'
+import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
 import ELEMENTS_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt-elements.md?raw'
-import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
+import RENDER_SYSTEM_PROMPT from '@/app/ai/chat/system-prompt.md?raw'
+import {
+  buildUserMessageText,
+  clearUserMessages,
+  drainUserMessages
+} from '@/app/ai/chat/user-messages'
+import {
+  MAX_AGENT_STEPS,
+  createAITools,
+  currentRunSteps,
+  isContinuingRun,
+  recordStepUsage,
+  resetRunSteps
+} from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
+import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
 // Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
-const SYSTEM_PROMPT = import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
+const SYSTEM_PROMPT =
+  import.meta.env.VITE_RENDER !== 'false' ? RENDER_SYSTEM_PROMPT : ELEMENTS_SYSTEM_PROMPT
 
 type ChatSessionOptions = {
   isConfigured: ComputedRef<boolean>
@@ -55,6 +71,7 @@ type ToolLoopTransportOptions = {
   customBaseURL: string
   customAPIType: 'completions' | 'responses'
   maxOutputTokens: number
+  takeRequest: () => string
 }
 
 const ANTHROPIC_CACHE_CONTROL = {
@@ -67,6 +84,28 @@ function supportsAnthropicCaching(providerID: AIProviderID, modelID: string): bo
     providerID === 'anthropic-compatible' ||
     (providerID === 'openrouter' && modelID.startsWith('anthropic/'))
   )
+}
+
+/**
+ * Call-level options. Thinking belongs here rather than on a message — it
+ * configures the request, not a block within it — and every provider spells it
+ * differently, so this is the one place that has to know which one it is.
+ * Downstream is spared: the SDK turns both into the same `reasoning-*` chunks.
+ *
+ * Only the first-party providers are known to accept these forms; anyone else
+ * gets caching alone, and the thinking bubble stays quiet.
+ */
+function thinkingCallOptions(
+  providerID: AIProviderID,
+  caching: typeof ANTHROPIC_CACHE_CONTROL | undefined
+) {
+  if (providerID === 'anthropic' && anthropicThinkingOptions) {
+    return { anthropic: { ...ANTHROPIC_CACHE_CONTROL.anthropic, ...anthropicThinkingOptions } }
+  }
+  if (providerID === 'google' && googleThinkingOptions) {
+    return { google: googleThinkingOptions }
+  }
+  return caching
 }
 
 /** The newest user turn — what the planning call is asked to plan for. */
@@ -101,7 +140,7 @@ function buildStepContent(args: {
   if (args.image) {
     content.push({
       type: 'text',
-      text: 'Current canvas (overview only — read exact values/ids with the tools):'
+      text: 'Whole canvas (composition only — too small to read text or judge exact colour):'
     })
     content.push(args.image)
   }
@@ -158,7 +197,8 @@ export function createToolLoopTransport({
   customModelID,
   customBaseURL,
   customAPIType,
-  maxOutputTokens
+  maxOutputTokens,
+  takeRequest
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
   const intervention = createInterventionTracker(store)
@@ -167,6 +207,7 @@ export function createToolLoopTransport({
   const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
     : undefined
+  const callProviderOptions = thinkingCallOptions(providerID, cacheProviderOptions)
 
   // Hoisted so the planning calls run against the same model as the agent.
   const model = createLanguageModel({
@@ -186,29 +227,45 @@ export function createToolLoopTransport({
     model,
     instructions: SYSTEM_PROMPT,
     tools,
-    stopWhen: stepCountIs(MAX_AGENT_STEPS),
+    // Our own counter, not the SDK's: `stepCountIs` counts steps inside one
+    // streaming call, and a build restarted after marker feedback is a second
+    // call. Counting there would hand out a fresh fifty every time someone
+    // answered a marker, which makes the ceiling mean nothing.
+    stopWhen: () => currentRunSteps(store) >= MAX_AGENT_STEPS,
     maxOutputTokens,
-    providerOptions: cacheProviderOptions,
-    prepareCall: (options) => {
+    providerOptions: callProviderOptions,
+    prepareCall: async (options) => {
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
-      logRunStart(lastUserText(sent))
+      const submittedRequest = takeRequest() || lastUserText(sent)
+      // Read before `resetRunSteps`, which consumes the flag. A restart appends
+      // to the log rather than truncating it: the half of the build that led to
+      // the feedback is the part worth having.
+      if (isContinuingRun(store)) logRunContinue(submittedRequest)
+      else logRunStart(submittedRequest)
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
       clearUserMessages(store)
       plan = null
       resumeTurn()
+      clearAgentSpeech()
+      await startMetaAgentTurn(store, submittedRequest)
       showAgentCursor(store)
       return {
         ...options,
         maxOutputTokens,
-        providerOptions: cacheProviderOptions
+        providerOptions: callProviderOptions
       }
     },
     prepareStep: async ({ messages, stepNumber }) => {
-      // Block here while the user has paused the turn (grabbed the agent cursor).
-      await awaitTurnResume()
+      // Block here while the user is reading a marker. If the turn was thrown
+      // away while held, everything below is work for a step that will never
+      // run — including a planning call, which is billed.
+      if (!(await awaitTurnResume('step-boundary'))) {
+        logTurnAbandoned('step skipped at step-boundary')
+        return {}
+      }
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
       // Messages the user sent mid-run, and the canvas PNG for overall layout.
@@ -229,7 +286,9 @@ export function createToolLoopTransport({
       }
 
       logStep(
-        stepNumber,
+        // Ours, not the SDK's, which counts from zero again in the second call
+        // of a restarted build and would report step 8 as step 0.
+        currentRunSteps(store),
         [
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',
@@ -239,7 +298,12 @@ export function createToolLoopTransport({
       )
 
       const history = withCacheBreakpoint(messages, cacheProviderOptions)
-      const content = buildStepContent({ plan, image, diff, userMessages })
+      const content = buildStepContent({
+        plan,
+        image,
+        diff,
+        userMessages
+      })
       if (content.length === 0) return { messages: history }
 
       const injected: ModelMessage = { role: 'user', content }
@@ -247,7 +311,9 @@ export function createToolLoopTransport({
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()
-      logAgentText(step.text)
+      // The log line and the canvas bubble are both driven from the stream tap
+      // in `model-trace.ts` — doing it here would put them after the tool calls
+      // they came before.
       const { usage } = step
       const recorded = {
         inputTokens: usage.inputTokens ?? 0,
@@ -283,6 +349,7 @@ export function createChatSessionManager({
   let transportDirty = false
   let currentChatStore: EditorStore | null = null
   let currentChatMessages = new WeakMap<EditorStore, UIMessage[]>()
+  let pendingRequests = new WeakMap<EditorStore, string>()
   let chat: Chat<UIMessage> | null = null
   let acpTransportInstance: { destroy(): Promise<void> } | null = null
   let overrideTransport: (() => ChatTransport<UIMessage>) | null = null
@@ -291,6 +358,7 @@ export function createChatSessionManager({
     transportDirty = true
     currentChatStore = null
     currentChatMessages = new WeakMap()
+    pendingRequests = new WeakMap()
   }
 
   async function createActiveACPTransport() {
@@ -314,8 +382,17 @@ export function createChatSessionManager({
       customModelID: customModelID.value,
       customBaseURL: customBaseURL.value,
       customAPIType: customAPIType.value,
-      maxOutputTokens: maxOutputTokens.value
+      maxOutputTokens: maxOutputTokens.value,
+      takeRequest: () => {
+        const value = pendingRequests.get(store) ?? ''
+        pendingRequests.delete(store)
+        return value
+      }
     })
+  }
+
+  function noteUserRequest(text: string): void {
+    pendingRequests.set(getActiveEditorStore(), text)
   }
 
   async function ensureChat(): Promise<Chat<UIMessage> | null> {
@@ -343,6 +420,7 @@ export function createChatSessionManager({
     chat = null
     currentChatStore = null
     transportDirty = false
+    pendingRequests = new WeakMap()
   }
 
   function setOverrideTransport(factory: (() => ChatTransport<UIMessage>) | null) {
@@ -350,5 +428,5 @@ export function createChatSessionManager({
     markTransportDirty()
   }
 
-  return { ensureChat, resetChat, markTransportDirty, setOverrideTransport }
+  return { ensureChat, resetChat, markTransportDirty, noteUserRequest, setOverrideTransport }
 }

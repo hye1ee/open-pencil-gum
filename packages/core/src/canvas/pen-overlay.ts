@@ -207,6 +207,10 @@ export function drawRemoteCursors(
   const LABEL_FONT_SIZE = 10
   const LABEL_OFFSET_X = 12
   const LABEL_OFFSET_Y = 20
+  const EYE_WIDTH = 9
+  const EYE_HEIGHT = 4
+  const EYE_PUPIL_RADIUS = 1.4
+  const EYE_GAP = 3
 
   for (const cursor of cursors) {
     const screenX = cursor.x * r.zoom + r.panX
@@ -245,7 +249,16 @@ export function drawRemoteCursors(
       }
     }
 
-    const S = CURSOR_SIZE
+    // Hovering the agent cursor swells the arrow and lifts a soft halo behind
+    // it, so it reads as something you can grab rather than decoration.
+    const emphasis = cursor.emphasis ?? 0
+    const S = CURSOR_SIZE * (1 + 0.3 * emphasis)
+
+    if (emphasis > 0.01) {
+      r.auxFill.setColor(r.ck.Color4f(cr, g, b, 0.2 * emphasis))
+      canvas.drawCircle(screenX + S * 0.45, screenY + S * 0.6, S * (1.3 + 0.5 * emphasis), r.auxFill)
+    }
+
     const path = new r.ck.Path()
     path.moveTo(screenX, screenY)
     path.lineTo(screenX, screenY + S * 1.35)
@@ -269,28 +282,58 @@ export function drawRemoteCursors(
       const font = r.labelFont
       if (font) {
         font.setSize(LABEL_FONT_SIZE)
-        const labelX = screenX + LABEL_OFFSET_X
-        const labelY = screenY + LABEL_OFFSET_Y
-        const glyphIds = font.getGlyphIDs(cursor.name)
+        // Shift with the swell so a hovered arrow doesn't grow into its own label.
+        const labelX = screenX + LABEL_OFFSET_X + (S - CURSOR_SIZE)
+        const labelY = screenY + LABEL_OFFSET_Y + (S - CURSOR_SIZE)
+
+        // The attention count lives inside the nameplate rather than in a chip of
+        // its own: the cursor, its name and what it is watching are one presence,
+        // and three separate floating objects around one arrow read as clutter.
+        const watching = cursor.watching ?? 0
+        const label = watching > 0 ? `${cursor.name} ${watching}` : cursor.name
+        const eyeSpace = watching > 0 ? EYE_WIDTH + EYE_GAP : 0
+
+        const glyphIds = font.getGlyphIDs(label)
         const widths = font.getGlyphWidths(glyphIds)
         let textWidth = 0
         for (const w of widths) textWidth += w
 
+        const boxTop = labelY - LABEL_FONT_SIZE - LABEL_PADDING_Y + 2
+        const boxHeight = LABEL_FONT_SIZE + LABEL_PADDING_Y * 2
         r.auxFill.setColor(r.ck.Color4f(cr, g, b, 1))
         const bgRect = r.ck.RRectXY(
           r.ck.XYWHRect(
             labelX - LABEL_PADDING_X,
-            labelY - LABEL_FONT_SIZE - LABEL_PADDING_Y + 2,
-            textWidth + LABEL_PADDING_X * 2,
-            LABEL_FONT_SIZE + LABEL_PADDING_Y * 2
+            boxTop,
+            textWidth + eyeSpace + LABEL_PADDING_X * 2,
+            boxHeight
           ),
           4,
           4
         )
         canvas.drawRRect(bgRect, r.auxFill)
 
+        if (watching > 0) {
+          // An almond outline with a pupil — drawn rather than an emoji, since
+          // the label font carries no emoji coverage.
+          const eyeCX = labelX + EYE_WIDTH / 2
+          const eyeCY = boxTop + boxHeight / 2
+          r.auxStroke.setColor(r.ck.Color4f(1, 1, 1, 1))
+          r.auxStroke.setStrokeWidth(1)
+          r.auxStroke.setPathEffect(null)
+          const eye = new r.ck.Path()
+          eye.moveTo(eyeCX - EYE_WIDTH / 2, eyeCY)
+          eye.quadTo(eyeCX, eyeCY - EYE_HEIGHT, eyeCX + EYE_WIDTH / 2, eyeCY)
+          eye.quadTo(eyeCX, eyeCY + EYE_HEIGHT, eyeCX - EYE_WIDTH / 2, eyeCY)
+          eye.close()
+          canvas.drawPath(eye, r.auxStroke)
+          eye.delete()
+          r.auxFill.setColor(r.ck.Color4f(1, 1, 1, 1))
+          canvas.drawCircle(eyeCX, eyeCY, EYE_PUPIL_RADIUS, r.auxFill)
+        }
+
         r.auxFill.setColor(r.ck.Color4f(1, 1, 1, 1))
-        canvas.drawText(cursor.name, labelX, labelY, r.auxFill, font)
+        canvas.drawText(label, labelX + eyeSpace, labelY, r.auxFill, font)
       }
     }
   }

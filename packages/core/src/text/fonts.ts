@@ -4,7 +4,7 @@ import type { SceneGraph } from '@open-pencil/scene-graph'
 
 import { DEFAULT_FONT_FAMILY, IS_BROWSER } from '#core/constants'
 import { fontFaceRenderFamily, parseFontStyle } from '#core/text/face'
-import { fontFallbackEntry } from '#core/text/fallbacks'
+import { fallbackScriptsFor, fontFallbackEntry } from '#core/text/fallbacks'
 import type { FontFallbackScript } from '#core/text/fallbacks'
 import { WebFontResolver } from '#core/text/web-fonts'
 import type { WebFontFetch, WebFontProviderId } from '#core/text/web-fonts'
@@ -346,6 +346,35 @@ export class FontManager {
       }
     }
     return renderFamily
+  }
+
+  /**
+   * The fallback packs a subtree needs and does not have yet.
+   *
+   * Loading a family a text node names is not enough: a Latin family has no
+   * Hangul or Arabic glyphs, and the renderer refuses to draw a run it cannot
+   * shape, so the text silently does not appear. Nothing asks for these packs on
+   * the node's behalf — they used to load only when someone opened font settings
+   * and pressed a button — so anything that prepares fonts for a subtree has to
+   * ask for them here.
+   */
+  collectFallbackScripts(graph: SceneGraph, nodeIds: string[]): FontFallbackScript[] {
+    const needed = new Set<FontFallbackScript>()
+    const collect = (id: string) => {
+      const node = graph.getNode(id)
+      if (!node) return
+      if (node.type === 'TEXT') {
+        for (const script of fallbackScriptsFor(node.text)) needed.add(script)
+      }
+      for (const childId of node.childIds) collect(childId)
+    }
+    for (const id of nodeIds) collect(id)
+
+    return [...needed].filter((script) =>
+      script === 'cjk'
+        ? this.cjkFallbackFamilies.length === 0
+        : this.arabicFallbackFamilies.length === 0
+    )
   }
 
   collectFontKeys(graph: SceneGraph, nodeIds: string[]): Array<[string, string]> {

@@ -15,6 +15,17 @@ export function ensureFlashPaint(r: SkiaRenderer): Paint {
   return r._flashPaint
 }
 
+/** Separate from the flash paint because the glow pass hangs a blur mask
+ * filter on it — sharing one paint would leak that blur into every flash. */
+export function ensureGlowPaint(r: SkiaRenderer): Paint {
+  if (!r._aiGlowPaint) {
+    r._aiGlowPaint = new r.ck.Paint()
+    r._aiGlowPaint.setStyle(r.ck.PaintStyle.Stroke)
+    r._aiGlowPaint.setAntiAlias(true)
+  }
+  return r._aiGlowPaint
+}
+
 export function drawNodeHighlightRect(
   r: SkiaRenderer,
   canvas: Canvas,
@@ -22,7 +33,8 @@ export function drawNodeHighlightRect(
   nodeId: string,
   color: { r: number; g: number; b: number },
   opacity: number,
-  extraPad = 0
+  extraPad = 0,
+  overrides?: { paint?: Paint; strokeWidth?: number; padding?: number }
 ): boolean {
   const node = graph.getNode(nodeId)
   if (!node) return false
@@ -32,11 +44,11 @@ export function drawNodeHighlightRect(
   const cy = (abs.y + node.height / 2) * r.zoom + r.panY
   const hw = (node.width / 2) * r.zoom
   const hh = (node.height / 2) * r.zoom
-  const pad = FLASH_PADDING + extraPad
+  const pad = (overrides?.padding ?? FLASH_PADDING) + extraPad
 
-  const paint = ensureFlashPaint(r)
+  const paint = overrides?.paint ?? ensureFlashPaint(r)
   paint.setColor(r.ck.Color4f(color.r, color.g, color.b, opacity))
-  paint.setStrokeWidth(FLASH_STROKE_WIDTH)
+  paint.setStrokeWidth(overrides?.strokeWidth ?? FLASH_STROKE_WIDTH)
 
   canvas.save()
   if (node.rotation !== 0) canvas.rotate(node.rotation, cx, cy)

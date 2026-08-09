@@ -2,11 +2,12 @@ import type { Ref } from 'vue'
 
 import type { useEditorCommands, useViewportKind } from '@open-pencil/vue'
 
+import type { PanelTab } from '@/app/ai/chat/use'
 import type { EditorStore } from '@/app/editor/active-store'
 
 type KeyboardActionsOptions = {
   store: EditorStore
-  activeTab: Ref<'design' | 'code' | 'ai'>
+  activeTab: Ref<PanelTab>
   isMobile: ReturnType<typeof useViewportKind>['isMobile']
   runCommand: ReturnType<typeof useEditorCommands>['runCommand']
 }

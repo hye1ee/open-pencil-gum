@@ -7,6 +7,7 @@ import type { LanguageModel } from 'ai'
 
 import type { AIProviderID } from '@open-pencil/core/constants'
 
+import { withModelTrace } from '@/app/ai/chat/model-trace'
 import { isTauri } from '@/app/tauri/env'
 import { tauriFetch } from '@/app/tauri/http'
 
@@ -41,6 +42,17 @@ const ANTHROPIC_BROWSER_HEADERS = {
 }
 
 export function createLanguageModel(config: ModelConfig): LanguageModel {
+  // Wrapped so a dev build streams the model's thinking and text into the run
+  // log as it arrives; a no-op in production.
+  return withModelTrace(createUntracedLanguageModel(config))
+}
+
+/**
+ * The model without the trace wrapper. Background work (the user model) uses
+ * this directly — its calls are not the agent's turn, and routing them through
+ * the tap would put their text in the agent's speech bubble and run log.
+ */
+export function createUntracedLanguageModel(config: ModelConfig) {
   const effectiveModelID = resolveLanguageModelID(config)
   const fetch = desktopFetch()
 

@@ -31,6 +31,7 @@ import IconLucidePanelLeft from '~icons/lucide/panel-left'
 import IconLucidePanelRight from '~icons/lucide/panel-right'
 import IconLucidePanelTop from '~icons/lucide/panel-top'
 import AgentCursorInteraction from './chat/AgentCursorInteraction.vue'
+import MismatchMarkers from './chat/MismatchMarkers.vue'
 import CanvasMenu from './CanvasMenu.vue'
 import ScrubInput from './ScrubInput.vue'
 
@@ -121,6 +122,7 @@ const cursor = computed(() => toolCursor(store.state.activeTool, cursorOverride.
           :style="{ cursor }"
           class="absolute inset-0 block size-full touch-none outline-none"
         />
+        <MismatchMarkers :canvas-el="canvasRef" />
         <AgentCursorInteraction :canvas-el="canvasRef" />
         <Transition
           enter-active-class="transition-opacity duration-150"

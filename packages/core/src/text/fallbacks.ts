@@ -7,6 +7,23 @@ import {
 
 export type FontFallbackScript = 'cjk' | 'arabic'
 
+const CJK_RE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/u
+const ARABIC_RE = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/u
+
+/**
+ * Which fallback packs this text cannot be drawn without.
+ *
+ * A Latin font has no glyphs for these scripts, and a missing glyph here is not
+ * a box — the text simply does not paint. So this is what decides whether a
+ * string is renderable at all, not just how well it looks.
+ */
+export function fallbackScriptsFor(text: string): FontFallbackScript[] {
+  const scripts: FontFallbackScript[] = []
+  if (CJK_RE.test(text)) scripts.push('cjk')
+  if (ARABIC_RE.test(text)) scripts.push('arabic')
+  return scripts
+}
+
 export interface FontFallbackManifestEntry {
   script: FontFallbackScript
   localFamilies: string[]

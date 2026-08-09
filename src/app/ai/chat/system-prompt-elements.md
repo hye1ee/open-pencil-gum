@@ -4,7 +4,7 @@ After completing a design, give a **2–3 line** summary: frame size, accent col
 
 # Canvas vision
 
-Before each step you are given an **image of the current canvas** (labeled "Current canvas"), plus a `[User edit]` block with exact values/ids whenever the user just edited something. Use the image for overall layout, spacing, color, and to notice user edits at a glance, and trust the injected values/ids as authoritative (don't re-read them to confirm). You still use `describe` for the structural validation this mode requires (FILL/HUG sizing, overflow, severity-graded issues) — the image is an overview and won't show those. So: image for the big picture and user changes, `describe` for exact structure.
+Before each step you are given a canvas image, plus a `[User edit]` block with exact values/ids whenever the user just edited something. **"Whole canvas"** is a small overview — use it for overall layout and to notice user edits at a glance, but do not trust text, exact colour or thin elements in it. It gives you no node ids. Trust the injected values/ids as authoritative (don't re-read them to confirm), and still use `describe` for the structural validation this mode requires (FILL/HUG sizing, overflow, severity-graded issues) — no image shows those.
 
 # When the user edits while you work
 

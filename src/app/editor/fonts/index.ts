@@ -162,10 +162,20 @@ export async function listFonts(): Promise<TauriFontFamily[]> {
 export async function ensureGraphFonts(graph: SceneGraph, nodeIds: string[]): Promise<boolean> {
   const fontKeys = fontManager.collectFontKeys(graph, nodeIds)
   const missing = fontKeys.filter(([family, style]) => !fontManager.isStyleLoaded(family, style))
-  if (missing.length === 0) return false
+  // Korean, Japanese, Chinese and Arabic need a pack on top of whatever family
+  // the node names, and until this call nothing ever asked for one outside font
+  // settings — so an agent that wrote Hangul got a frame with nothing in it and
+  // then spent the rest of its run guessing why.
+  const scripts = fontManager.collectFallbackScripts(graph, nodeIds)
+  if (missing.length === 0 && scripts.length === 0) return false
 
-  const results = await Promise.all(missing.map(([family, style]) => loadFont(family, style)))
-  const loaded = results.some((result) => result !== null)
+  const [families, packs] = await Promise.all([
+    Promise.all(missing.map(([family, style]) => loadFont(family, style))),
+    scripts.length > 0 ? fontManager.ensureFallbackPack(scripts) : null
+  ])
+  const loaded =
+    families.some((result) => result !== null) ||
+    (packs !== null && Object.values(packs).some((found) => found.length > 0))
   if (loaded) clearTextPictures(graph)
   return loaded
 }

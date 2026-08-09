@@ -16,6 +16,15 @@ interface RenderOptions {
   quality?: number
   colorSpace?: RenderColorSpace
   trimTransparent?: boolean
+  /**
+   * Render the WHOLE page but crop to `nodeIds`' bounds grown by this many world
+   * px, instead of extracting the nodes onto a transparent background.
+   *
+   * A normal export wants the nodes alone. A "what am I looking at" capture wants
+   * the opposite: the neighbours have to be in frame or there is no way to judge
+   * alignment, spacing, or contrast against what sits next to it.
+   */
+  contextPadding?: number
 }
 
 function ensureSinglePageSelection(graph: SceneGraph, pageId: string, nodeIds: string[]): boolean {
@@ -235,8 +244,16 @@ export function renderNodesToImage(
     throw new Error('Raster export selection must stay on a single page')
   }
 
-  const bounds = computeContentBounds(graph, nodeIds)
-  if (!bounds) return null
+  const raw = computeContentBounds(graph, nodeIds)
+  if (!raw) return null
+
+  const pad = options.contextPadding ?? 0
+  const bounds = {
+    minX: raw.minX - pad,
+    minY: raw.minY - pad,
+    maxX: raw.maxX + pad,
+    maxY: raw.maxY + pad
+  }
 
   const contentW = bounds.maxX - bounds.minX
   const contentH = bounds.maxY - bounds.minY
@@ -246,13 +263,18 @@ export function renderNodesToImage(
   const pixelH = Math.ceil(contentH * options.scale)
   if (pixelW <= 0 || pixelH <= 0) return null
 
-  const extracted = extractExportGraph(graph, { scope: 'selection', nodeIds })
-  if (!extracted.pageId) return null
-
-  const renderGraph = nodeIds.some((nodeId) => nodeNeedsSceneBackdrop(graph, nodeId))
-    ? graph
-    : extracted.graph
-  const renderPageId = renderGraph === graph ? pageId : extracted.pageId
+  // With contextPadding the whole point is to keep the neighbours, so skip the
+  // extraction and draw the real page through a smaller window instead.
+  let renderGraph = graph
+  let renderPageId = pageId
+  if (pad === 0) {
+    const extracted = extractExportGraph(graph, { scope: 'selection', nodeIds })
+    if (!extracted.pageId) return null
+    if (!nodeIds.some((nodeId) => nodeNeedsSceneBackdrop(graph, nodeId))) {
+      renderGraph = extracted.graph
+      renderPageId = extracted.pageId
+    }
+  }
 
   const quality = options.quality ?? (options.format === 'PNG' ? 100 : 90)
   return renderToSurface(

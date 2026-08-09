@@ -140,7 +140,10 @@ function handleSubmit(e: Event) {
             "
             @click="toggleVoice"
           >
-            <icon-lucide-mic class="size-3" :class="{ 'animate-pulse': voicePhase === 'listening' }" />
+            <icon-lucide-mic
+              class="size-3"
+              :class="{ 'animate-pulse': voicePhase === 'listening' }"
+            />
           </button>
         </Tip>
         <Tip v-if="isStreaming" :label="dialogs.stopGenerating">

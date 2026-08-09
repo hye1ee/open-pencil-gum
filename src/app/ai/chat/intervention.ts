@@ -1,5 +1,6 @@
 import type { SceneNode } from '@open-pencil/scene-graph'
 
+import { recordUserEdit } from '@/app/ai/chat/user-edits'
 import type { EditorStore } from '@/app/editor/active-store'
 
 /**
@@ -28,7 +29,8 @@ function sleep(ms: number): Promise<void> {
 function formatValue(value: unknown): string {
   if (value === undefined || value === null) return 'none'
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1)
-  if (typeof value === 'string') return value.length > 40 ? `"${value.slice(0, 40)}…"` : `"${value}"`
+  if (typeof value === 'string')
+    return value.length > 40 ? `"${value.slice(0, 40)}…"` : `"${value}"`
   const json = JSON.stringify(value)
   return json.length > 60 ? `${json.slice(0, 60)}…` : json
 }
@@ -171,7 +173,9 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 /** Semantic keys whose value differs between two snapshots of the same node. */
 function changedSemanticKeys(before: SceneNode, after: SceneNode): string[] {
-  return SEMANTIC_KEYS.filter((key) => !sameValue(Reflect.get(before, key), Reflect.get(after, key)))
+  return SEMANTIC_KEYS.filter(
+    (key) => !sameValue(Reflect.get(before, key), Reflect.get(after, key))
+  )
 }
 
 /** True if `after` is a reordering of `before` (same child set, different order). */
@@ -229,7 +233,11 @@ function expireProtections(state: InterventionState): void {
  * here is a USER edit. Produces readable text AND updates guard state
  * (protectedProps / userCreated). Returns null if nothing meaningful changed.
  */
-function computeUserDiff(baseline: PageSnapshot, current: PageSnapshot, state: InterventionState): string | null {
+function computeUserDiff(
+  baseline: PageSnapshot,
+  current: PageSnapshot,
+  state: InterventionState
+): string | null {
   const added: string[] = []
   const modified: string[] = []
   const reordered: string[] = []
@@ -252,7 +260,9 @@ function computeUserDiff(baseline: PageSnapshot, current: PageSnapshot, state: I
     }
     const changed = changedSemanticKeys(before, node)
     if (changed.length > 0) {
-      const detail = changed.map((k) => `${k}=${formatChangeValue(k, Reflect.get(node, k))}`).join(', ')
+      const detail = changed
+        .map((k) => `${k}=${formatChangeValue(k, Reflect.get(node, k))}`)
+        .join(', ')
       modified.push(`- Modified ${nodeLabel(node)}: ${detail}`)
       protectCategories(state, id, changed)
     }
@@ -364,7 +374,10 @@ export function beginAgentMutation(store: EditorStore): void {
   if (store.state.sceneVersion === state.baselineVersion) return
   const current = store.snapshotPage()
   const diff = computeUserDiff(state.baseline, current, state)
-  if (diff) state.pending.push(diff)
+  if (diff) {
+    state.pending.push(diff)
+    recordUserEdit(diff)
+  }
   setBaseline(state, current, store.state.sceneVersion)
 }
 
@@ -375,6 +388,175 @@ export function endAgentMutation(store: EditorStore): void {
   setBaseline(state, store.snapshotPage(), store.state.sceneVersion)
 }
 
+// ── Hard guard: stop the agent overwriting/deleting user-owned nodes ─────────
+
+export interface GuardResult {
+  /** True → the tool call must be skipped entirely. */
+  blocked: boolean
+  reason?: string
+  /** If set, run the tool with these args instead (e.g. trimmed batch ops). */
+  modifiedArgs?: Record<string, unknown>
+}
+
+// Property categories each mutating tool writes. A tool is blocked only if it
+// writes a category the user changed on that node. Tools absent here (e.g.
+// node_resize → geometry, reparent_node) never overwrite a protected category.
+const TOOL_CATEGORIES: Record<string, ReadonlySet<string>> = {
+  set_fill: new Set(['fill']),
+  set_image_fill: new Set(['fill']),
+  stock_photo: new Set(['fill']),
+  set_stroke: new Set(['stroke']),
+  set_text: new Set(['text']),
+  set_text_properties: new Set(['text-style']),
+  set_radius: new Set(['radius']),
+  set_layout: new Set(['layout']),
+  set_layout_child: new Set(['layout']),
+  set_opacity: new Set(['opacity']),
+  set_blend_mode: new Set(['blend']),
+  set_drop_shadow: new Set(['effects']),
+  set_inner_shadow: new Set(['effects'])
+}
+// Generic tools that can overwrite anything → blocked if the node has ANY
+// protected category.
+const BROAD_TOOLS = new Set(['update_node'])
+// Flagged "mutating" but only frame/navigate — never guarded.
+const GUARD_EXEMPT_TOOLS = new Set(['viewport_zoom_to_fit'])
+
+/** Category a batch_update op prop key writes, or null. */
+function batchPropCategory(key: string): string | null {
+  if (key === 'corner_radius') return 'radius'
+  if (key === 'fill' || key === 'fills') return 'fill'
+  if (key === 'opacity') return 'opacity'
+  if (
+    key === 'spacing' ||
+    key === 'align' ||
+    key === 'counter_align' ||
+    key.startsWith('padding') ||
+    key.startsWith('sizing') ||
+    key === 'grow'
+  ) {
+    return 'layout'
+  }
+  return null
+}
+
+/** First node in the subtree (incl. root) that is protected or user-created. */
+function subtreeProtectedHit(
+  graph: SceneGraph,
+  rootId: string,
+  state: InterventionState
+): string | null {
+  const stack = [rootId]
+  while (stack.length > 0) {
+    const id = stack.pop()
+    if (id === undefined) break
+    if (state.protectedProps.has(id) || state.userCreated.has(id)) return id
+    const node = graph.getNode(id)
+    if (node) stack.push(...node.childIds)
+  }
+  return null
+}
+
+/** Drop batch_update ops that would overwrite a protected category. */
+function guardBatch(args: Record<string, unknown>, state: InterventionState): GuardResult {
+  let ops: unknown
+  try {
+    ops = JSON.parse(String(args.operations))
+  } catch {
+    return { blocked: false }
+  }
+  if (!Array.isArray(ops)) return { blocked: false }
+  const kept = ops.filter((op) => {
+    const id = (op as { id?: unknown }).id
+    if (typeof id !== 'string') return true
+    const protectedCats = state.protectedProps.get(id)
+    if (!protectedCats) return true
+    const props = (op as { props?: unknown }).props
+    if (!props || typeof props !== 'object') return true
+    for (const key of Object.keys(props)) {
+      const cat = batchPropCategory(key)
+      if (cat && protectedCats.has(cat)) return false
+    }
+    return true
+  })
+  if (kept.length === ops.length) return { blocked: false }
+  if (kept.length === 0) {
+    return { blocked: true, reason: 'all batch_update operations overwrite user-edited properties' }
+  }
+  return {
+    blocked: false,
+    modifiedArgs: { ...args, operations: JSON.stringify(kept) },
+    reason: `dropped ${ops.length - kept.length} batch op(s) overwriting user-edited properties`
+  }
+}
+
+/**
+ * Decide whether a mutating tool call may proceed against the user's edits.
+ * Property-level: only blocks a tool that would overwrite the exact category the
+ * user changed (or delete/replace a user-created node) — never the whole node.
+ */
+export function guardMutation(
+  store: EditorStore,
+  toolName: string,
+  args: Record<string, unknown>
+): GuardResult {
+  if (GUARD_EXEMPT_TOOLS.has(toolName)) return { blocked: false }
+  const state = getState(store)
+  if (state.protectedProps.size === 0 && state.userCreated.size === 0) return { blocked: false }
+  const graph = store.graph
+
+  // render: block only when replacing a subtree that holds a protected/user node.
+  if (toolName === 'render') {
+    const replaceId = args.replace_id
+    if (typeof replaceId === 'string') {
+      const hit = subtreeProtectedHit(graph, replaceId, state)
+      if (hit) {
+        const reason = `render would overwrite user-owned node ${hit} (replace_id=${replaceId})`
+        return { blocked: true, reason }
+      }
+    }
+    return { blocked: false }
+  }
+
+  if (toolName === 'batch_update') {
+    return guardBatch(args, state)
+  }
+
+  const id = typeof args.id === 'string' ? args.id : undefined
+  if (!id) return { blocked: false }
+  return guardSingleTarget(toolName, id, state)
+}
+
+/** Guard a single-target tool (delete_node or a property-writing setter). */
+function guardSingleTarget(toolName: string, id: string, state: InterventionState): GuardResult {
+  // delete_node: block if the node is user-created or has any protected property.
+  if (toolName === 'delete_node') {
+    if (state.userCreated.has(id) || state.protectedProps.has(id)) {
+      const reason = `delete_node target ${id} is user-created/edited; left unchanged`
+      return { blocked: true, reason }
+    }
+    return { blocked: false }
+  }
+
+  // Property-writing tools: block only on a category the user actually changed.
+  const protectedCats = state.protectedProps.get(id)
+  if (!protectedCats || protectedCats.size === 0) return { blocked: false }
+
+  if (BROAD_TOOLS.has(toolName)) {
+    return { blocked: true, reason: `${toolName} would overwrite user-edited node ${id}` }
+  }
+
+  const cats = TOOL_CATEGORIES[toolName]
+  if (cats) {
+    for (const cat of cats) {
+      if (protectedCats.has(cat)) {
+        return { blocked: true, reason: `${toolName} would overwrite the user's ${cat} on ${id}` }
+      }
+    }
+  }
+
+  return { blocked: false }
+}
 
 // ── Tracker (wired into the ToolLoopAgent in transports.ts) ──────────────────
 
@@ -424,6 +606,7 @@ export function createInterventionTracker(store: EditorStore): InterventionTrack
       if (store.state.sceneVersion !== state.baselineVersion) {
         const current = store.snapshotPage()
         boundaryDiff = computeUserDiff(state.baseline, current, state)
+        if (boundaryDiff) recordUserEdit(boundaryDiff)
         setBaseline(state, current, store.state.sceneVersion)
       }
       const parts = [...state.pending, boundaryDiff].filter((d): d is string => !!d)

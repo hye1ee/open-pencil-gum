@@ -1,111 +1,79 @@
 <script setup lang="ts">
-import { refAutoReset, useEventListener } from '@vueuse/core'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 
-import { dragAgentCursor } from '@/app/ai/chat/agent-cursor'
-import { agentTurn, pauseTurn, promptResume, resumeTurn } from '@/app/ai/chat/agent-turn'
-import { getActiveEditorStore, useEditorStore } from '@/app/editor/active-store'
+import { agentSpeech } from '@/app/ai/chat/agent-speech'
+import { agentTurn } from '@/app/ai/chat/agent-turn'
+import { mismatch, resumeAfterAnswers } from '@/app/ai/chat/mismatch'
+import { useEditorStore } from '@/app/editor/active-store'
+
+// What the agent is saying, in a bubble beside its cursor — and, once the
+// person has answered a marker and gone quiet, whether to carry on.
+//
+// The cursor used to be draggable: grabbing it paused the turn, parking it moved
+// where it hovered, and poking it while idle got a line back. That is gone —
+// pausing is what pointing at a mismatch marker does now, and it does it at
+// every point in the run rather than only at a step boundary, so the grab was a
+// second way to do one thing.
+//
+// The resume question lives here rather than beside the marker that was
+// answered, because by then there may be two or three answered markers and the
+// question is about all of them. The cursor is the one place that stands for
+// the run as a whole.
 
 const { canvasEl } = defineProps<{ canvasEl: HTMLCanvasElement | null }>()
 
 const store = useEditorStore()
 
-const IDLE_MS = 3000
-const POKE_MS = 3200
-
-// Playful lines the agent "says" when the user pokes it while it's idle.
-const POKE_LINES = ['뭐 도와줄까요?', '다음은 뭘 만들어 볼까요?', '시킬 일 있어요?', '준비됐어요!']
-let pokeIdx = 0
-const pokeMessage = refAutoReset('', POKE_MS)
+const BUBBLE_MAX_PX = 260
 
 // Screen (CSS px) position of the agent cursor within the canvas area.
 const screen = computed(() => {
   const c = store.state.agentCursor
   if (!c) return null
-  return { x: c.x * store.state.zoom + store.state.panX, y: c.y * store.state.zoom + store.state.panY }
+  return {
+    x: c.x * store.state.zoom + store.state.panX,
+    y: c.y * store.state.zoom + store.state.panY
+  }
 })
 
-const dragging = ref(false)
+// `thinking` is styled down — it's the agent talking to itself, not to the user.
+const bubble = computed(() => {
+  const text = agentTurn.running || agentTurn.paused ? agentSpeech.text : ''
+  if (!text) return null
+  return { text, thinking: agentSpeech.thinking && !!agentTurn.running }
+})
 
-function toWorld(e: PointerEvent) {
-  const rect = canvasEl?.getBoundingClientRect()
-  if (!rect) return null
-  return store.screenToCanvas(e.clientX - rect.left, e.clientY - rect.top)
-}
-
-function onGrab(e: PointerEvent) {
-  e.preventDefault()
-  e.stopPropagation()
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  dragging.value = true
-  pokeMessage.value = ''
-  // While working, grabbing pauses the turn. While idle it's just a poke —
-  // the cursor wobbles and springs back (see the frame loop) and reacts below.
-  if (agentTurn.running) pauseTurn()
-}
-
-function onMove(e: PointerEvent) {
-  if (!dragging.value) return
-  const w = toWorld(e)
-  // Use the real active store (not the reactive proxy) so the parked position
-  // lands on the same state the cursor's animation loop reads.
-  if (w) dragAgentCursor(getActiveEditorStore(), w.x, w.y)
-}
-
-function onRelease(e: PointerEvent) {
-  if (!dragging.value) return
-  ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
-  dragging.value = false
-  if (agentTurn.paused) {
-    // Let go after re-parking the paused cursor → restart the idle countdown.
-    armIdle()
-  } else if (!agentTurn.running) {
-    // Idle poke → the agent reacts, nudging the user to give it something to do.
-    pokeMessage.value = POKE_LINES[pokeIdx % POKE_LINES.length]
-    pokeIdx++
+// Anchored to the right of the cursor and clamped so a long line doesn't run off
+// the canvas — the cursor itself can sit near the edge.
+const bubblePos = computed(() => {
+  if (!screen.value) return null
+  const width = canvasEl?.clientWidth ?? Infinity
+  return {
+    left: Math.max(8, Math.min(screen.value.x + 14, width - BUBBLE_MAX_PX - 8)),
+    top: screen.value.y - 6
   }
-}
-
-// While paused, offer to resume once the user has been idle for a moment.
-let idleTimer = 0
-function armIdle() {
-  clearTimeout(idleTimer)
-  idleTimer = window.setTimeout(promptResume, IDLE_MS)
-}
-
-// Reset the countdown on activity only until the prompt is up — once it's shown
-// we detach, so moving the mouse toward the button doesn't dismiss it.
-const activityTarget = computed(() =>
-  agentTurn.paused && !agentTurn.askResume ? window : undefined
-)
-for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const) {
-  useEventListener(activityTarget, ev, armIdle, { passive: true })
-}
-
-watch(
-  () => agentTurn.paused,
-  (paused) => {
-    clearTimeout(idleTimer)
-    if (paused) armIdle()
-    else agentTurn.askResume = false
-  }
-)
-
-onUnmounted(() => clearTimeout(idleTimer))
+})
 </script>
 
 <template>
   <div v-if="screen" class="pointer-events-none absolute inset-0 z-30">
-    <!-- Grab target over the cursor arrow -->
+    <!-- Below the cursor, clear of the speech bubble above it. -->
     <div
-      class="pointer-events-auto absolute size-8 -translate-x-1/4 -translate-y-1/4"
-      :style="{ left: `${screen.x}px`, top: `${screen.y}px`, cursor: dragging ? 'grabbing' : 'grab' }"
-      @pointerdown="onGrab"
-      @pointermove="onMove"
-      @pointerup="onRelease"
-    />
+      v-if="mismatch.askingToResume"
+      class="pointer-events-auto absolute flex items-center gap-2 rounded-xl bg-panel px-3 py-2 text-xs shadow-lg ring-1 ring-border"
+      :style="{ left: `${screen.x + 14}px`, top: `${screen.y + 30}px` }"
+      data-test-id="agent-resume-prompt"
+    >
+      <span class="text-surface"> {{ mismatch.answers.length }} answered — carry on? </span>
+      <button
+        type="button"
+        class="rounded bg-accent px-2 py-1 font-medium text-white hover:bg-accent/90"
+        @click="resumeAfterAnswers()"
+      >
+        Continue
+      </button>
+    </div>
 
-    <!-- Playful reaction when the user pokes the idle cursor -->
     <Transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="translate-y-1 scale-95 opacity-0"
@@ -113,23 +81,27 @@ onUnmounted(() => clearTimeout(idleTimer))
       leave-to-class="translate-y-1 scale-95 opacity-0"
     >
       <div
-        v-if="pokeMessage && !agentTurn.running"
-        class="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-2xl rounded-bl-sm bg-panel px-3 py-1.5 text-xs font-medium whitespace-nowrap text-surface shadow-lg ring-1 ring-border"
-        :style="{ left: `${screen.x + 10}px`, top: `${screen.y - 4}px` }"
+        v-if="bubble && bubblePos"
+        class="pointer-events-none absolute -translate-y-full rounded-2xl rounded-bl-sm px-3 py-1.5 text-xs leading-snug text-balance shadow-lg ring-1 transition-colors"
+        :class="
+          bubble.thinking
+            ? 'bg-panel/80 font-normal text-muted italic ring-border/60'
+            : 'bg-panel font-medium text-surface ring-border'
+        "
+        :style="{
+          left: `${bubblePos.left}px`,
+          top: `${bubblePos.top}px`,
+          maxWidth: `${BUBBLE_MAX_PX}px`
+        }"
       >
-        {{ pokeMessage }}
+        {{ bubble.text
+        }}<span
+          v-if="bubble.thinking"
+          class="ml-0.5 inline-block animate-pulse not-italic"
+          aria-hidden="true"
+          >▌</span
+        >
       </div>
     </Transition>
-
-    <!-- Resume prompt after the user goes idle while paused -->
-    <button
-      v-if="agentTurn.askResume"
-      class="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-xs font-medium whitespace-nowrap text-white shadow-lg"
-      :style="{ left: `${screen.x + 8}px`, top: `${screen.y - 6}px` }"
-      @click="resumeTurn"
-    >
-      <icon-lucide-play class="size-3" />
-      Resume agent?
-    </button>
   </div>
 </template>

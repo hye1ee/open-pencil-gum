@@ -9,6 +9,9 @@ function ignoreMarkdownOutsideSource(path: string): boolean {
 }
 
 export const WATCH_IGNORED = [
+  // A frame lands here every few seconds while page capture is running; without
+  // this the watcher fires on every one of them mid-session.
+  '**/captures/**',
   '**/desktop/**',
   '**/packages/cli/**',
   '**/packages/mcp/**',

@@ -179,6 +179,7 @@ export {
   ARABIC_LOCAL_FALLBACK_FAMILIES,
   ARABIC_REMOTE_FALLBACK_FAMILIES,
   cjkLocalFallbackFamilies,
+  fallbackScriptsFor,
   fontFallbackEntry,
   fontFallbackManifest,
   type FontFallbackManifestEntry,

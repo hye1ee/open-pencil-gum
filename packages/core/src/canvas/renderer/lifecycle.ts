@@ -36,12 +36,16 @@ export function destroyRenderer(r: SkiaRenderer): void {
   r.auxFill.delete()
   r.auxStroke.delete()
   r.opacityPaint.delete()
-  r.textFont?.delete()
-  r.labelFont?.delete()
-  r.sizeFont?.delete()
-  r.sectionTitleFont?.delete()
-  r.componentLabelFont?.delete()
-  r.fontMgr?.delete()
+  for (const font of [
+    r.textFont,
+    r.labelFont,
+    r.sizeFont,
+    r.sectionTitleFont,
+    r.componentLabelFont,
+    r.fontMgr
+  ]) {
+    font?.delete()
+  }
   const fontProvider = r.fontProvider
   fontProvider?.delete()
   r.fontProvider = null
@@ -67,7 +71,7 @@ export function destroyRenderer(r: SkiaRenderer): void {
   r.nodePictureCache.clear()
   clearSubtreePictureCache(r)
   clearRetainedSceneState(r)
-  r._flashPaint?.delete()
+  for (const paint of [r._flashPaint, r._aiGlowPaint]) paint?.delete()
   r.profiler.destroy()
   r.surface.delete()
 }

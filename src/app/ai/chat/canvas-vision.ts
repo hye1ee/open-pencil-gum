@@ -22,10 +22,14 @@ import type { EditorStore } from '@/app/editor/active-store'
  * describe-only steps don't trigger a re-render.
  */
 
-/** Longest edge (px) of the injected canvas image. Larger = clearer but more
- * image tokens (Anthropic ≈ w×h/750). 1400 keeps a full page legible while
- * staying under the ~1568px/1.15MP ceiling where the API downscales anyway. */
-const MAX_IMAGE_LONG_EDGE = 1400
+/**
+ * Longest edge (px) of the whole-page overview. Larger = clearer but more image
+ * tokens (Anthropic ≈ w×h/750).
+ *
+ * Deliberately lower than the ~1568px/1.15MP ceiling: the overview only has to
+ * carry composition and balance.
+ */
+const MAX_IMAGE_LONG_EDGE = 1000
 
 /**
  * Master switch for the whole feature (default on). Set VITE_CANVAS_VISION=false
@@ -47,6 +51,15 @@ export interface CanvasVision {
   imagePart(): Promise<ImagePart | null>
 }
 
+/** Scale that lands the region's longest edge on `longEdge`, never upscaling. */
+function fitScale(store: EditorStore, nodeIds: string[], longEdge: number): number | null {
+  const bounds = computeContentBounds(store.graph, nodeIds)
+  if (!bounds) return null
+  const maxDim = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+  if (maxDim <= 0) return null
+  return Math.min(1, longEdge / maxDim)
+}
+
 export function createCanvasVision(store: EditorStore): CanvasVision {
   let cache: CachedImage | null = null
 
@@ -64,11 +77,8 @@ export function createCanvasVision(store: EditorStore): CanvasVision {
       const ids = store.graph.getChildren(pageId).map((n) => n.id)
       if (ids.length === 0) return null
 
-      const bounds = computeContentBounds(store.graph, ids)
-      if (!bounds) return null
-      const maxDim = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
-      if (maxDim <= 0) return null
-      const scale = Math.min(1, MAX_IMAGE_LONG_EDGE / maxDim)
+      const scale = fitScale(store, ids, MAX_IMAGE_LONG_EDGE)
+      if (scale === null) return null
 
       // Empty ids ⇒ whole page; returns null if there's no renderer (headless).
       const bytes = await store.renderExportImage([], scale, 'PNG')

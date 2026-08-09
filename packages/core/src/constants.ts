@@ -134,6 +134,25 @@ export const AI_DONE_COLOR = { r: 0.16, g: 0.73, b: 0.36 }
 export const AI_PULSE_PERIOD_MS = 1500
 export const AI_DONE_DURATION_MS = 800
 
+/** Nodes where what the agent is about to do looks unlike what the user model
+ * says this person wants. Red, and deliberately not the agent's own blue/green:
+ * this is the one glow that is not the agent reporting on itself. */
+export const AI_MISMATCH_COLOR = { r: 0.94, g: 0.27, b: 0.27 }
+/** Blur sigma of the outer glow, in screen px (kept constant across zoom). */
+export const AI_MISMATCH_BLUR_SIGMA = 7
+export const AI_MISMATCH_GLOW_WIDTH = 10
+export const AI_MISMATCH_EDGE_WIDTH = 1.5
+export const AI_MISMATCH_PADDING = 3
+/** The meta-agent rates severity 1-10; 1 is the faintest the glow gets and 10
+ * is as loud as the canvas can be without drowning the design underneath. */
+export const AI_MISMATCH_MAX_SEVERITY = 10
+/** Slower than the agent's own flashes: this marker stands until the user
+ * answers it, and a fast blink on something that is not going away nags. */
+export const AI_MISMATCH_PULSE_MS = 2400
+/** How far the pulse dips. Shallow, so the hit count stays the louder signal —
+ * a pulsing one-hit node must never read brighter than a steady four-hit one. */
+export const AI_MISMATCH_PULSE_DEPTH = 0.35
+
 export const TEXT_SELECTION_COLOR = { r: 0.26, g: 0.52, b: 0.96, a: 0.3 }
 export const TEXT_CARET_COLOR = BLACK
 export const TEXT_CARET_WIDTH = 1
@@ -258,6 +277,7 @@ export const AI_PROVIDERS: AIProviderDef[] = [
     defaultModel: 'gemini-3.1-pro-preview',
     models: [
       { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', tag: '1M context' },
+      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', tag: 'Reasoning' },
       { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', tag: 'Fast' }
     ]
   },
