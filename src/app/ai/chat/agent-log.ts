@@ -90,6 +90,19 @@ export function logRunStart(request: string): void {
   write('RUN', `"${truncate(request, 300)}"`)
 }
 
+/**
+ * A turn that is the same piece of work carrying on — the build restarted after
+ * someone answered a marker.
+ *
+ * Appends where `logRunStart` truncates, and keeps the clock running. Wiping
+ * here would throw away the whole first half of the build, including the marks
+ * and the answers that caused the restart, which is precisely the part anyone
+ * reading this file afterwards needs.
+ */
+export function logRunContinue(request: string): void {
+  write('RUN~', `"${truncate(request, 300)}"`)
+}
+
 export function logRunEnd(reason: string): void {
   write('END', reason)
   flush()
@@ -174,10 +187,75 @@ export function logMarkRelease(id: string, ms: number): void {
   write('HOVER', `${id} released after ${(ms / 1000).toFixed(1)}s → turn resumes`)
 }
 
+/**
+ * The person clicked a mark to answer it, and what became of that. Leaving a
+ * mark alone counts as agreement, so these lines are the disagreements — and
+ * the gap between the last `answered` line and `quiet` is the pause they took
+ * before the run offered to carry on.
+ */
+export function logMarkAnswer(
+  event: 'opened' | 'answered' | 'dismissed' | 'quiet' | 'resumed' | 'passed',
+  detail: string
+): void {
+  write('ANSWER', `${event.padEnd(9)} ${detail}`)
+}
+
+/**
+ * What the user model did with what it was told.
+ *
+ * Its own state lives in a file that is overwritten in place, so without this
+ * there is no way to see *why* a proposition says what it says — only what it
+ * ended up saying. On the same timeline as the answers that caused it.
+ */
+export function logUserModelStage(stage: string, detail: string): void {
+  write('MODEL', `${stage.padEnd(9)} ${detail}`)
+}
+
+/** One proposition rewritten, with the wording and confidence it had before. */
+export function logPropositionChange(change: {
+  id: string
+  before: { text: string; confidence: number } | null
+  after: { text: string; confidence: number }
+}): void {
+  const out = (value: number) => `${(value * 9 + 1).toFixed(0)}/10`
+  if (!change.before) {
+    writeBlock(
+      'MODEL',
+      `new       ${change.id} ${out(change.after.confidence)}\n${change.after.text}`
+    )
+    return
+  }
+  if (change.before.text === change.after.text) {
+    write(
+      'MODEL',
+      `confidence ${change.id} ${out(change.before.confidence)} → ${out(change.after.confidence)}`
+    )
+    return
+  }
+  writeBlock(
+    'MODEL',
+    `rewrote   ${change.id} ${out(change.before.confidence)} → ${out(change.after.confidence)}\n` +
+      `was:  ${change.before.text}\n` +
+      `now:  ${change.after.text}`
+  )
+}
+
 /** A place in the run that actually stopped, and for how long. Written on
  * release, since that is when the duration is known. */
 export function logTurnHeld(where: string, ms: number): void {
   write('HELD', `${where} — ${(ms / 1000).toFixed(1)}s`)
+}
+
+/**
+ * A turn thrown away rather than resumed, and where the stream noticed.
+ *
+ * Both halves are needed and neither can be inferred from the other. Without
+ * the first, a step that quietly ran anyway looks like the abort never fired;
+ * without the second, a stream that killed itself on a stale flag looks like a
+ * provider returning nothing.
+ */
+export function logTurnAbandoned(detail: string): void {
+  write('DROP', detail)
 }
 
 /**

@@ -36,20 +36,57 @@ Two relations can produce a mark, and they matter equally:
 
 1. CONFLICT. The thinking goes against a proposition: the agent is reaching for something the list says this person avoids, or away from something the list says they do. Use relation \`conflict\` and put that proposition's id in \`evidence_from_user_model\`.
 
-2. UNKNOWN. The agent is deciding how the design should look and no proposition covers that choice, for or against. Use relation \`unknown\` and set \`evidence_from_user_model\` to null. Nothing is wrong here — the mark records a design decision made where we are blind. At most 3 of these stand at once; to add a fourth, delete one.
+2. UNKNOWN. The agent is working something out about the design and no proposition covers it, for or against. Use relation \`unknown\` and set \`evidence_from_user_model\` to null. Nothing is wrong here — the mark records a place we are blind. Only the three most important of these are shown at a time, which is handled for you: raise the ones worth raising and let the importance you give them decide.
+
+"Working something out" is wider than picking a value. It covers what the agent is about to turn its attention to, what it is weighing, and the order it does things in — all of that is how this build is going, and any of it can be something we have never seen this person do.
+
+  "I am pausing briefly to examine the colors"          → we do not know when they deal with colour
+  "considering a carousel or a static row"              → we do not know which they would want
+  "I'll get all three cards in place before styling"    → we do not know how they like to work
 
 There is a third relation that produces no mark: SUPPORT OR ALIGNMENT. If the thinking follows a proposition, call no tool for it. Merely finding a matching preference is not a warning.
+
+CHOOSING BETWEEN THE TWO
+
+A proposition makes one particular claim about this person. To use \`conflict\`, the words you quoted have to speak to that same claim — and go against it.
+
+Say the proposition is "works in near-monochrome greys with one warm accent". The claim is about *which colours*. So:
+
+  "I'll give the buttons an indigo fill"       → speaks to which colours, and goes against it. Conflict.
+  "I am pausing briefly to examine the colors" → says the agent is about to think about colour.
+                                                 It does not say which. Nothing here goes against
+                                                 the claim, so this is not a conflict — it is an
+                                                 \`unknown\`, and \`evidence_from_user_model\` is null.
+
+The second one is still worth a mark. The agent is deciding something about the design and we cannot say what this person would want, which is exactly what \`unknown\` is for. What is wrong is only the label: reaching for a proposition your evidence does not touch, and calling it a warning.
+
+That reach is the failure to watch for. It makes us look certain about something we never observed, and the person reads a red mark as us being sure.
+
+  If the quote goes against the claim                          → conflict, cite the proposition
+  If the quote is about something no proposition claims        → unknown, cite nothing
+  If the quote is near a proposition but does not settle it    → unknown, cite nothing
+  If the quote follows a proposition                           → no mark at all
+  If the person asked for it in their request                  → no mark at all
+
+Alignment deserves its own warning, because it is the loudest way to be wrong. Before you use \`conflict\`, read your own \`text\` back: if the two halves either side of the "·" say the same thing, you have written down an agreement and called it a warning — you are interrupting someone to tell them the agent is doing what they wanted.
+
+  Bad:  "keeping image corners at 16px · you prefer pronounced rounding on image corners"
+  Bad:  "using a warm grey accent · you work in greys with one warm accent"
+
+This goes wrong most often right after the person has asked for something. Their request produces both the agent's decision and, often, a matching proposition — so the two agree by construction, and there is nothing to raise.
 
 WHAT NOT TO MARK
 
 - Anything the thinking does not say. You are also given the canvas and the list of what the agent has already done, but only so you can work out which node the thinking means when it says "the cards". Do not go looking through them for things to mark. What is already on the canvas has already happened.
 - Anything the person asked for. Their request is the first thing you are given. Before every tool call, read the mark you are about to make back against that request: if the request already says this, there is no mark. If they asked for big shadows, shadows are not a conflict however flat their past work has been — and they are not an unknown either. Nothing they spelled out is a decision we are blind to. They told us.
 
-  This is also how you catch the agent merely repeating the request back to itself. They asked for three cards in a row; the agent saying it will build a three-column row has decided nothing yet, and there is nothing there to mark.
+  This is also how you catch the agent repeating the request back to itself. They asked for three cards in a row, and the agent says it will build a three-column row — that is their own sentence coming back, so there is nothing to tell them. Not because nothing has been decided yet; because they decided it.
 
-- Anything aimed at the machinery rather than at the design. The test is what the decision leaves behind: a choice that ends up as something on the canvas is a design decision, and a choice about how to get there is not. Which font is missing, why a tool returned nothing, whether a warning applies, telling the person to configure an API key so images can load — none of that survives on the canvas, and this person holds no taste about it.
+- The tools getting in the way. Which font is missing, why a call returned nothing, whether a warning applies, telling the person to configure an API key so images can load. That is this app misbehaving, not the design going anywhere, and nobody holds a preference about it.
 
-  A design decision does not stop being one because a warning is what raised it. "The system flagged this, I am disregarding it, the corners should be 8 or 12px" settles a radius, and the radius is on the canvas. Read past the troubleshooting talk to the thing the agent decided the design should be, and mark that if it conflicts.
+  This is narrower than it sounds, and it is not the same as "how the agent goes about it". The order it works in, what it does first, whether it finishes one card before styling the next — that is working method, and working method is something a person very much has habits about. Mark it. What is excluded is only the app failing.
+
+  A design decision also does not stop being one because a warning is what raised it. "The system flagged this, I am disregarding it, the corners should be 8 or 12px" settles a radius. Read past the troubleshooting talk to the thing the agent decided, and mark that.
 
 - Your own view of the design. Whether it could be better is not the question.
 
@@ -94,6 +131,7 @@ A mark is read in a tooltip beside the node, at a glance, while the agent is sti
   Against a proposition:  "reaching for a default blue · you keep to neutral tones"
   Nothing covers it:      "gives the image a third of the card's height · we have not seen how you size images"
   Nothing covers it:      "wraps the row in a bordered container · we have never seen you group a row that way"
+  Nothing covers it:      "stopping to settle colour before the layout · we do not know what you do first"
   Bad:  "The agent is planning to add a Best Seller badge to each card, but this user tends to prefer keeping strictly to what they asked for."
   Bad:  "This user keeps to what they asked for."   (one side only — what is the agent doing?)
   Bad:  "the button could be larger · ..."    (your opinion, not the list's silence)
@@ -104,11 +142,14 @@ You are not restating your marks each time. You are changing a list that stays: 
 
 - \`generate_mark\` — create a genuinely new mark. \`node_id\` is the node it is about, taken from the canvas listing: the most specific node the thinking names, their shared parent when it is about several siblings, or null when it is about the design as a whole.
 - \`update_mark\` — change an existing standing mark when the reasoning changes its wording, relation, target, or importance. It can also update an "already raised" mark; that revives the same id instead of generating a duplicate when the concern returns.
-- \`delete_mark\` — only when the quoted words show the agent taking the decision back: choosing something else instead, or saying it will not do it. Also use it to make room when a fourth unknown is worth more than one you are holding.
 
-A MARK DOES NOT NEED YOU TO END IT. When the change it was about lands on the canvas and the person does not stop it, the mark comes off by itself and moves to "already raised". That is the ordinary way a mark ends. Deleting is the rare one.
+YOU CANNOT TAKE A MARK DOWN, AND YOU DO NOT NEED TO. A mark leaves the canvas on its own once the agent has carried the decision out and the person has not stopped it; it then appears under "already raised". That is the only way one ends, and it is not your call — it is an event.
 
-CHANGING THE SUBJECT IS NOT TAKING SOMETHING BACK. The agent decides a card's style once and then spends ten steps on other things — laying out the next card, chasing a bug, reading the canvas back. The style is still in force through every one of those steps. If you delete the mark because the thinking has moved to something else, you delete it while it is still true, and it was never on screen long enough to be read. Silence about a decision is not a reversal. Keep the mark until the words say otherwise.
+This is deliberate. A mark is read by a person moving a pointer towards it, and one that disappears part-way through that was worse than never appearing. So the list only ever grows during a step, and shrinks when something actually happens.
+
+WHEN THE AGENT REALLY DOES TAKE A DECISION BACK — it says it will use something else instead, or says it will not do the thing — update the mark to importance 1. It stays where it is, and the person can see it stopped mattering.
+
+CHANGING THE SUBJECT IS NOT TAKING SOMETHING BACK. The agent decides a card's style once and then spends ten steps on other things — laying out the next card, chasing a bug, reading the canvas back. The style is still in force through every one of those steps. Dropping the importance because the thinking has moved elsewhere buries a mark that is still true. Silence about a decision is not a reversal.
 
 Do not generate a new mark when the same concern exists under "already raised". Update that id to revive it. Do not call any tool to report alignment. If no mark needs changing, call no tool and return no prose.
 
@@ -122,7 +163,7 @@ IMPORTANCE
 
 An agent that keeps coming back to the same idea is more worth stopping than one that mentioned it once. That belongs in this number, raised through update.
 
-You have exactly the three tools above. Choose among them freely and make zero or more calls. Do not output JSON or commentary as text.`
+You have exactly the two tools above. Use either freely and make zero or more calls. Do not output JSON or commentary as text.`
 
 function renderPropositions(input: JudgeInput): string {
   return input.propositions
@@ -150,6 +191,24 @@ function renderMarks(marks: Mark[]): string {
   return marks.map(renderMark).join('\n')
 }
 
+/**
+ * Notes the person has already replied to. Their reply is the last word on that
+ * subject, so raising it again is not a warning, it is not having listened.
+ */
+function renderSettled(settled: JudgeInput['settled']): string {
+  if (settled.length === 0) return ''
+  const lines = settled
+    .map((item) => `- shown: "${item.note}"\n  they replied: "${item.reply}"`)
+    .join('\n')
+  return (
+    'The person has already answered these notes during this build, and the agent ' +
+    'is working from what they said. Do not raise any of them again — on that ' +
+    'subject their reply outranks the user model, and repeating it says nobody ' +
+    'was listening:\n' +
+    lines
+  )
+}
+
 export function renderJudgePrompt(input: JudgeInput): string {
   const actions =
     input.actions.length === 0
@@ -175,5 +234,7 @@ Your marks, standing right now:
 ${renderMarks(input.marks)}
 
 Already raised this turn. Update the same id to revive a recurring concern; do not generate a duplicate:
-${renderMarks(input.retired)}`
+${renderMarks(input.retired)}
+
+${renderSettled(input.settled)}`
 }

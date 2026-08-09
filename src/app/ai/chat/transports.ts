@@ -1,5 +1,5 @@
 import { Chat } from '@ai-sdk/vue'
-import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
+import { DirectChatTransport, ToolLoopAgent } from 'ai'
 import type { ChatTransport, ImagePart, ModelMessage, UIMessage, UserContent } from 'ai'
 import type { ComputedRef, Ref } from 'vue'
 
@@ -10,9 +10,11 @@ import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
   logIntervention,
   logPlan,
+  logRunContinue,
   logRunEnd,
   logRunStart,
   logStep,
+  logTurnAbandoned,
   logUsage,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
@@ -30,7 +32,14 @@ import {
   clearUserMessages,
   drainUserMessages
 } from '@/app/ai/chat/user-messages'
-import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
+import {
+  MAX_AGENT_STEPS,
+  createAITools,
+  currentRunSteps,
+  isContinuingRun,
+  recordStepUsage,
+  resetRunSteps
+} from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
@@ -218,14 +227,22 @@ export function createToolLoopTransport({
     model,
     instructions: SYSTEM_PROMPT,
     tools,
-    stopWhen: stepCountIs(MAX_AGENT_STEPS),
+    // Our own counter, not the SDK's: `stepCountIs` counts steps inside one
+    // streaming call, and a build restarted after marker feedback is a second
+    // call. Counting there would hand out a fresh fifty every time someone
+    // answered a marker, which makes the ceiling mean nothing.
+    stopWhen: () => currentRunSteps(store) >= MAX_AGENT_STEPS,
     maxOutputTokens,
     providerOptions: callProviderOptions,
     prepareCall: async (options) => {
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
       const submittedRequest = takeRequest() || lastUserText(sent)
-      logRunStart(submittedRequest)
+      // Read before `resetRunSteps`, which consumes the flag. A restart appends
+      // to the log rather than truncating it: the half of the build that led to
+      // the feedback is the part worth having.
+      if (isContinuingRun(store)) logRunContinue(submittedRequest)
+      else logRunStart(submittedRequest)
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
@@ -242,8 +259,13 @@ export function createToolLoopTransport({
       }
     },
     prepareStep: async ({ messages, stepNumber }) => {
-      // Block here while the user is reading a marker.
-      await awaitTurnResume('step-boundary')
+      // Block here while the user is reading a marker. If the turn was thrown
+      // away while held, everything below is work for a step that will never
+      // run — including a planning call, which is billed.
+      if (!(await awaitTurnResume('step-boundary'))) {
+        logTurnAbandoned('step skipped at step-boundary')
+        return {}
+      }
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
       // Messages the user sent mid-run, and the canvas PNG for overall layout.
@@ -265,7 +287,9 @@ export function createToolLoopTransport({
       }
 
       logStep(
-        stepNumber,
+        // Ours, not the SDK's, which counts from zero again in the second call
+        // of a restarted build and would report step 8 as step 0.
+        currentRunSteps(store),
         [
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',

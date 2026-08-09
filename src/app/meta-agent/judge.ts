@@ -3,19 +3,24 @@
  * where that thinking runs against what we know about the person whose canvas
  * it is.
  *
- * One call per chunk of reasoning, with three ordinary model tools available:
- * generate_mark, update_mark, and delete_mark. There is deliberately no tool
- * loop: chunks land about every second, and a multi-round loop would spend the
- * run answering questions about thinking the working agent had already left.
+ * One call per chunk of reasoning, with two ordinary model tools available:
+ * generate_mark and update_mark. There is deliberately no tool loop: chunks
+ * land about every second, and a multi-round loop would spend the run answering
+ * questions about thinking the working agent had already left.
  *
- * It answers in actions — generate, update, delete — against marks that persist
- * between calls. The first version restated its whole judgment every time, which
- * failed in both directions at once: the agent states a decision in words exactly
- * once and then executes it silently for three more steps, so a mark that had to
- * be re-earned from the current sentence could not survive, and a mark that was
+ * It answers in actions — generate, update — against marks that persist between
+ * calls. The first version restated its whole judgment every time, which failed
+ * in both directions at once: the agent states a decision in words exactly once
+ * and then executes it silently for three more steps, so a mark that had to be
+ * re-earned from the current sentence could not survive, and a mark that was
  * carried was carried without any text to justify it and froze into a copy of the
  * last answer. Persisting the mark and travelling its evidence with it is what
  * fixes both — the sentence that justified it comes along.
+ *
+ * There is no delete, and that is load-bearing rather than an omission — see
+ * `tools.ts`. The one way a mark ends is `retireWarnings`, which the caller
+ * fires when a change the mark warned about has been carried out and the person
+ * did not answer the mark to stop it.
  *
  * No app imports and no provider SDK: the caller supplies `judge`, and
  * `prompt.ts` holds everything that knows this is a design tool.
@@ -83,10 +88,9 @@ export type MarkAction =
       note: MarkNote
       importance: number
     }
-  | { type: 'delete'; id: string; quote: string }
 
 export interface MarkToolCall {
-  toolName: 'generate_mark' | 'update_mark' | 'delete_mark'
+  toolName: 'generate_mark' | 'update_mark'
   input: unknown
 }
 
@@ -106,7 +110,12 @@ export type AppliedMarkTool =
       importance: number
       revived: boolean
     }
-  | { toolName: 'delete_mark'; id: string; retired: boolean }
+
+/** A note the person answered, and what they said. */
+export interface SettledNote {
+  note: string
+  reply: string
+}
 
 export interface JudgeInput {
   /** What the person asked for, in their words. Outranks the model. */
@@ -120,6 +129,15 @@ export interface JudgeInput {
   actions: string[]
   /** The marks standing right now, with their evidence. */
   marks: Mark[]
+  /**
+   * Notes the person already answered earlier in this build, in their words.
+   *
+   * Survives the turn being restarted, which is what happens when they answer
+   * one. Without it the redone step gets marked all over again for the thing
+   * they just spoke to — the loudest possible way of showing you were not
+   * listening.
+   */
+  settled: SettledNote[]
   /**
    * Warnings whose tool call has already landed and stood. Off the canvas, kept
    * here so a recurring concern updates and revives the same mark instead of
@@ -177,6 +195,27 @@ export interface MetaAgent {
   /** A replace tool preserved the design role but assigned the node a new id. */
   remapNode(oldId: string, newId: string): void
   readonly marks: Mark[]
+  /**
+   * Resolves once nothing is in flight and nothing is queued.
+   *
+   * The caller is the stream tap, which holds the agent's tool call until the
+   * marks about the thinking that led to it are on screen. Without it the two
+   * race: an answer takes about four seconds and the beats before a tool call
+   * add up to less, so the change can land before the mark warning about it
+   * appears, and a mark that arrives after the fact is a different thing from
+   * a mark that arrives before.
+   */
+  settled(): Promise<void>
+  /**
+   * The marks the person could have answered: standing, plus those that retired
+   * because the change they warned about landed and was not stopped.
+   *
+   * Not the ones this agent deleted. Letting a mark alone is agreement, but
+   * only if it was there to be left alone — a mark withdrawn after three
+   * seconds was never the person's to accept, and reporting it as accepted
+   * builds agreement out of something they may never have seen.
+   */
+  readonly answerable: Mark[]
 }
 
 /** Beyond a few, questions about the design stop being a prompt and become
@@ -279,11 +318,6 @@ function readAction(
   const quote = readQuote(row, haystack)
   if (quote === null) return null
 
-  if (call.toolName === 'delete_mark') {
-    const id = readId(row, markIds)
-    return id === null ? null : { type: 'delete', id, quote }
-  }
-
   const relation = readRelation(row, known)
   if (!relation) return null
   const note = readNote(row, relation, quote)
@@ -330,6 +364,15 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   let busy = false
   /** Arrived while an answer was in flight; run once that one lands. */
   let pending: ConsiderInput | null = null
+  /** Woken when `busy` clears with nothing queued behind it. */
+  let settlers: Array<() => void> = []
+
+  function wakeSettlers(): void {
+    if (busy || pending) return
+    const waiting = settlers
+    settlers = []
+    for (const resolve of waiting) resolve()
+  }
 
   /** Ours, not the model's: an id it invents collides or changes shape between
    * calls, and every update and delete is aimed by it. */
@@ -360,13 +403,14 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     for (const action of actions) {
       if (action.type === 'generate') {
         const id = mint()
-        marks.push({
+        const mark: Mark = {
           id,
           nodeId: action.nodeId,
           relation: action.relation,
           notes: [action.note],
           importance: action.importance
-        })
+        }
+        marks.push(mark)
         applied.push({
           toolName: 'generate_mark',
           id,
@@ -381,12 +425,6 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       const wasRetired = !mark && retiredIndex !== -1
       if (!mark && retiredIndex !== -1) mark = retired[retiredIndex]
       if (!mark) continue
-      if (action.type === 'delete') {
-        marks = marks.filter((candidate) => candidate.id !== action.id)
-        retired = retired.filter((candidate) => candidate.id !== action.id)
-        applied.push({ toolName: 'delete_mark', id: action.id, retired: wasRetired })
-        continue
-      }
       if (wasRetired) {
         retired = retired.filter((candidate) => candidate.id !== action.id)
         marks.push(mark)
@@ -433,10 +471,22 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
         const next = pending
         pending = null
         if (next) start(next)
+        else wakeSettlers()
       })
   }
 
   return {
+    settled() {
+      if (!busy && !pending) return Promise.resolve()
+      return new Promise((resolve) => {
+        settlers.push(resolve)
+      })
+    },
+
+    get answerable() {
+      return [...marks, ...retired]
+    },
+
     beginTurn() {
       const hadState = marks.length > 0 || retired.length > 0
       retired = []
@@ -450,6 +500,9 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
 
     beginStep() {
       pending = null
+      // Dropping the queued chunk can be the thing that leaves nothing in
+      // flight, and a waiter that is not woken here holds the run for good.
+      wakeSettlers()
     },
 
     consider(input) {

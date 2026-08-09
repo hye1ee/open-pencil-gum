@@ -65,3 +65,25 @@ export function actionsSoFar(store: EditorStore): string[] {
     })
     .slice(-12)
 }
+
+/**
+ * The nodes a change landed on, plus everything they sit inside.
+ *
+ * A mark names the most specific node the thinking was about, and for anything
+ * said about a group that is the container — "the cards", "the row". The tool
+ * call that follows then creates or edits a *child* of it, so matching ids
+ * exactly retires nothing: measured across every run of this feature, not one
+ * warning ever came off, and warnings about changes that had already landed sat
+ * on the canvas until the turn ended.
+ */
+export function withAncestors(store: EditorStore, nodeIds: readonly string[]): string[] {
+  const all = new Set<string>()
+  for (const nodeId of nodeIds) {
+    let current: string | null = nodeId
+    while (current !== null && !all.has(current)) {
+      all.add(current)
+      current = store.graph.getNode(current)?.parentId ?? null
+    }
+  }
+  return [...all]
+}

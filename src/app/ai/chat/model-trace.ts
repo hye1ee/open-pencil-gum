@@ -23,7 +23,13 @@
 import { wrapLanguageModel } from 'ai'
 import type { LanguageModelMiddleware } from 'ai'
 
-import { logAgentText, logStreamShape, logSystemPrompt, logThinking } from '@/app/ai/chat/agent-log'
+import {
+  logAgentText,
+  logStreamShape,
+  logSystemPrompt,
+  logThinking,
+  logTurnAbandoned
+} from '@/app/ai/chat/agent-log'
 import { awaitSpeechDrained, sayAgent } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume } from '@/app/ai/chat/agent-turn'
 
@@ -45,6 +51,9 @@ interface ReasoningObserver {
   start(): void
   /** Everything thought in this block so far. */
   chunk(reasoningSoFar: string): void
+  /** Resolves once the watcher has finished answering everything it has been
+   * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
+  settled(): Promise<void>
 }
 let observeReasoning: ReasoningObserver | null = null
 
@@ -96,10 +105,30 @@ const BEFORE_ACTION_MS = 900
  */
 const BETWEEN_THOUGHTS_MS = 2500
 
+/**
+ * How long the tool call waits for the watcher to finish reading the thinking
+ * that led to it.
+ *
+ * The point is an ordering guarantee: a mark about a decision has to be on
+ * screen before the decision lands, or the person is being warned about
+ * something that already happened. The beats alone do not give that — an answer
+ * takes three to five seconds and the beats add up to 3.4 — so this waits for
+ * the answer itself.
+ *
+ * The ceiling is there because the watcher is a model call and can hang. Past
+ * it the run goes on without the mark, which is the old behaviour rather than
+ * a stuck canvas.
+ */
+const SETTLE_TIMEOUT_MS = 8000
+
 function beat(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
+  return Promise.race([promise, beat(ms)])
 }
 
 let lastSystem: string | null = null
@@ -140,8 +169,13 @@ const middleware: LanguageModelMiddleware = {
       if (run === 0) shape.push(type)
       else shape[shape.length - 1] = `${type} ×${run + 1}`
     }
+    // The turn was thrown away while this stream was held. Everything still
+    // buffered behind the hold belongs to a step that is being done again, so
+    // none of it may reach the tool executor.
+    let dropped = false
     const tap = new TransformStream<StreamPart, StreamPart>({
       async transform(chunk, controller) {
+        if (dropped) return
         seen(chunk.type)
         if (chunk.type === 'reasoning-start') {
           thinking = ''
@@ -157,7 +191,12 @@ const middleware: LanguageModelMiddleware = {
           // The step boundary is the other place the turn can be held, and it
           // can be twenty seconds away. Someone who points at a marker while the
           // agent is mid-thought means now.
-          await awaitTurnResume('mid-thought')
+          if (!(await awaitTurnResume('mid-thought'))) {
+            dropped = true
+            logTurnAbandoned('stream dropped at mid-thought')
+            controller.terminate()
+            return
+          }
         } else if (chunk.type === 'reasoning-end') {
           logThinking(thinking)
           thinking = ''
@@ -178,8 +217,21 @@ const middleware: LanguageModelMiddleware = {
           // announcing it has been up long enough to read.
           await awaitSpeechDrained()
           await beat(BEFORE_ACTION_MS)
+          // Then for the watcher's verdict on the thinking that led here, so
+          // its marks are up before the thing they are about lands.
+          if (observeReasoning) {
+            await withTimeout(observeReasoning.settled(), SETTLE_TIMEOUT_MS)
+          }
           // Last point at which the canvas is still untouched by this step.
-          await awaitTurnResume('before-action')
+          // After the wait above, so a mark that only just appeared still gets
+          // the chance to hold the run.
+          // This is the one that matters: the chunk in hand is the tool call.
+          if (!(await awaitTurnResume('before-action'))) {
+            dropped = true
+            logTurnAbandoned('stream dropped at before-action — tool call not run')
+            controller.terminate()
+            return
+          }
         }
         controller.enqueue(chunk)
       },

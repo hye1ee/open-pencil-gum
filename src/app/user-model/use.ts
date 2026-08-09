@@ -1,82 +1,19 @@
-import { createOpenAI } from '@ai-sdk/openai'
-import { embedMany, generateText } from 'ai'
-import type { LanguageModel, UserContent } from 'ai'
-
+import { logPropositionChange, logUserModelStage } from '@/app/ai/chat/agent-log'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
-import { createUntracedLanguageModel } from '@/app/ai/chat/model'
-import {
-  apiKey,
-  customAPIType,
-  customBaseURL,
-  customModelID,
-  isConfigured,
-  modelID,
-  providerID
-} from '@/app/ai/chat/storage'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
-import { createUserModel, type UserModel } from '@/app/user-model/pipeline'
+import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
+import { createUserModel, type FeedbackNote, type UserModel } from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 
 /**
- * The app-specific half of the user model: which models it calls and where the
- * propositions are kept. `pipeline.ts` knows none of this.
+ * The app-specific half of the user model: what this app knows about the moment
+ * a frame was taken, and where the propositions are kept. `pipeline.ts` knows
+ * none of this; `calls.ts` holds the model configuration.
  */
 
-/**
- * Both stages run on the cheapest capable model rather than whatever the user
- * picked for the agent. Propose sends six images every thirty seconds, so the
- * choice is the difference between a few dollars an hour and one.
- */
-const SMALL_MODEL = 'claude-haiku-4-5-20251001'
-
-const EMBEDDING_MODEL = 'text-embedding-3-small'
-/** Enough to separate paraphrases at this scale, at a fraction of the storage. */
-const EMBEDDING_DIMENSIONS = 512
-
-/**
- * Generous because on a reasoning model the thinking is drawn from this same
- * budget: a measured Revise call spent 898 tokens thinking and 88 answering,
- * so a 1024 cap left the JSON one thought away from being cut off mid-object.
- * It is a ceiling, not a reservation — nothing is charged for headroom.
- */
-const PROPOSE_MAX_TOKENS = 4096
-const REVISE_MAX_TOKENS = 4096
-
-const openaiKey = import.meta.env.VITE_OPENAI_API_KEY ?? ''
-
-/** Whether there is a model to call and something to embed with. */
-export function canBuildUserModel(): boolean {
-  return isConfigured.value && openaiKey !== ''
-}
-
-function smallModel(): LanguageModel {
-  const config = {
-    providerID: providerID.value,
-    apiKey: apiKey.value,
-    // Anthropic is the only provider we know a cheap vision model ID for; any
-    // other one keeps whatever the user configured.
-    modelID: providerID.value === 'anthropic' ? SMALL_MODEL : modelID.value,
-    customModelID: customModelID.value,
-    customBaseURL: customBaseURL.value,
-    customAPIType: customAPIType.value
-  }
-  return createUntracedLanguageModel(config)
-}
-
-/**
- * Gemini thinks unless told not to, and charges it to the output budget: a
- * measured Revise spent 898 tokens thinking to write 88 of answer. Both stages
- * here produce a short structured list against an explicit rubric, which is not
- * what that overhead buys — and it fires every thirty seconds. Providers that
- * only think when asked need nothing, since nothing here asks.
- */
-function noThinkingOptions() {
-  return providerID.value === 'google'
-    ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
-    : undefined
-}
+export { canBuildUserModel }
 
 /** A frame's worth of tool history; the capture cadence is five seconds. */
 const NOTE_WINDOW_MS = 6000
@@ -116,54 +53,65 @@ export function frameNote(): string | undefined {
   return parts.join('\n')
 }
 
+/**
+ * The live model, whoever made it.
+ *
+ * Two instances would both hold propositions and both write the same file, so
+ * the second one's saves would silently undo the first's. Feedback has to reach
+ * the model whether or not capture is running, so it reuses whatever exists and
+ * builds one only if nothing does.
+ */
+let current: UserModel | null = null
+
+/**
+ * Revise from the notes shown beside the canvas rather than from the screen.
+ *
+ * Deliberately not gated on capture. This is the only place this person tells
+ * us about themselves in words, and losing it because they declined a
+ * screen-share prompt would throw away the best evidence the model can get.
+ */
+export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
+  if (notes.length === 0 || !canBuildUserModel()) return
+  current ??= createPropositionSink('answers')
+  const replied = notes.filter((note) => note.reply !== null).length
+  logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
+  pending = current.observe(notes).finally(() => {
+    pending = null
+    logUserModelStage('observed', 'user model up to date')
+  })
+  await pending
+}
+
+let pending: Promise<void> | null = null
+
+/**
+ * Wait for an in-flight revision to land.
+ *
+ * The meta-agent reads the model once per turn and holds it. When a turn is
+ * restarted because someone answered a marker, the revision they caused is
+ * still two model calls from being written — so without this the restarted turn
+ * would be judged against the very beliefs they just corrected, which is the
+ * one outcome the whole feature exists to prevent.
+ */
+export function awaitUserModelSettled(): Promise<void> {
+  return pending ?? Promise.resolve()
+}
+
 export function createPropositionSink(sessionId: string): UserModel {
   const model = createUserModel({
-    deps: {
-      propose: async ({ system, images, instruction, context }) => {
-        const frames = await Promise.all(images.map((image) => image.arrayBuffer()))
-        // Each image is labelled with its position. Unlabelled, the model tends
-        // to describe the last frame; numbered, it talks about what changed.
-        const content: UserContent = [{ type: 'text', text: instruction }]
-        // Before the frames, so it colours how they are read rather than
-        // arriving as an afterthought once conclusions are formed.
-        if (context.length > 0) content.push({ type: 'text', text: context.join('\n') })
-        for (const [i, data] of frames.entries()) {
-          content.push({ type: 'text', text: `Frame ${i + 1} of ${frames.length}:` })
-          content.push({ type: 'image', image: new Uint8Array(data) })
-        }
-        const { text } = await generateText({
-          model: smallModel(),
-          system,
-          maxOutputTokens: PROPOSE_MAX_TOKENS,
-          providerOptions: noThinkingOptions(),
-          messages: [{ role: 'user', content }]
-        })
-        return text
-      },
+    deps: modelCalls(),
 
-      revise: async ({ system, prompt }) => {
-        const { text } = await generateText({
-          model: smallModel(),
-          system,
-          maxOutputTokens: REVISE_MAX_TOKENS,
-          providerOptions: noThinkingOptions(),
-          prompt
-        })
-        return text
-      },
+    onStage: noteStage,
 
-      embed: async (texts) => {
-        const openai = createOpenAI({ apiKey: openaiKey })
-        const { embeddings } = await embedMany({
-          model: openai.embedding(EMBEDDING_MODEL),
-          values: texts,
-          providerOptions: { openai: { dimensions: EMBEDDING_DIMENSIONS } }
-        })
-        return embeddings
+    onCandidates: (candidates) => {
+      for (const candidate of candidates) {
+        // Stored 0-1 like every other confidence here, shown out of ten.
+        const shown = (candidate.confidence * 9 + 1).toFixed(0)
+        logUserModelStage('read', `(${shown}/10) ${candidate.text}`)
       }
     },
 
-    onStage: noteStage,
+    onRevision: logPropositionChange,
 
     onIdle: (pixelChange) => {
       console.debug(`[user-model] screen still (${pixelChange.toFixed(2)}), batch skipped`)
@@ -174,6 +122,7 @@ export function createPropositionSink(sessionId: string): UserModel {
       for (const proposition of propositions) {
         console.debug(`[user-model] ${proposition.text}`)
       }
+      logUserModelStage('saved', `${propositions.length} propositions`)
       setPropositions(propositions)
       void save(propositions)
       void appendAudit(sessionId, propositions)
@@ -193,6 +142,7 @@ export function createPropositionSink(sessionId: string): UserModel {
     setPropositions(model.propositions)
   })
 
+  current = model
   return model
 }
 

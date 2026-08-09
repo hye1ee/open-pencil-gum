@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 
-import { mismatch, setHoveredMark } from '@/app/ai/chat/mismatch'
+import {
+  answerMark,
+  cancelMarkFeedback,
+  mismatch,
+  openMarkFeedback,
+  setHoveredMark
+} from '@/app/ai/chat/mismatch'
 import { useEditorStore } from '@/app/editor/active-store'
 import { isWarning } from '@/app/meta-agent/judge'
 import type { Mark } from '@/app/meta-agent/judge'
@@ -53,6 +59,47 @@ function badgeColor(mark: Mark): string {
   return `hsl(${48 - 48 * t} ${85 + 6 * t}% ${56 - 12 * t}%)`
 }
 
+const draft = ref('')
+
+// An array because the box sits inside the `v-for` over markers, so Vue
+// collects one entry per rendered instance. Only one box is ever open, which
+// is what makes taking the first entry unambiguous.
+const boxes = useTemplateRef<HTMLInputElement[]>('box')
+
+/** Three states, and the person has to be able to tell them apart at a glance:
+ * untouched, box open, already answered. */
+function markerClass(id: string): string {
+  if (mismatch.composing === id) return 'scale-150 ring-2 ring-surface'
+  if (mismatch.answers.some((answer) => answer.id === id)) {
+    return 'scale-125 opacity-60 ring-2 ring-accent'
+  }
+  return 'ring-1 ring-white/40 hover:scale-125'
+}
+
+function answerFor(id: string): string {
+  return mismatch.answers.find((answer) => answer.id === id)?.text ?? ''
+}
+
+function send(id: string): void {
+  answerMark(store, id, draft.value)
+  draft.value = ''
+}
+
+// The box opens from a click on the badge, so the caret is nowhere near it.
+// Queried rather than held as a template ref because the box lives inside the
+// `v-for` over markers, where a ref collects one entry per marker — and there
+// is only ever one box open, which is what makes the query unambiguous.
+watch(
+  () => mismatch.composing,
+  (id) => {
+    draft.value = id === null ? '' : answerFor(id)
+    if (id === null) return
+    void nextTick(() => {
+      boxes.value?.[0]?.focus()
+    })
+  }
+)
+
 const markers = computed(() => {
   // The graph is not reactive, so name the versions that move it: pan and zoom
   // move the badge, a scene change moves the node under it.
@@ -101,13 +148,17 @@ const markers = computed(() => {
       class="absolute"
       :style="{ left: `${marker.x}px`, top: `${marker.y}px` }"
     >
+      <!-- Clicking is the whole disagreement path: a mark left alone is taken
+           as agreed with, so this is how the person says otherwise. -->
       <button
         type="button"
-        class="pointer-events-auto size-4 -translate-y-1/2 rounded-full shadow ring-1 ring-white/40 transition-transform hover:scale-125"
+        class="pointer-events-auto size-4 -translate-y-1/2 rounded-full shadow transition-transform"
+        :class="markerClass(marker.mark.id)"
         :style="{ background: marker.color }"
         :aria-label="marker.mark.notes[marker.mark.notes.length - 1]?.text ?? ''"
         @pointerenter="setHoveredMark(store, marker.mark.id)"
         @pointerleave="setHoveredMark(store, null)"
+        @click="openMarkFeedback(store, marker.mark.id)"
       />
 
       <Transition
@@ -116,10 +167,15 @@ const markers = computed(() => {
         leave-active-class="transition duration-100 ease-in"
         leave-to-class="translate-y-1 opacity-0"
       >
+        <!-- Pinned open while this mark's box is up, so the note stays readable
+             above the answer being written about it. -->
         <div
-          v-if="mismatch.hovered === marker.mark.id"
-          class="pointer-events-none absolute top-3 w-max rounded-lg bg-panel px-2.5 py-1.5 text-[11px] leading-snug text-surface shadow-lg ring-1 ring-border"
-          :class="marker.flip ? 'right-3' : 'left-3'"
+          v-if="mismatch.hovered === marker.mark.id || mismatch.composing === marker.mark.id"
+          class="absolute top-3 w-max rounded-lg bg-panel px-2.5 py-1.5 text-[11px] leading-snug text-surface shadow-lg ring-1 ring-border"
+          :class="[
+            marker.flip ? 'right-3' : 'left-3',
+            mismatch.composing === marker.mark.id ? 'pointer-events-auto' : 'pointer-events-none'
+          ]"
           :style="{ maxWidth: `${CARD_MAX_PX}px` }"
         >
           <!-- Oldest first, faded: an updated mark should read as having moved
@@ -134,6 +190,44 @@ const markers = computed(() => {
           >
             {{ note.text }}
           </p>
+
+          <!-- What they already said about this one, if they are back for a
+               second pass. Answering again replaces it. -->
+          <p v-if="answerFor(marker.mark.id)" class="mt-1.5 text-accent">
+            {{ answerFor(marker.mark.id) }}
+          </p>
+
+          <form
+            v-if="mismatch.composing === marker.mark.id"
+            class="mt-1.5 flex gap-1"
+            @submit.prevent="send(marker.mark.id)"
+          >
+            <input
+              ref="box"
+              v-model="draft"
+              class="min-w-0 flex-1 rounded border border-border bg-canvas px-1.5 py-1 text-[11px] text-surface outline-none placeholder:text-muted focus:border-accent"
+              placeholder="What should it do instead?"
+              data-test-id="mark-answer-input"
+              @keydown.esc.stop="cancelMarkFeedback(store)"
+              @pointerdown.stop
+            />
+            <button
+              type="submit"
+              class="shrink-0 rounded px-1.5 text-muted hover:text-surface disabled:opacity-40"
+              :disabled="!draft.trim()"
+              aria-label="Send this answer"
+            >
+              <icon-lucide-send class="size-3" />
+            </button>
+            <button
+              type="button"
+              class="shrink-0 rounded px-1 text-muted hover:text-surface"
+              aria-label="Stop answering this marker"
+              @click="cancelMarkFeedback(store)"
+            >
+              <icon-lucide-x class="size-3" />
+            </button>
+          </form>
         </div>
       </Transition>
     </div>

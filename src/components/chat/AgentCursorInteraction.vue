@@ -3,15 +3,22 @@ import { computed } from 'vue'
 
 import { agentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
+import { mismatch, resumeAfterAnswers } from '@/app/ai/chat/mismatch'
 import { useEditorStore } from '@/app/editor/active-store'
 
-// What the agent is saying, in a bubble beside its cursor.
+// What the agent is saying, in a bubble beside its cursor — and, once the
+// person has answered a marker and gone quiet, whether to carry on.
 //
 // The cursor used to be draggable: grabbing it paused the turn, parking it moved
 // where it hovered, and poking it while idle got a line back. That is gone —
 // pausing is what pointing at a mismatch marker does now, and it does it at
 // every point in the run rather than only at a step boundary, so the grab was a
 // second way to do one thing.
+//
+// The resume question lives here rather than beside the marker that was
+// answered, because by then there may be two or three answered markers and the
+// question is about all of them. The cursor is the one place that stands for
+// the run as a whole.
 
 const { canvasEl } = defineProps<{ canvasEl: HTMLCanvasElement | null }>()
 
@@ -50,6 +57,23 @@ const bubblePos = computed(() => {
 
 <template>
   <div v-if="screen" class="pointer-events-none absolute inset-0 z-30">
+    <!-- Below the cursor, clear of the speech bubble above it. -->
+    <div
+      v-if="mismatch.askingToResume"
+      class="pointer-events-auto absolute flex items-center gap-2 rounded-xl bg-panel px-3 py-2 text-xs shadow-lg ring-1 ring-border"
+      :style="{ left: `${screen.x + 14}px`, top: `${screen.y + 30}px` }"
+      data-test-id="agent-resume-prompt"
+    >
+      <span class="text-surface"> {{ mismatch.answers.length }} answered — carry on? </span>
+      <button
+        type="button"
+        class="rounded bg-accent px-2 py-1 font-medium text-white hover:bg-accent/90"
+        @click="resumeAfterAnswers()"
+      >
+        Continue
+      </button>
+    </div>
+
     <Transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="translate-y-1 scale-95 opacity-0"

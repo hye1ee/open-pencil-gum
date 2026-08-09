@@ -1,6 +1,7 @@
 import { valibotSchema } from '@ai-sdk/valibot'
 import { tool } from 'ai'
 import * as v from 'valibot'
+import { shallowRef } from 'vue'
 
 import type { FigmaAPI } from '@open-pencil/core/figma-api'
 import { computeAllLayouts } from '@open-pencil/core/layout'
@@ -32,11 +33,25 @@ export interface StepUsage {
 class RunState {
   toolLog: ToolLogEntry[] = []
   stepUsages: StepUsage[] = []
-  currentSteps = 0
+
+  /**
+   * A ref, not a plain number, because the chat's step bar reads it.
+   *
+   * The bar used to invalidate off the message list instead, which does not
+   * work: `@ai-sdk/vue` updates a streaming message in place, so the array's
+   * identity only changes when a message is added. A whole build streams into
+   * one assistant message, and the bar sat on whatever count it happened to see
+   * when that message was pushed. Nothing else here needs to be reactive.
+   */
+  readonly steps = shallowRef(0)
+
+  get currentSteps(): number {
+    return this.steps.value
+  }
 
   recordStep(usage: StepUsage): void {
     this.stepUsages.push(usage)
-    this.currentSteps++
+    this.steps.value++
   }
 
   /** Tokens from a call that isn't a step — the planning calls, which cost money
@@ -46,17 +61,17 @@ class RunState {
   }
 
   resetSteps(): void {
-    this.currentSteps = 0
+    this.steps.value = 0
   }
 
   hitLimit(): boolean {
-    return this.currentSteps >= MAX_AGENT_STEPS
+    return this.steps.value >= MAX_AGENT_STEPS
   }
 
   clear(): void {
     this.toolLog = []
     this.stepUsages = []
-    this.currentSteps = 0
+    this.steps.value = 0
   }
 }
 
@@ -87,12 +102,39 @@ export function recordAuxUsage(usage: StepUsage, store?: EditorStore): void {
   getRunState(store).recordAux(usage)
 }
 
+/**
+ * Set when the next turn is really the same piece of work carrying on.
+ *
+ * Answering a marker stops the turn and starts a new one from the same request,
+ * because there is no way to rewind a single step inside a run. That is an
+ * implementation detail: to the person it is one build that paused, so the step
+ * budget has to carry over. Otherwise every answer buys another fifty steps and
+ * the ceiling means nothing.
+ */
+const continuing = new WeakSet<EditorStore>()
+
+export function continueRunSteps(store?: EditorStore): void {
+  continuing.add(store ?? getActiveEditorStore())
+}
+
+/** Peeks without consuming, so the log can say so before the reset clears it. */
+export function isContinuingRun(store?: EditorStore): boolean {
+  return continuing.has(store ?? getActiveEditorStore())
+}
+
 export function resetRunSteps(store?: EditorStore): void {
-  getRunState(store).resetSteps()
+  const target = store ?? getActiveEditorStore()
+  if (continuing.delete(target)) return
+  getRunState(target).resetSteps()
 }
 
 export function didHitStepLimit(store?: EditorStore): boolean {
   return getRunState(store).hitLimit()
+}
+
+/** How many steps this run has spent. The step the person interrupted. */
+export function currentRunSteps(store?: EditorStore): number {
+  return getRunState(store).currentSteps
 }
 
 export function clearToolLogEntries(store?: EditorStore): void {

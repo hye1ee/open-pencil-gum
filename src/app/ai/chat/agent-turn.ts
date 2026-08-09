@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 
-import { logTurnHeld } from '@/app/ai/chat/agent-log'
+import { logTurnAbandoned, logTurnHeld } from '@/app/ai/chat/agent-log'
 
 /**
  * Pause/resume gate for the agent's turn, held while the user is reading a
@@ -28,19 +28,61 @@ export const agentTurn: AgentTurnState = reactive({
 let resolvers: Array<() => void> = []
 
 /**
- * What is holding the turn still. One thing does today — a pointer resting on a
- * marker — but it is a set rather than a flag because whoever holds has to be
- * the one who lets go: a second holder appearing later must not be released by
- * the first one leaving.
+ * What is holding the turn still. A set rather than a flag because whoever
+ * holds has to be the one who lets go: pointing at one marker while composing
+ * feedback about another is ordinary, and the pointer leaving must not release
+ * the composer's hold.
+ *
+ * - `new-mark` — a mark has just appeared and nobody has had a chance to read
+ *   it yet. Held without anyone doing anything, because the alternative is that
+ *   catching a mistake depends on getting a pointer onto a 16px badge before
+ *   the tool call goes out.
+ * - `marker` — a pointer is resting on a badge. Released when it leaves.
+ * - `feedback` — the chat input is open against a mark. Released when that
+ *   feedback is sent or dismissed, which can be a minute later.
  */
-export type TurnHold = 'marker'
+export type TurnHold = 'new-mark' | 'marker' | 'feedback'
 
 const holds = new Set<TurnHold>()
+
+/**
+ * Set when the turn is being thrown away rather than carried on.
+ *
+ * A hold sits inside the stream transform, downstream of the request being
+ * aborted. Stopping the run cuts the connection, but the parts already received
+ * are still in the transform waiting for the hold to lift — so lifting it sends
+ * the held tool call on its way as if nothing had happened, which is the one
+ * thing answering a marker is supposed to prevent. Measured: an answer landed,
+ * the run was stopped, and the render it warned about went through in the same
+ * tick. Whoever ends a held turn says so here, and the stream drops what it was
+ * holding instead of forwarding it.
+ */
+let abandoned = false
+
+export function abandonTurn(): void {
+  abandoned = true
+  logTurnAbandoned('turn abandoned — the stream drops whatever it was holding')
+  resumeTurn()
+}
+
+/**
+ * A replacement turn is being sent, so the abandoned one is over.
+ *
+ * Called at the send rather than from the running-state watch. `stop()` returns
+ * once the abort is signalled, not once the run has wound down: measured, the
+ * old turn's `END` arrived 1.1s after the new one had already started, so
+ * `status` never left 'streaming' and the watch never fired between the two.
+ * The new turn then read the flag and killed itself on its first chunk.
+ */
+export function forgetAbandonedTurn(): void {
+  abandoned = false
+}
 
 /** Mirror the chat's running state; clearing it also lifts any pause. */
 export function setTurnRunning(running: boolean): void {
   agentTurn.running = running
-  if (!running) resumeTurn()
+  if (running) abandoned = false
+  else resumeTurn()
 }
 
 export function pauseTurn(hold: TurnHold): void {
@@ -67,18 +109,22 @@ export function isTurnPaused(): boolean {
 /**
  * Resolves immediately unless paused, in which case it waits for resume.
  *
+ * False means the turn was abandoned while held and the caller should drop
+ * whatever it was about to do, rather than carry on where it left off.
+ *
  * `where` names the point in the run so the log can show which of them actually
  * stopped. A hold that never appears in the log is a hold that was never
  * reached — which is the difference between a paused run and a run that only
  * looks paused because the canvas has nothing left to draw.
  */
-export function awaitTurnResume(where: string): Promise<void> {
-  if (!agentTurn.paused) return Promise.resolve()
+export function awaitTurnResume(where: string): Promise<boolean> {
+  if (abandoned) return Promise.resolve(false)
+  if (!agentTurn.paused) return Promise.resolve(true)
   const since = Date.now()
   return new Promise((resolve) => {
     resolvers.push(() => {
       logTurnHeld(where, Date.now() - since)
-      resolve()
+      resolve(!abandoned)
     })
   })
 }

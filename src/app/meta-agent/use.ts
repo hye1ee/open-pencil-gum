@@ -24,7 +24,7 @@ import {
 } from '@/app/ai/chat/storage'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
-import { actionsSoFar, summariseCanvas } from '@/app/meta-agent/context'
+import { actionsSoFar, summariseCanvas, withAncestors } from '@/app/meta-agent/context'
 import { setMetaAgentNodeReplacedObserver } from '@/app/meta-agent/events'
 import {
   createMetaAgent,
@@ -32,11 +32,14 @@ import {
   type Mark,
   type MarkToolCall,
   type MetaAgent,
-  type Proposition
+  type Proposition,
+  type SettledNote
 } from '@/app/meta-agent/judge'
 import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
+import { forgetReportedMarks } from '@/app/meta-agent/report'
 import { MARK_TOOLS } from '@/app/meta-agent/tools'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
+import { awaitUserModelSettled } from '@/app/user-model/use'
 
 /**
  * The app-specific half of the meta-agent: which model it calls, how this
@@ -92,9 +95,6 @@ function describeMark(mark: Mark): string {
 }
 
 function describeTool(event: AppliedMarkTool): string {
-  if (event.toolName === 'delete_mark') {
-    return `${event.toolName} ${event.id}${event.retired ? ' (retired)' : ''}`
-  }
   const revived = event.toolName === 'update_mark' && event.revived ? ' revived' : ''
   return (
     `${event.toolName} ${event.id}${revived} → ${event.nodeId ?? 'whole design'} ` +
@@ -154,9 +154,33 @@ function ensureAgent(store: EditorStore): MetaAgent {
   return agent
 }
 
+/**
+ * Notes the person has already answered during this build.
+ *
+ * Held here rather than inside the meta-agent because it has to outlive
+ * `beginTurn`: answering a note restarts the turn, and everything the judge
+ * knows is wiped at that boundary. Cleared when a genuinely new request comes
+ * in, which is the only point at which these stop being relevant.
+ */
+let settled: SettledNote[] = []
+
+export function noteSettledMarks(notes: SettledNote[]): void {
+  settled = [...settled, ...notes]
+}
+
 /** A new turn: what the user asked for, and a clean slate. */
 export async function startMetaAgentTurn(store: EditorStore, userText: string): Promise<void> {
+  // A restart keeps the same request, so a change of request is what tells us
+  // the answers from the last build no longer describe what is being built.
+  if (userText !== request) {
+    settled = []
+    forgetReportedMarks()
+  }
   request = userText
+  // A turn restarted because someone answered a marker has a revision of the
+  // user model in flight. Reading the file before it lands would judge the
+  // redone step against the belief they just corrected.
+  await awaitUserModelSettled()
   // Read once, here, and hold it for the turn. The capture pipeline writes new
   // propositions to disk while the agent works, and a model that grows mid-run
   // makes two steps of the same turn incomparable.
@@ -175,7 +199,7 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
 // preview *is* the window they exist for, and taking them down as the change
 // lands would leave nothing to read during it.
 setPreviewSettledObserver((nodeIds) => {
-  agent?.retireWarnings(nodeIds)
+  agent?.retireWarnings(withAncestors(getActiveEditorStore(), nodeIds))
 })
 
 setMetaAgentNodeReplacedObserver((oldId, newId) => {
@@ -190,8 +214,24 @@ setReasoningObserver({
   },
   chunk: (reasoning) => {
     considerReasoning(reasoning)
-  }
+  },
+  settled: () => agent?.settled() ?? Promise.resolve()
 })
+
+/**
+ * The marks the person had a chance to answer — standing, or retired because
+ * the change they warned about landed and stood. Not the ones the meta-agent
+ * withdrew, which were never theirs to accept.
+ */
+export function marksAwaitingAnswer(): Mark[] {
+  return agent?.answerable ?? []
+}
+
+/** What the person asked for, so a turn restarted after feedback can keep it
+ * rather than treating the feedback itself as the new request. */
+export function currentMetaRequest(): string {
+  return request
+}
 
 /**
  * The agent has thought some more. `reasoning` is everything it has thought this
@@ -206,6 +246,7 @@ export function considerReasoning(reasoning: string): void {
     propositions: runPropositions,
     canvas: summariseCanvas(store),
     reasoning,
-    actions: actionsSoFar(store)
+    actions: actionsSoFar(store),
+    settled
   })
 }

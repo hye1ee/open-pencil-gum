@@ -22,7 +22,14 @@
  * `prompt.ts`; everything network-specific is injected as `deps`.
  */
 
-import { PROPOSE_SYSTEM, REVISE_SYSTEM, reviseUserPrompt } from '@/app/user-model/prompt'
+import {
+  FEEDBACK_SYSTEM,
+  PROPOSE_SYSTEM,
+  REVISE_SYSTEM,
+  feedbackUserPrompt,
+  reviseUserPrompt
+} from '@/app/user-model/prompt'
+import type { ReviseNeighbour } from '@/app/user-model/prompt'
 
 export interface Proposition {
   id: string
@@ -79,12 +86,46 @@ export interface UserModelDeps {
   embed(texts: string[]): Promise<number[][]>
 }
 
+/**
+ * One note that was shown to the person, and what became of it.
+ *
+ * This is the shape the notes already have, carried through intact rather than
+ * flattened into prose. `citedId` in particular: the note was raised *against*
+ * a specific proposition, and that is the one thing a revision most needs to
+ * know. Turning it into a sentence and then finding the proposition again by
+ * embedding similarity is throwing away an exact answer to go and guess it.
+ */
+export interface FeedbackNote {
+  /** What the person read, in the words they read it in. */
+  note: string
+  /** The agent's own words the note was drawn from. */
+  quote: string
+  /** The proposition the note rested on, or null if none covered it. */
+  citedId: string | null
+  /** What they typed back, or null if they saw it and let it stand. */
+  reply: string | null
+}
+
 export interface UserModelOptions {
   deps: UserModelDeps
   /** Frames per batch. Six at a five-second cadence is half a minute of work. */
   batchSize?: number
   /** Called after every batch that changed something. */
   onChange: (propositions: Proposition[]) => void
+  /**
+   * One proposition, before and after. `before` is null for a new one.
+   *
+   * Fired per revision rather than once per batch because the state this
+   * pipeline keeps is a file overwritten in place: without a running account of
+   * what changed and why, all anyone can see later is where it ended up.
+   */
+  onRevision?: (change: {
+    id: string
+    before: { text: string; confidence: number } | null
+    after: { text: string; confidence: number }
+  }) => void
+  /** What was read out of an observation, before any of it was applied. */
+  onCandidates?: (candidates: CandidateProposition[]) => void
   onStage?: (stage: PipelineStage) => void
   /** A batch dropped because the screen had not moved, with how far it did. */
   onIdle?: (pixelChange: number) => void
@@ -111,6 +152,13 @@ export interface FrameMeta {
 
 export interface UserModel {
   addFrame(frame: Blob, meta?: FrameMeta): void
+  /**
+   * The notes shown to the person during one build, and what became of each.
+   * Revised in straight away rather than batched: batching exists because
+   * frames arrive every five seconds whether or not anything happened, and this
+   * arrives because they answered something.
+   */
+  observe(notes: FeedbackNote[]): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -351,11 +399,38 @@ export function createUserModel(options: UserModelOptions): UserModel {
     options.onStage?.(next)
   }
 
+  /**
+   * On the feedback path a proposition that is already held keeps its wording,
+   * whatever the model asked for. Only its confidence moves.
+   *
+   * The sentence is what made the mark fire, so a belief that fails and is then
+   * reworded loses the very clause it failed on. Measured: "near-monochrome
+   * greys with one warm accent, never a default blue or indigo" became
+   * "near-monochrome with one warm accent" on the evidence of a terracotta
+   * gradient — and indigo, which nothing had been observed about, stopped being
+   * detectable. Nothing is lost by holding the wording, because what the person
+   * actually accepted is written down as its own new proposition either way.
+   *
+   * Only here. The frame path revises from what a screenshot shows, where
+   * rewriting a sentence is the whole point.
+   */
+  function keepWordingOfStanding(revisions: RequestedRevision[]): RequestedRevision[] {
+    return revisions.map((op) => {
+      const held = op.id === null ? undefined : propositions.find((p) => p.id === op.id)
+      return held ? { ...op, text: held.text } : op
+    })
+  }
+
   function applyRevisions(revisions: RequestedRevision[], now: string): Proposition[] {
     const touched: Proposition[] = []
     for (const op of revisions) {
       const existing = op.id === null ? undefined : propositions.find((p) => p.id === op.id)
       if (existing) {
+        options.onRevision?.({
+          id: existing.id,
+          before: { text: existing.text, confidence: existing.confidence },
+          after: { text: op.text, confidence: op.confidence }
+        })
         if (op.text !== existing.text) existing.revisions += 1
         existing.text = op.text
         existing.confidence = op.confidence
@@ -381,11 +456,84 @@ export function createUserModel(options: UserModelOptions): UserModel {
           originalEmbedding: [],
           revisions: 0
         }
+        options.onRevision?.({
+          id: created.id,
+          before: null,
+          after: { text: created.text, confidence: created.confidence }
+        })
         propositions.push(created)
         touched.push(created)
       }
     }
     return touched
+  }
+
+  /**
+   * The second half of the pipeline, from candidates to a revised model.
+   *
+   * Split out because candidates do not only come from screenshots. When the
+   * person answers a note about the agent's thinking, that is an observation
+   * too — a better one, since they said it rather than us inferring it from a
+   * picture — and it should go through the same retrieval and revision rather
+   * than getting a shortcut of its own.
+   */
+  /** A proposition as the revision prompts want to see it, drift and all. */
+  function describe(proposition: Proposition, now: number): ReviseNeighbour {
+    return {
+      id: proposition.id,
+      text: proposition.text,
+      confidence: proposition.confidence,
+      decay: proposition.decay,
+      ageDays: ageInDecayUnits(proposition.updatedAt, now),
+      revisions: proposition.revisions,
+      originalText: proposition.originalText,
+      // How much of the first wording survives. Measured here, judged by the
+      // model — the code offers the number, not a veto.
+      cosineToOriginalText: cosine(proposition.embedding, proposition.originalEmbedding)
+    }
+  }
+
+  /** Only what was rewritten needs a new vector, and it goes in one request. */
+  async function reEmbed(changed: Proposition[]): Promise<void> {
+    if (changed.length === 0) return
+    const vectors = await deps.embed(changed.map((p) => p.text))
+    for (const [i, proposition] of changed.entries()) {
+      // `.at` rather than an index: a provider that returns fewer vectors
+      // than we asked for should leave the old one alone, not clear it.
+      const vector = vectors.at(i)
+      if (!vector) continue
+      proposition.embedding = vector
+      // Pinned the first time we manage to embed it, so later revisions
+      // always have something to be measured against.
+      if (proposition.originalEmbedding.length === 0) proposition.originalEmbedding = vector
+    }
+    options.onChange([...propositions])
+  }
+
+  /** From candidates read off screenshots to a revised model. */
+  async function revise(candidates: CandidateProposition[]): Promise<void> {
+    options.onCandidates?.(candidates)
+    stage('revising')
+    const embeddings = await deps.embed(candidates.map((c) => c.text))
+    const now = Date.now()
+    const stamp = new Date(now).toISOString()
+    const changed: Proposition[] = []
+
+    // Sequential: each revision changes what the next one retrieves, and two
+    // candidates from the same batch are often about the same thing.
+    for (const [i, candidate] of candidates.entries()) {
+      const neighbours = nearestPropositions(embeddings[i] ?? [], propositions, now)
+      const raw = await deps.revise({
+        system: REVISE_SYSTEM,
+        prompt: reviseUserPrompt(
+          candidate,
+          neighbours.map((n) => describe(n, now))
+        )
+      })
+      changed.push(...applyRevisions(readRequestedRevisions(raw), stamp))
+    }
+
+    await reEmbed(changed)
   }
 
   async function run(frames: Blob[], context: string[]): Promise<void> {
@@ -400,54 +548,62 @@ export function createUserModel(options: UserModelOptions): UserModel {
           context
         })
       )
-      if (candidates.length === 0) return
+      if (candidates.length > 0) await revise(candidates)
+    } catch (error) {
+      options.onError?.(error)
+    } finally {
+      running = false
+      stage('idle')
+    }
+  }
 
+  /**
+   * The notes shown during one build, revised in directly.
+   *
+   * One model call, not the propose-then-revise pair the frame path uses, and
+   * no retrieval for anything the notes already name. A note raised against a
+   * proposition carries that proposition's id: it is the exact answer to "which
+   * belief is this about", and the only reason to drop it and search by
+   * embedding similarity instead would be not having it.
+   *
+   * Retrieval still runs for the notes that cite nothing. Those are the ones
+   * raised where the model was blank, and without neighbours the revision has
+   * no way to see it is about to write a near-duplicate of something already
+   * held.
+   */
+  async function observe(notes: FeedbackNote[]): Promise<void> {
+    if (running || notes.length === 0) return
+    running = true
+    try {
       stage('revising')
-      const embeddings = await deps.embed(candidates.map((c) => c.text))
       const now = Date.now()
-      const stamp = new Date(now).toISOString()
-      const changed: Proposition[] = []
+      const shown = new Map<string, Proposition>()
 
-      // Sequential: each revision changes what the next one retrieves, and two
-      // candidates from the same batch are often about the same thing.
-      for (const [i, candidate] of candidates.entries()) {
-        const neighbours = nearestPropositions(embeddings[i] ?? [], propositions, now)
-        const raw = await deps.revise({
-          system: REVISE_SYSTEM,
-          prompt: reviseUserPrompt(
-            candidate,
-            neighbours.map((n) => ({
-              id: n.id,
-              text: n.text,
-              confidence: n.confidence,
-              decay: n.decay,
-              ageDays: ageInDecayUnits(n.updatedAt, now),
-              revisions: n.revisions,
-              originalText: n.originalText,
-              // How much of the first wording survives. Measured here, judged
-              // by the model — the code offers the number, not a veto.
-              cosineToOriginalText: cosine(n.embedding, n.originalEmbedding)
-            }))
-          )
-        })
-        changed.push(...applyRevisions(readRequestedRevisions(raw), stamp))
+      for (const cited of notes.map((note) => note.citedId)) {
+        if (cited === null) continue
+        const held = propositions.find((p) => p.id === cited)
+        if (held) shown.set(held.id, held)
       }
 
-      // Only what was rewritten needs a new vector, and it goes in one request.
-      if (changed.length > 0) {
-        const vectors = await deps.embed(changed.map((p) => p.text))
-        for (const [i, proposition] of changed.entries()) {
-          // `.at` rather than an index: a provider that returns fewer vectors
-          // than we asked for should leave the old one alone, not clear it.
-          const vector = vectors.at(i)
-          if (!vector) continue
-          proposition.embedding = vector
-          // Pinned the first time we manage to embed it, so later revisions
-          // always have something to be measured against.
-          if (proposition.originalEmbedding.length === 0) proposition.originalEmbedding = vector
+      const uncited = notes.filter((note) => note.citedId === null)
+      if (uncited.length > 0) {
+        const vectors = await deps.embed(uncited.map((note) => note.note))
+        for (const [i] of uncited.entries()) {
+          for (const near of nearestPropositions(vectors[i] ?? [], propositions, now)) {
+            shown.set(near.id, near)
+          }
         }
-        options.onChange([...propositions])
       }
+
+      const raw = await deps.revise({
+        system: FEEDBACK_SYSTEM,
+        prompt: feedbackUserPrompt(
+          notes,
+          [...shown.values()].map((p) => describe(p, now))
+        )
+      })
+      const asked = keepWordingOfStanding(readRequestedRevisions(raw))
+      await reEmbed(applyRevisions(asked, new Date(now).toISOString()))
     } catch (error) {
       options.onError?.(error)
     } finally {
@@ -460,6 +616,8 @@ export function createUserModel(options: UserModelOptions): UserModel {
     get propositions() {
       return propositions
     },
+
+    observe,
 
     load(saved) {
       // A file written before drift was tracked has no original to compare
