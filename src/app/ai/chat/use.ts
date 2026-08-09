@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
@@ -8,7 +8,7 @@ import {
   customBaseURL,
   customModelID,
   isACPProvider,
-  isConfigured,
+  isConfigured as isSettingsConfigured,
   maxOutputTokens,
   modelID,
   pexelsApiKey,
@@ -19,6 +19,7 @@ import {
   unsplashAccessKey
 } from '@/app/ai/chat/storage'
 import { createChatSessionManager } from '@/app/ai/chat/transports'
+import { resolveModelSlot } from '@/app/ai/model-routing'
 import { exposeChatTransportOverride } from '@/app/browser-bridge'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 
@@ -27,15 +28,27 @@ export type PanelTab = 'design' | 'code' | 'ai' | 'user-model'
 
 const activeTab = ref<PanelTab>('design')
 
+/** Whether the design agent's model came from `.env` rather than the panel. */
+const taskSlotFromEnv = computed(() => resolveModelSlot('task').source !== 'settings')
+
+/**
+ * `ChatPanel` shows the provider setup screen while this is false. Widened past
+ * the panel's own settings so a machine configured entirely through `.env` never
+ * has to open it — that is the whole point of putting the routing there.
+ */
+const isConfigured = computed(() => isSettingsConfigured.value || taskSlotFromEnv.value)
+
+/**
+ * An ACP agent is a subprocess, not a model to call, so it cannot serve a slot.
+ * When `.env` names a task model it has to win, or the panel's leftover ACP
+ * selection would quietly route the run somewhere else.
+ */
+const useACPTransport = computed(() => isACPProvider.value && !taskSlotFromEnv.value)
+
 const chatSession = createChatSessionManager({
   isConfigured,
-  isACPProvider,
+  isACPProvider: useACPTransport,
   providerID,
-  apiKey,
-  modelID,
-  customModelID,
-  customBaseURL,
-  customAPIType,
   maxOutputTokens,
   getActiveEditorStore
 })

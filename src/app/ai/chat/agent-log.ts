@@ -108,6 +108,17 @@ export function logRunEnd(reason: string): void {
   flush()
 }
 
+/**
+ * Which model each of this app's AIs is about to call.
+ *
+ * Written at the top of a run because nothing else in the file says it. Working
+ * out which provider was live from a finished log meant reading the order the
+ * stream parts arrived in — that is a fingerprint, not a record.
+ */
+export function logModelRouting(lines: string[]): void {
+  writeBlock('ROUTING', lines.join('\n'))
+}
+
 export function logPlan(plan: string | null, updated = false): void {
   if (!plan) return
   writeBlock(updated ? 'PLAN~' : 'PLAN', plan)

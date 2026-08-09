@@ -104,6 +104,16 @@ interface CandidateProposition {
   reasoning: string
 }
 
+/**
+ * Which evidence a revision call is working from.
+ *
+ * Passed out to the caller so it can send the two down different models: one
+ * reads screenshots on a timer, the other runs when a person has just said
+ * something in their own words, and those are not worth the same money. Nothing
+ * in this file behaves differently by it.
+ */
+export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback'
+
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
   propose(input: {
@@ -114,7 +124,7 @@ export interface UserModelDeps {
     context: string[]
   }): Promise<string>
   /** Text call. Returns the model's raw text. */
-  revise(input: { system: string; prompt: string }): Promise<string>
+  revise(input: { system: string; prompt: string; purpose: RevisionPurpose }): Promise<string>
   /** One request for all the texts, in order. */
   embed(texts: string[]): Promise<number[][]>
 }
@@ -682,6 +692,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
       const neighbours = nearestPropositions(embeddings[i] ?? [], propositions, now)
       const raw = await deps.revise({
         system: REVISE_SYSTEM,
+        purpose: 'revise-from-frames',
         prompt: reviseUserPrompt(
           candidate,
           neighbours.map((n) => describe(n, now))
@@ -754,6 +765,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
 
       const raw = await deps.revise({
         system: FEEDBACK_SYSTEM,
+        purpose: 'revise-from-feedback',
         prompt: feedbackUserPrompt(
           notes,
           [...shown.values()].map((p) => describe(p, now))
@@ -774,6 +786,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
       stage('reasoning')
       const rawRationales = await deps.revise({
         system: RATIONALE_SYSTEM,
+        purpose: 'revise-from-feedback',
         prompt: rationaleUserPrompt(notes, changed.map(describeChange), propositions)
       })
       const askedRationales = readRequestedRationales(rawRationales)

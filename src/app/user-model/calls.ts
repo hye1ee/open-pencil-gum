@@ -1,34 +1,35 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { embedMany, generateText } from 'ai'
-import type { LanguageModel, UserContent } from 'ai'
+import type { UserContent } from 'ai'
 
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import {
-  apiKey,
-  customAPIType,
-  customBaseURL,
-  customModelID,
-  isConfigured,
-  modelID,
-  providerID
-} from '@/app/ai/chat/storage'
-import type { UserModelDeps } from '@/app/user-model/pipeline'
+  backgroundProviderOptions,
+  embeddingApiKey,
+  isSlotConfigured,
+  modelConfigForSlot
+} from '@/app/ai/model-routing'
+import type { ModelSlot } from '@/app/ai/model-routing'
+import type { RevisionPurpose, UserModelDeps } from '@/app/user-model/pipeline'
 
 /**
  * Which models the user model calls, and with what budget. Everything here is
  * about cost and provider quirks; nothing here knows what a proposition is.
+ *
+ * Three slots rather than one. Propose sends six images every thirty seconds and
+ * is the expensive one; revising from those frames is a short text call on the
+ * same timer; revising from feedback runs only when a person has just answered a
+ * marker, which is rare and worth more. `model-routing.ts` decides what each one
+ * actually resolves to.
  */
-
-/**
- * Every stage runs on the cheapest capable model rather than whatever the user
- * picked for the agent. Propose sends six images every thirty seconds, so the
- * choice is the difference between a few dollars an hour and one.
- */
-const SMALL_MODEL = 'claude-haiku-4-5-20251001'
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 /** Enough to separate paraphrases at this scale, at a fraction of the storage. */
 const EMBEDDING_DIMENSIONS = 512
+
+function reviseSlot(purpose: RevisionPurpose): ModelSlot {
+  return purpose === 'revise-from-feedback' ? 'feedback' : 'user-model-revise'
+}
 
 /**
  * Generous because on a reasoning model the thinking is drawn from this same
@@ -39,38 +40,14 @@ const EMBEDDING_DIMENSIONS = 512
 const PROPOSE_MAX_TOKENS = 4096
 const REVISE_MAX_TOKENS = 4096
 
-const openaiKey = import.meta.env.VITE_OPENAI_API_KEY ?? ''
-
-/** Whether there is a model to call and something to embed with. */
-export function canBuildUserModel(): boolean {
-  return isConfigured.value && openaiKey !== ''
-}
-
-function smallModel(): LanguageModel {
-  const config = {
-    providerID: providerID.value,
-    apiKey: apiKey.value,
-    // Anthropic is the only provider we know a cheap vision model ID for; any
-    // other one keeps whatever the user configured.
-    modelID: providerID.value === 'anthropic' ? SMALL_MODEL : modelID.value,
-    customModelID: customModelID.value,
-    customBaseURL: customBaseURL.value,
-    customAPIType: customAPIType.value
-  }
-  return createUntracedLanguageModel(config)
-}
-
 /**
- * Gemini thinks unless told not to, and charges it to the output budget: a
- * measured Revise spent 898 tokens thinking to write 88 of answer. Every stage
- * here produces a short structured list against an explicit rubric, which is
- * not what that overhead buys — and it fires every thirty seconds. Providers
- * that only think when asked need nothing, since nothing here asks.
+ * Whether there is a model to call and something to embed with.
+ *
+ * Only the propose slot is checked: without it there are no candidates for the
+ * revise slots to place, so a model that can revise but not see is no model.
  */
-function noThinkingOptions() {
-  return providerID.value === 'google'
-    ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
-    : undefined
+export function canBuildUserModel(): boolean {
+  return isSlotConfigured('user-model-propose') && embeddingApiKey() !== ''
 }
 
 export function modelCalls(): UserModelDeps {
@@ -88,28 +65,29 @@ export function modelCalls(): UserModelDeps {
         content.push({ type: 'image', image: new Uint8Array(data) })
       }
       const { text } = await generateText({
-        model: smallModel(),
+        model: createUntracedLanguageModel(modelConfigForSlot('user-model-propose')),
         system,
         maxOutputTokens: PROPOSE_MAX_TOKENS,
-        providerOptions: noThinkingOptions(),
+        providerOptions: backgroundProviderOptions('user-model-propose'),
         messages: [{ role: 'user', content }]
       })
       return text
     },
 
-    revise: async ({ system, prompt }) => {
+    revise: async ({ system, prompt, purpose }) => {
+      const slot = reviseSlot(purpose)
       const { text } = await generateText({
-        model: smallModel(),
+        model: createUntracedLanguageModel(modelConfigForSlot(slot)),
         system,
         maxOutputTokens: REVISE_MAX_TOKENS,
-        providerOptions: noThinkingOptions(),
+        providerOptions: backgroundProviderOptions(slot),
         prompt
       })
       return text
     },
 
     embed: async (texts) => {
-      const openai = createOpenAI({ apiKey: openaiKey })
+      const openai = createOpenAI({ apiKey: embeddingApiKey() })
       const { embeddings } = await embedMany({
         model: openai.embedding(EMBEDDING_MODEL),
         values: texts,

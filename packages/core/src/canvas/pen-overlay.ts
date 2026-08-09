@@ -249,14 +249,20 @@ export function drawRemoteCursors(
       }
     }
 
-    // Hovering the agent cursor swells the arrow and lifts a soft halo behind
-    // it, so it reads as something you can grab rather than decoration.
+    // Swells the arrow and lifts a soft halo behind it. The agent cursor beats
+    // this while it is working; the swell is why the label offsets below track
+    // `S` rather than `CURSOR_SIZE`, or the arrow would grow into its nameplate.
     const emphasis = cursor.emphasis ?? 0
     const S = CURSOR_SIZE * (1 + 0.3 * emphasis)
 
     if (emphasis > 0.01) {
       r.auxFill.setColor(r.ck.Color4f(cr, g, b, 0.2 * emphasis))
-      canvas.drawCircle(screenX + S * 0.45, screenY + S * 0.6, S * (1.3 + 0.5 * emphasis), r.auxFill)
+      canvas.drawCircle(
+        screenX + S * 0.45,
+        screenY + S * 0.6,
+        S * (1.3 + 0.5 * emphasis),
+        r.auxFill
+      )
     }
 
     const path = new r.ck.Path()

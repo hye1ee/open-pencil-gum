@@ -14,14 +14,10 @@ import { setMarks } from '@/app/ai/chat/mismatch'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import {
-  apiKey,
-  customAPIType,
-  customBaseURL,
-  customModelID,
-  isConfigured,
-  modelID,
-  providerID
-} from '@/app/ai/chat/storage'
+  backgroundProviderOptions,
+  isSlotConfigured,
+  modelConfigForSlot
+} from '@/app/ai/model-routing'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { actionsSoFar, summariseCanvas, withAncestors } from '@/app/meta-agent/context'
@@ -47,32 +43,18 @@ import { awaitUserModelSettled } from '@/app/user-model/use'
  * none of this.
  */
 
-/** Cheapest capable model: this fires on every chunk of the agent's thinking. */
-const SMALL_MODEL = 'claude-haiku-4-5-20251001'
-
 /** Reasoning shares this budget on Gemini, and the answer is a short list. */
 const JUDGE_MAX_TOKENS = 2048
 
-function smallModel(): LanguageModel {
-  return createUntracedLanguageModel({
-    providerID: providerID.value,
-    apiKey: apiKey.value,
-    modelID: providerID.value === 'anthropic' ? SMALL_MODEL : modelID.value,
-    customModelID: customModelID.value,
-    customBaseURL: customBaseURL.value,
-    customAPIType: customAPIType.value
-  })
-}
-
 /**
- * Gemini thinks unless told not to and charges it to the output budget. This
- * call fires several times per step against an explicit rubric, which is not
- * what that overhead buys.
+ * This call fires on every chunk of the agent's thinking, so it wants a cheap
+ * model — but more than that it wants a *different* one. A judge running the
+ * same model as the agent it judges shares whatever that model is blind to, and
+ * agrees with the reasoning for the same reasons the reasoning was written.
+ * `VITE_MODEL_META_AGENT` is how they are told apart.
  */
-function noThinkingOptions() {
-  return providerID.value === 'google'
-    ? { google: { thinkingConfig: { thinkingBudget: 0 } } }
-    : undefined
+function judgeModel(): LanguageModel {
+  return createUntracedLanguageModel(modelConfigForSlot('meta-agent'))
 }
 
 let agent: MetaAgent | null = null
@@ -109,10 +91,10 @@ function ensureAgent(store: EditorStore): MetaAgent {
       render: renderJudgePrompt,
       judge: async ({ system, prompt }) => {
         const result = await generateText({
-          model: smallModel(),
+          model: judgeModel(),
           system,
           maxOutputTokens: JUDGE_MAX_TOKENS,
-          providerOptions: noThinkingOptions(),
+          providerOptions: backgroundProviderOptions('meta-agent'),
           prompt,
           tools: MARK_TOOLS,
           toolChoice: 'auto'
@@ -240,7 +222,7 @@ export function currentMetaRequest(): string {
  * answer about an idea that may not survive the next sentence.
  */
 export function considerReasoning(reasoning: string): void {
-  if (!isConfigured.value || reasoning.trim() === '') return
+  if (!isSlotConfigured('meta-agent') || reasoning.trim() === '') return
   const store = getActiveEditorStore()
   ensureAgent(store).consider({
     request,

@@ -9,6 +9,7 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
   logIntervention,
+  logModelRouting,
   logPlan,
   logRunContinue,
   logRunEnd,
@@ -32,6 +33,7 @@ import {
   clearUserMessages,
   drainUserMessages
 } from '@/app/ai/chat/user-messages'
+import { describeModelRouting, modelConfigForSlot } from '@/app/ai/model-routing'
 import {
   MAX_AGENT_STEPS,
   createAITools,
@@ -52,24 +54,14 @@ const SYSTEM_PROMPT =
 type ChatSessionOptions = {
   isConfigured: ComputedRef<boolean>
   isACPProvider: ComputedRef<boolean>
+  /** For the ACP branch only. Which model the agent calls is a slot — see `model-routing.ts`. */
   providerID: Ref<AIProviderID>
-  apiKey: Ref<string>
-  modelID: Ref<string>
-  customModelID: Ref<string>
-  customBaseURL: Ref<string>
-  customAPIType: Ref<'completions' | 'responses'>
   maxOutputTokens: Ref<number>
   getActiveEditorStore: () => EditorStore
 }
 
 type ToolLoopTransportOptions = {
   store: EditorStore
-  providerID: AIProviderID
-  apiKey: string
-  modelID: string
-  customModelID: string
-  customBaseURL: string
-  customAPIType: 'completions' | 'responses'
   maxOutputTokens: number
   takeRequest: () => string
 }
@@ -191,33 +183,28 @@ export async function createACPTransport(providerID: AIProviderID) {
 
 export function createToolLoopTransport({
   store,
-  providerID,
-  apiKey,
-  modelID,
-  customModelID,
-  customBaseURL,
-  customAPIType,
   maxOutputTokens,
   takeRequest
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
   const intervention = createInterventionTracker(store)
   const vision = createCanvasVision(store)
-  const effectiveModelID = resolveLanguageModelID({ providerID, modelID, customModelID })
-  const cacheProviderOptions = supportsAnthropicCaching(providerID, effectiveModelID)
+  const taskConfig = modelConfigForSlot('task')
+  const effectiveModelID = resolveLanguageModelID(taskConfig)
+  const cacheProviderOptions = supportsAnthropicCaching(taskConfig.providerID, effectiveModelID)
     ? ANTHROPIC_CACHE_CONTROL
     : undefined
-  const callProviderOptions = thinkingCallOptions(providerID, cacheProviderOptions)
+  const callProviderOptions = thinkingCallOptions(taskConfig.providerID, cacheProviderOptions)
 
-  // Hoisted so the planning calls run against the same model as the agent.
-  const model = createLanguageModel({
-    providerID,
-    apiKey,
-    modelID,
-    customModelID,
-    customBaseURL,
-    customAPIType
-  })
+  const model = createLanguageModel(taskConfig)
+
+  /**
+   * The planning calls get their own slot. They summarise a request into a
+   * directive rather than building anything, so they are the one place inside
+   * the design agent worth pointing at a smaller model. Left unset in `.env` the
+   * slot resolves the same way `task` does, which is what this used to be.
+   */
+  const planningModel = createLanguageModel(modelConfigForSlot('task-planning'))
 
   // This run's design directive. Owned here rather than written by the agent
   // into its own transcript, so it can be re-injected every step.
@@ -242,7 +229,13 @@ export function createToolLoopTransport({
       // to the log rather than truncating it: the half of the build that led to
       // the feedback is the part worth having.
       if (isContinuingRun(store)) logRunContinue(submittedRequest)
-      else logRunStart(submittedRequest)
+      else {
+        logRunStart(submittedRequest)
+        // After the start, which wipes the file. Not on a continue: the routing
+        // is fixed for the transport's lifetime, and a changed setting rebuilds
+        // the transport rather than changing mid-run.
+        logModelRouting(describeModelRouting())
+      }
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
@@ -276,12 +269,15 @@ export function createToolLoopTransport({
       for (const text of userMessages) logUserMessage(text)
 
       if (stepNumber === 0) {
-        plan = await runPlan(model, store, lastUserText(messages), image)
+        plan = await runPlan(planningModel, store, lastUserText(messages), image)
         logPlan(plan)
       } else if (plan && (diff || userMessages.length > 0)) {
         // Only on an intervention. The agent runs for twenty-odd steps, so
         // reconciling the directive every step would cost more than the build.
-        plan = await runPlanUpdate(model, store, plan, { edits: diff, messages: userMessages })
+        plan = await runPlanUpdate(planningModel, store, plan, {
+          edits: diff,
+          messages: userMessages
+        })
         logPlan(plan, true)
       }
 
@@ -338,11 +334,6 @@ export function createChatSessionManager({
   isConfigured,
   isACPProvider,
   providerID,
-  apiKey,
-  modelID,
-  customModelID,
-  customBaseURL,
-  customAPIType,
   maxOutputTokens,
   getActiveEditorStore
 }: ChatSessionOptions) {
@@ -376,12 +367,6 @@ export function createChatSessionManager({
 
     return createToolLoopTransport({
       store,
-      providerID: providerID.value,
-      apiKey: apiKey.value,
-      modelID: modelID.value,
-      customModelID: customModelID.value,
-      customBaseURL: customBaseURL.value,
-      customAPIType: customAPIType.value,
       maxOutputTokens: maxOutputTokens.value,
       takeRequest: () => {
         const value = pendingRequests.get(store) ?? ''

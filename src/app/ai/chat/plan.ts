@@ -1,6 +1,7 @@
 import { generateText } from 'ai'
 import type { ImagePart, LanguageModel, UserContent } from 'ai'
 
+import { backgroundProviderOptions } from '@/app/ai/model-routing'
 import { recordAuxUsage } from '@/app/ai/tools'
 import type { EditorStore } from '@/app/editor/active-store'
 
@@ -87,6 +88,7 @@ export async function runPlan(
   try {
     const result = await generateText({
       model,
+      providerOptions: backgroundProviderOptions('task-planning'),
       system: PLAN_SYSTEM,
       messages: [{ role: 'user', content: planInput([`USER REQUEST:\n${request}`], image) }]
     })
@@ -124,6 +126,7 @@ export async function runPlanUpdate(
   try {
     const result = await generateText({
       model,
+      providerOptions: backgroundProviderOptions('task-planning'),
       system: PLAN_UPDATE_SYSTEM,
       messages: [{ role: 'user', content: planInput(blocks, null) }]
     })

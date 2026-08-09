@@ -67,6 +67,20 @@ export function setAPIKey(key: string) {
   apiKey.value = key
 }
 
+/**
+ * The saved key for a provider that is not the selected one.
+ *
+ * `apiKey` above tracks whichever provider the panel is on, and the model
+ * routing needs the others too: a slot pointed at Anthropic should find the
+ * Anthropic key already typed in here, even while the design agent runs on
+ * Google. Keys have always been stored one slot per provider, so they are all
+ * still there — this is the only way to read the ones not currently selected.
+ */
+export function storedApiKeyFor(provider: AIProviderID): string {
+  if (!IS_BROWSER) return ''
+  return localStorage.getItem(keyStorageKey(provider)) ?? ''
+}
+
 export function registerAIChatEffects(markTransportDirty: () => void) {
   watch(
     pexelsApiKey,
