@@ -80,7 +80,11 @@ function batchPropCategory(key: string): string | null {
 }
 
 /** First node in the subtree (incl. root) that is protected or user-created. */
-function subtreeProtectedHit(graph: SceneGraph, rootId: string, state: InterventionState): string | null {
+function subtreeProtectedHit(
+  graph: SceneGraph,
+  rootId: string,
+  state: InterventionState
+): string | null {
   const stack = [rootId]
   while (stack.length > 0) {
     const id = stack.pop()
