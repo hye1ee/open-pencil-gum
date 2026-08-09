@@ -1,4 +1,4 @@
-import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import type { SceneNode } from '@open-pencil/scene-graph'
 
 import { recordUserEdit } from '@/app/ai/chat/user-edits'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -314,7 +314,7 @@ function buildInterventionText(diff: string): string {
 
 // ── Per-store shared state (baseline snapshot + guard state) ─────────────────
 
-interface InterventionState {
+export interface InterventionState {
   /** The page as the agent last left it. Anything the current page differs from
    * this by is a user edit (agent mutations are folded in as they happen). */
   baseline: PageSnapshot
@@ -343,7 +343,8 @@ interface InterventionState {
 
 const states = new WeakMap<EditorStore, InterventionState>()
 
-function getState(store: EditorStore): InterventionState {
+/** Per-store state. Exported for guard.ts, which reads what this file writes. */
+export function getInterventionState(store: EditorStore): InterventionState {
   const existing = states.get(store)
   if (existing) return existing
 
@@ -368,7 +369,7 @@ function getState(store: EditorStore): InterventionState {
  * rebases so the tool's own change is attributed to the agent, not the user.
  */
 export function beginAgentMutation(store: EditorStore): void {
-  const state = getState(store)
+  const state = getInterventionState(store)
   // Nothing has changed since the baseline → no user edit to capture.
   if (store.state.sceneVersion === state.baselineVersion) return
   const current = store.snapshotPage()
@@ -383,7 +384,7 @@ export function beginAgentMutation(store: EditorStore): void {
 /** Called after each agent mutating tool. Folds the agent's change into the
  * baseline so it is never later reported as a user edit. */
 export function endAgentMutation(store: EditorStore): void {
-  const state = getState(store)
+  const state = getInterventionState(store)
   setBaseline(state, store.snapshotPage(), store.state.sceneVersion)
 }
 
@@ -574,7 +575,7 @@ export interface InterventionTracker {
 }
 
 export function createInterventionTracker(store: EditorStore): InterventionTracker {
-  const state = getState(store)
+  const state = getInterventionState(store)
 
   return {
     reset() {
