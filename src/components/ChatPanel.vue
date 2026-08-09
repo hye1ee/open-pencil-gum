@@ -26,7 +26,7 @@ import type { JsonObject } from '@open-pencil/scene-graph/primitives'
 
 const IS_DEV = import.meta.env.DEV
 
-const { isConfigured, ensureChat, resetChat } = useAIChat()
+const { isConfigured, ensureChat, noteUserRequest, resetChat } = useAIChat()
 const { dialogs } = useI18n()
 
 const chat = ref<Chat<UIMessage> | null>(null)
@@ -129,6 +129,7 @@ async function handleSubmit(text: string) {
     toast.error(e instanceof Error ? e.message : String(e))
     return
   }
+  noteUserRequest(text)
   chat.value?.sendMessage({ text }).catch((e: unknown) => {
     console.error('Chat error:', e)
     toast.error(e instanceof Error ? e.message : String(e))

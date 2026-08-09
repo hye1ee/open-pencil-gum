@@ -48,7 +48,12 @@ export function createFlashActions(editor: Editor) {
   function aiSetMismatch(entries: Array<[string, number]>) {
     if (!editor.renderer) return
     editor.renderer.aiSetMismatch(entries)
-    if (!flashRafId) pumpFlashes()
+    // Emptying the set is the same case as `aiClearMismatch` below: the pump
+    // reads it, sees nothing to animate and stops one frame too early, leaving
+    // the last glow painted. Glows come and go on hover now, so this happens
+    // every time the pointer leaves a badge.
+    if (entries.length === 0) editor.requestRepaint()
+    else if (!flashRafId) pumpFlashes()
   }
 
   function aiClearMismatch() {

@@ -19,7 +19,6 @@ import {
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
-import { clearMismatch } from '@/app/ai/chat/mismatch'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import { anthropicThinkingOptions, googleThinkingOptions } from '@/app/ai/chat/model-trace'
@@ -33,6 +32,7 @@ import {
 } from '@/app/ai/chat/user-messages'
 import { MAX_AGENT_STEPS, createAITools, recordStepUsage, resetRunSteps } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
+import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -62,6 +62,7 @@ type ToolLoopTransportOptions = {
   customBaseURL: string
   customAPIType: 'completions' | 'responses'
   maxOutputTokens: number
+  takeRequest: () => string
 }
 
 const ANTHROPIC_CACHE_CONTROL = {
@@ -187,7 +188,8 @@ export function createToolLoopTransport({
   customModelID,
   customBaseURL,
   customAPIType,
-  maxOutputTokens
+  maxOutputTokens,
+  takeRequest
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
   const intervention = createInterventionTracker(store)
@@ -219,10 +221,11 @@ export function createToolLoopTransport({
     stopWhen: stepCountIs(MAX_AGENT_STEPS),
     maxOutputTokens,
     providerOptions: callProviderOptions,
-    prepareCall: (options) => {
+    prepareCall: async (options) => {
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
-      logRunStart(lastUserText(sent))
+      const submittedRequest = takeRequest() || lastUserText(sent)
+      logRunStart(submittedRequest)
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
@@ -230,7 +233,7 @@ export function createToolLoopTransport({
       plan = null
       resumeTurn()
       clearAgentSpeech()
-      clearMismatch(store)
+      await startMetaAgentTurn(store, submittedRequest)
       showAgentCursor(store)
       return {
         ...options,
@@ -239,8 +242,8 @@ export function createToolLoopTransport({
       }
     },
     prepareStep: async ({ messages, stepNumber }) => {
-      // Block here while the user has paused the turn (grabbed the agent cursor).
-      await awaitTurnResume()
+      // Block here while the user is reading a marker.
+      await awaitTurnResume('step-boundary')
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
       // Messages the user sent mid-run, and the canvas PNG for overall layout.
@@ -323,6 +326,7 @@ export function createChatSessionManager({
   let transportDirty = false
   let currentChatStore: EditorStore | null = null
   let currentChatMessages = new WeakMap<EditorStore, UIMessage[]>()
+  let pendingRequests = new WeakMap<EditorStore, string>()
   let chat: Chat<UIMessage> | null = null
   let acpTransportInstance: { destroy(): Promise<void> } | null = null
   let overrideTransport: (() => ChatTransport<UIMessage>) | null = null
@@ -331,6 +335,7 @@ export function createChatSessionManager({
     transportDirty = true
     currentChatStore = null
     currentChatMessages = new WeakMap()
+    pendingRequests = new WeakMap()
   }
 
   async function createActiveACPTransport() {
@@ -354,8 +359,17 @@ export function createChatSessionManager({
       customModelID: customModelID.value,
       customBaseURL: customBaseURL.value,
       customAPIType: customAPIType.value,
-      maxOutputTokens: maxOutputTokens.value
+      maxOutputTokens: maxOutputTokens.value,
+      takeRequest: () => {
+        const value = pendingRequests.get(store) ?? ''
+        pendingRequests.delete(store)
+        return value
+      }
     })
+  }
+
+  function noteUserRequest(text: string): void {
+    pendingRequests.set(getActiveEditorStore(), text)
   }
 
   async function ensureChat(): Promise<Chat<UIMessage> | null> {
@@ -383,6 +397,7 @@ export function createChatSessionManager({
     chat = null
     currentChatStore = null
     transportDirty = false
+    pendingRequests = new WeakMap()
   }
 
   function setOverrideTransport(factory: (() => ChatTransport<UIMessage>) | null) {
@@ -390,5 +405,5 @@ export function createChatSessionManager({
     markTransportDirty()
   }
 
-  return { ensureChat, resetChat, markTransportDirty, setOverrideTransport }
+  return { ensureChat, resetChat, markTransportDirty, noteUserRequest, setOverrideTransport }
 }

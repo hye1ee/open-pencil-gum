@@ -1,8 +1,12 @@
 /**
  * Taps the provider stream so the model's own output is observable as it is
  * produced — the reasoning summary, then the assistant text, then the tool
- * calls those led to. Two consumers: the run log (`agent-log.txt`, dev only)
- * and the speech bubble on the canvas.
+ * calls those led to. Three consumers: the run log (`agent-log.txt`, dev only),
+ * the speech bubble on the canvas, and the meta-agent, which reads the thinking
+ * as it forms and says where it runs against what we know about the user.
+ *
+ * The meta-agent's own calls go through `createUntracedLanguageModel`, so they
+ * never come back through here — a judge that judged itself would not stop.
  *
  * Why here and not `onStepFinish`: that callback fires after the step's tools
  * have already run, so anything driven from it lands *after* the tool calls it
@@ -19,13 +23,9 @@
 import { wrapLanguageModel } from 'ai'
 import type { LanguageModelMiddleware } from 'ai'
 
-import { logAgentText, logSystemPrompt, logThinking } from '@/app/ai/chat/agent-log'
-import {
-  awaitSpeechDrained,
-  endThinking,
-  sayAgent,
-  streamThinking
-} from '@/app/ai/chat/agent-speech'
+import { logAgentText, logStreamShape, logSystemPrompt, logThinking } from '@/app/ai/chat/agent-log'
+import { awaitSpeechDrained, sayAgent } from '@/app/ai/chat/agent-speech'
+import { awaitTurnResume } from '@/app/ai/chat/agent-turn'
 
 /** Provider model / stream part types, taken off the SDK's own signatures so
  * this file doesn't have to import `@ai-sdk/provider` (a transitive dep). */
@@ -34,6 +34,23 @@ type WrapStream = NonNullable<LanguageModelMiddleware['wrapStream']>
 type CallParams = Parameters<WrapStream>[0]['params']
 type StreamPart =
   Awaited<ReturnType<WrapStream>>['stream'] extends ReadableStream<infer Part> ? Part : never
+
+/**
+ * Who is watching the thinking, if anyone. Registered rather than imported: the
+ * only watcher today is the meta-agent, and it builds a model of its own — an
+ * import here would close the loop model → model-trace → meta-agent → model.
+ */
+interface ReasoningObserver {
+  /** A fresh block of thinking has begun; whatever came before is finished. */
+  start(): void
+  /** Everything thought in this block so far. */
+  chunk(reasoningSoFar: string): void
+}
+let observeReasoning: ReasoningObserver | null = null
+
+export function setReasoningObserver(observer: ReasoningObserver): void {
+  observeReasoning = observer
+}
 
 const THINKING_REQUESTED = import.meta.env.VITE_AI_THINKING === 'true'
 
@@ -66,6 +83,19 @@ export const googleThinkingOptions = THINKING_REQUESTED
 const AFTER_THINKING_MS = 500
 const BEFORE_ACTION_MS = 900
 
+/**
+ * Held after every block of thinking the model emits.
+ *
+ * The meta-agent answers once per block, so without this its marks appear and
+ * disappear at whatever rate the provider happens to stream at — measured at a
+ * mark every one to two seconds, which is faster than anyone can move a pointer
+ * to one. Slowing the source is the honest way to buy that time: everything on
+ * screen is still the model's current answer, and the run really is where the
+ * canvas says it is. Making the mark outlive the answer instead would have put
+ * a stale warning on a canvas that had already moved past it.
+ */
+const BETWEEN_THOUGHTS_MS = 2500
+
 function beat(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
@@ -93,24 +123,46 @@ const middleware: LanguageModelMiddleware = {
     traceSystemPrompt(params)
     const { stream, ...rest } = await doStream()
 
-    // Reasoning goes to the bubble per delta (that is the point — the user
-    // watches it think) but to the log per block, since one line per delta
-    // would be unreadable there.
+    // Reasoning goes to observers per delta but to the log per block, since one
+    // line per delta would be unreadable there. It is deliberately not mirrored
+    // into the canvas speech bubble; the meta-agent still needs the stream, but
+    // exposing the model's private work there adds visual noise.
     let thinking = ''
     let text = ''
+    // Repeats collapsed to a count — a step is mostly deltas, and the question
+    // this answers is which part types arrive and in what order.
+    const shape: string[] = []
+    const seen = (type: string): void => {
+      const last = shape.length > 0 ? shape[shape.length - 1] : ''
+      let run = 0
+      if (last === type) run = 1
+      else if (last.startsWith(`${type} ×`)) run = Number(last.slice(type.length + 2))
+      if (run === 0) shape.push(type)
+      else shape[shape.length - 1] = `${type} ×${run + 1}`
+    }
     const tap = new TransformStream<StreamPart, StreamPart>({
       async transform(chunk, controller) {
-        if (chunk.type === 'reasoning-start') thinking = ''
-        else if (chunk.type === 'reasoning-delta') {
+        seen(chunk.type)
+        if (chunk.type === 'reasoning-start') {
+          thinking = ''
+          observeReasoning?.start()
+        } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
-          streamThinking(chunk.delta)
+          // Everything so far, not the delta: a watcher judging where the
+          // thought has arrived cannot do it from half a sentence. Not awaited
+          // — it answers on its own clock, and the beat below is what gives it
+          // room, not this call.
+          observeReasoning?.chunk(thinking)
+          await beat(BETWEEN_THOUGHTS_MS)
+          // The step boundary is the other place the turn can be held, and it
+          // can be twenty seconds away. Someone who points at a marker while the
+          // agent is mid-thought means now.
+          await awaitTurnResume('mid-thought')
         } else if (chunk.type === 'reasoning-end') {
           logThinking(thinking)
-          endThinking()
           thinking = ''
-          // Let the bubble finish the thought, then a beat before the agent
-          // switches from thinking to speaking.
-          await awaitSpeechDrained()
+          // Keep a short beat before the agent switches from thinking to
+          // speaking, without waiting on a hidden bubble animation.
           await beat(AFTER_THINKING_MS)
         } else if (chunk.type === 'text-start') text = ''
         else if (chunk.type === 'text-delta') text += chunk.delta
@@ -126,8 +178,13 @@ const middleware: LanguageModelMiddleware = {
           // announcing it has been up long enough to read.
           await awaitSpeechDrained()
           await beat(BEFORE_ACTION_MS)
+          // Last point at which the canvas is still untouched by this step.
+          await awaitTurnResume('before-action')
         }
         controller.enqueue(chunk)
+      },
+      flush() {
+        logStreamShape(shape)
       }
     })
 

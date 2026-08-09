@@ -165,8 +165,8 @@ export function createPropositionSink(sessionId: string): UserModel {
 
     onStage: noteStage,
 
-    onIdle: (movement) => {
-      console.debug(`[user-model] screen still (${movement.toFixed(2)}), batch skipped`)
+    onIdle: (pixelChange) => {
+      console.debug(`[user-model] screen still (${pixelChange.toFixed(2)}), batch skipped`)
       noteIdleBatch()
     },
 

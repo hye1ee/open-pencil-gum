@@ -124,6 +124,74 @@ export function logThinking(text: string): void {
 
 /** One line, not the prompt itself: it is ~10k chars and identical every step,
  * so the full text goes to the console once instead of burying the timeline. */
+/**
+ * One line per meta-agent judgment, on the same timeline as the thinking it was
+ * made about — which is the only way to tell a mark that answers the reasoning
+ * from one that answers the canvas. `chars` says how much of the thought had
+ * arrived when the judgment was made; a short number next to a long THINK block
+ * means it judged half a sentence.
+ */
+export function logJudgment(chars: number, marks: string[]): void {
+  if (!enabled) return
+  if (marks.length === 0) {
+    write('META', `${chars} chars → silent`)
+    return
+  }
+  writeBlock('META', `${chars} chars →\n${marks.join('\n')}`)
+}
+
+export function logJudgeSkip(chars: number): void {
+  write('META', `${chars} chars → skipped, a judgment was already running`)
+}
+
+export function logMarkTool(chars: number, detail: string): void {
+  write('META-TOOL', `${chars} chars → ${detail}`)
+}
+
+export function logJudgeRejected(chars: number, tools: string[]): void {
+  write('META-DROP', `${chars} chars → rejected ${tools.join(', ')}`)
+}
+
+export function logJudgeLifecycle(event: string): void {
+  write('META-LIFE', event)
+}
+
+export function logJudgeError(error: unknown): void {
+  write('META-ERR', error instanceof Error ? error.message : truncate(error))
+}
+
+/**
+ * The pointer went onto or off a marker. Paired with the HELD lines below, this
+ * is the only way to tell a run that really stopped from one that carried on
+ * behind a frozen-looking canvas — everything else in this file is written by
+ * the agent, so a hold leaves no trace of its own.
+ */
+export function logMarkHover(id: string, held: boolean): void {
+  write('HOVER', held ? `${id} → holding the turn` : `${id} → nothing to hold, turn not running`)
+}
+
+export function logMarkRelease(id: string, ms: number): void {
+  write('HOVER', `${id} released after ${(ms / 1000).toFixed(1)}s → turn resumes`)
+}
+
+/** A place in the run that actually stopped, and for how long. Written on
+ * release, since that is when the duration is known. */
+export function logTurnHeld(where: string, ms: number): void {
+  write('HELD', `${where} — ${(ms / 1000).toFixed(1)}s`)
+}
+
+/**
+ * The order the provider's stream parts arrived in, one line per step.
+ *
+ * The beats and the hold points hang off particular part types, so which parts
+ * a provider sends and in what order decides which of them exist at all. This
+ * cannot be read off the rest of the timeline: a beat that never ran and a beat
+ * that ran instantly look identical there.
+ */
+export function logStreamShape(parts: string[]): void {
+  write('STREAM', parts.join(' → '))
+}
+
 export function logSystemPrompt(chars: number): void {
   write('SYSTEM', `${chars.toLocaleString()} chars`)
 }

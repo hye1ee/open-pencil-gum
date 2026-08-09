@@ -66,7 +66,10 @@ export function usePageCapture(): void {
         endpoint: '/__page-capture',
         onFrame: (frame, meta) => {
           if (!userModel) return
-          userModel.addFrame(frame, { signature: meta.signature, note: frameNote() })
+          userModel.addFrame(frame, {
+            greyscaleThumbnail: meta.greyscaleThumbnail,
+            note: frameNote()
+          })
           noteFrame()
         }
       })

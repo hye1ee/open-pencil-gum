@@ -29,7 +29,8 @@ function sleep(ms: number): Promise<void> {
 function formatValue(value: unknown): string {
   if (value === undefined || value === null) return 'none'
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1)
-  if (typeof value === 'string') return value.length > 40 ? `"${value.slice(0, 40)}…"` : `"${value}"`
+  if (typeof value === 'string')
+    return value.length > 40 ? `"${value.slice(0, 40)}…"` : `"${value}"`
   const json = JSON.stringify(value)
   return json.length > 60 ? `${json.slice(0, 60)}…` : json
 }
@@ -172,7 +173,9 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 /** Semantic keys whose value differs between two snapshots of the same node. */
 function changedSemanticKeys(before: SceneNode, after: SceneNode): string[] {
-  return SEMANTIC_KEYS.filter((key) => !sameValue(Reflect.get(before, key), Reflect.get(after, key)))
+  return SEMANTIC_KEYS.filter(
+    (key) => !sameValue(Reflect.get(before, key), Reflect.get(after, key))
+  )
 }
 
 /** True if `after` is a reordering of `before` (same child set, different order). */
@@ -230,7 +233,11 @@ function expireProtections(state: InterventionState): void {
  * here is a USER edit. Produces readable text AND updates guard state
  * (protectedProps / userCreated). Returns null if nothing meaningful changed.
  */
-function computeUserDiff(baseline: PageSnapshot, current: PageSnapshot, state: InterventionState): string | null {
+function computeUserDiff(
+  baseline: PageSnapshot,
+  current: PageSnapshot,
+  state: InterventionState
+): string | null {
   const added: string[] = []
   const modified: string[] = []
   const reordered: string[] = []
@@ -253,7 +260,9 @@ function computeUserDiff(baseline: PageSnapshot, current: PageSnapshot, state: I
     }
     const changed = changedSemanticKeys(before, node)
     if (changed.length > 0) {
-      const detail = changed.map((k) => `${k}=${formatChangeValue(k, Reflect.get(node, k))}`).join(', ')
+      const detail = changed
+        .map((k) => `${k}=${formatChangeValue(k, Reflect.get(node, k))}`)
+        .join(', ')
       modified.push(`- Modified ${nodeLabel(node)}: ${detail}`)
       protectCategories(state, id, changed)
     }
@@ -431,7 +440,11 @@ function batchPropCategory(key: string): string | null {
 }
 
 /** First node in the subtree (incl. root) that is protected or user-created. */
-function subtreeProtectedHit(graph: SceneGraph, rootId: string, state: InterventionState): string | null {
+function subtreeProtectedHit(
+  graph: SceneGraph,
+  rootId: string,
+  state: InterventionState
+): string | null {
   const stack = [rootId]
   while (stack.length > 0) {
     const id = stack.pop()

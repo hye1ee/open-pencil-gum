@@ -143,9 +143,9 @@ export const AI_MISMATCH_BLUR_SIGMA = 7
 export const AI_MISMATCH_GLOW_WIDTH = 10
 export const AI_MISMATCH_EDGE_WIDTH = 1.5
 export const AI_MISMATCH_PADDING = 3
-/** Hits at which the glow stops deepening. Past this the node is already as
- * loud as the canvas can make it without drowning the design underneath. */
-export const AI_MISMATCH_MAX_HITS = 4
+/** The meta-agent rates severity 1-10; 1 is the faintest the glow gets and 10
+ * is as loud as the canvas can be without drowning the design underneath. */
+export const AI_MISMATCH_MAX_SEVERITY = 10
 /** Slower than the agent's own flashes: this marker stands until the user
  * answers it, and a fast blink on something that is not going away nags. */
 export const AI_MISMATCH_PULSE_MS = 2400

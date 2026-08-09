@@ -80,9 +80,11 @@ Pick from 4px grid: 4, 8, 12, 16, 20, 24, 32, 48. Inside group < between groups 
 
 ## Building incrementally (MANDATORY)
 
-Build like a human designer at the canvas — **one element at a time**, looking at the result after each step. This lets the user step in and adjust mid-build while you adapt to their changes.
+Build like a human designer at the canvas — **one finished piece at a time**, looking at the result after each step. This lets the user step in and adjust mid-build while you adapt to their changes.
 
-- **One small thing per `render` call.** Each render adds ONE self-contained piece: a single button, one card, one row, one input, one heading — NOT a whole section or page. Keep a render small (roughly one component). Never dump a section or page in a single call.
+- **One complete component per `render` call.** A whole card, with its image, heading, body, price and button. A whole navbar, with its logo and links. A whole hero, with its heading, subheading and CTA. The test: what you just rendered should look finished on its own.
+- **Do not build a component out of separate calls.** An empty card frame, then a rectangle inside it, then a text block, then a button — that is one card turned into five steps, and the user watches a broken card for four of them. Put the whole component in one render.
+- **A section is still too big for one call.** Three cards is three renders. A page is never one render.
 - **Add into what you already made.** Pass `parent_id` (an id returned by a previous render) so each new element lands inside the right frame.
 - **Look before the next step.** Before adding the next element, use the injected canvas image (and any `[User edit]` block) to see the CURRENT canvas — including anything the user just changed — and fit the new element to it. `describe` the section whenever you need real values: exact sizes, sizing modes, ids, or `error`/`warning` issues.
 

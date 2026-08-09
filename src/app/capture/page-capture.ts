@@ -34,7 +34,7 @@ export interface FrameMeta {
    * spending a model call on a batch where nothing happened. Free here — the
    * decoded bitmap is already in hand.
    */
-  signature: Uint8Array
+  greyscaleThumbnail: Uint8Array
 }
 
 export interface PageCapture {
@@ -49,19 +49,19 @@ const DEFAULTS = { format: 'image/webp' as CaptureFormat, quality: 0.8, maxWidth
 
 /** Coarse enough that a moving cursor is invisible, fine enough that a panel
  * opening is not. */
-const SIGNATURE_SIZE = 16
+const THUMBNAIL_SIZE = 16
 
 /** Rec. 601 luma, in integers. Colour adds nothing to a change detector. */
-function signatureOf(canvas: OffscreenCanvas, bitmap: ImageBitmap): Uint8Array {
+function greyscaleThumbnailOf(canvas: OffscreenCanvas, bitmap: ImageBitmap): Uint8Array {
   const context = canvas.getContext('2d')
-  const signature = new Uint8Array(SIGNATURE_SIZE * SIGNATURE_SIZE)
-  if (!context) return signature
-  context.drawImage(bitmap, 0, 0, SIGNATURE_SIZE, SIGNATURE_SIZE)
-  const { data } = context.getImageData(0, 0, SIGNATURE_SIZE, SIGNATURE_SIZE)
-  for (const [i] of signature.entries()) {
-    signature[i] = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8
+  const thumbnail = new Uint8Array(THUMBNAIL_SIZE * THUMBNAIL_SIZE)
+  if (!context) return thumbnail
+  context.drawImage(bitmap, 0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+  const { data } = context.getImageData(0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+  for (const [i] of thumbnail.entries()) {
+    thumbnail[i] = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8
   }
-  return signature
+  return thumbnail
 }
 
 /** Constraints Chromium honours that `DisplayMediaStreamOptions` doesn't list. */
@@ -118,7 +118,7 @@ export async function startPageCapture(options: CaptureOptions): Promise<PageCap
   await video.play()
 
   const canvas = new OffscreenCanvas(1, 1)
-  const thumb = new OffscreenCanvas(SIGNATURE_SIZE, SIGNATURE_SIZE)
+  const thumb = new OffscreenCanvas(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
   const sessionId = `${new Date().toISOString().slice(0, 19).replaceAll(/[:T-]/g, '')}-${crypto.randomUUID().slice(0, 8)}`
   let index = 0
 
@@ -153,12 +153,12 @@ export async function startPageCapture(options: CaptureOptions): Promise<PageCap
       if (canvas.width !== width) canvas.width = width
       if (canvas.height !== height) canvas.height = height
       canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
-      const signature = signatureOf(thumb, bitmap)
+      const greyscaleThumbnail = greyscaleThumbnailOf(thumb, bitmap)
       bitmap.close()
 
       const blob = await canvas.convertToBlob({ type: format, quality })
       const frameIndex = index++
-      options.onFrame?.(blob, { sessionId, index: frameIndex, signature })
+      options.onFrame?.(blob, { sessionId, index: frameIndex, greyscaleThumbnail })
       const query = new URLSearchParams({
         session: sessionId,
         index: String(frameIndex),

@@ -88,7 +88,7 @@ export interface ReviseNeighbour {
   revisions: number
   originalText: string
   /** 0–1 cosine between the current wording and the first one. */
-  likeToOriginal: number
+  cosineToOriginalText: number
 }
 
 const outOfTen = (value: number) => (value * 9 + 1).toFixed(0)
@@ -108,7 +108,7 @@ function renderNeighbour(n: ReviseNeighbour): string {
   return (
     `${head}\n` +
     `  rewritten ${n.revisions} time${n.revisions === 1 ? '' : 's'}; ` +
-    `${(n.likeToOriginal * 100).toFixed(0)}% of its original meaning remains\n` +
+    `${(n.cosineToOriginalText * 100).toFixed(0)}% of its original meaning remains\n` +
     `  first read: "${n.originalText}"`
   )
 }

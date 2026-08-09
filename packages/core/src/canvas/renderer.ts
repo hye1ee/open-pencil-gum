@@ -168,10 +168,8 @@ export class SkiaRenderer {
   _flashPaint: Paint | null = null
   _aiActiveNodes: Set<string> = new Set()
   _aiDoneFlashes: Array<{ nodeId: string; startTime: number }> = []
-  /** nodeId -> how many times the meta-agent has flagged it this turn. Count,
-   * not membership: a node flagged three times glows harder than one flagged
-   * once, which is the whole signal. Deliberately NOT `_aiActiveNodes`, which
-   * `onFlashNodes` clears after every mutating tool. */
+  /** nodeId -> the meta-agent's severity for it, 1-10. Deliberately NOT
+   * `_aiActiveNodes`, which `onFlashNodes` clears after every mutating tool. */
   _aiMismatch: Map<string, number> = new Map()
   _aiGlowPaint: Paint | null = null
 
