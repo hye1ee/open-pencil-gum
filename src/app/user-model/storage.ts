@@ -61,7 +61,13 @@ export function appendAudit(sessionId: string, propositions: Proposition[]): Pro
       confidence: p.confidence,
       decay: p.decay,
       observations: p.observations,
-      revisions: p.revisions
+      revisions: p.revisions,
+      // The state file only ever holds the current wording. Without these the
+      // history says a rationale exists but never how it got there, and a
+      // rationale rewritten five times looks the same as one written once.
+      rationale: p.rationale,
+      rationaleGrounds: p.rationaleGrounds,
+      rationaleFrom: p.rationaleFrom
     }))
   })
   return fetch(`${AUDIT_ENDPOINT}?session=${encodeURIComponent(sessionId)}`, {

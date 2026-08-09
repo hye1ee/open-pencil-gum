@@ -25,11 +25,13 @@
 import {
   FEEDBACK_SYSTEM,
   PROPOSE_SYSTEM,
+  RATIONALE_SYSTEM,
   REVISE_SYSTEM,
   feedbackUserPrompt,
+  rationaleUserPrompt,
   reviseUserPrompt
 } from '@/app/user-model/prompt'
-import type { ReviseNeighbour } from '@/app/user-model/prompt'
+import type { ChangedProposition, ReviseNeighbour } from '@/app/user-model/prompt'
 
 export interface Proposition {
   id: string
@@ -40,6 +42,22 @@ export interface Proposition {
   /** 0–1 staleness rate. Higher decays faster. */
   decay: number
   reasoning: string
+  /**
+   * Why this person wants what the proposition says they want — null until
+   * something they said or let happen gives a reason to write one.
+   *
+   * Kept apart from `text` because the two answer to different evidence and
+   * move on different schedules. The text is the falsifiable record and is
+   * fixed once written; the rationale is a reading of it, and is meant to get
+   * better. Only feedback writes it: a screenshot shows what someone did, never
+   * what for.
+   */
+  rationale: string | null
+  /** What the rationale was read off — which notes, and which other
+   * propositions alongside them. Written together or not at all. */
+  rationaleGrounds: string | null
+  /** Ids of the propositions read alongside; may be empty. */
+  rationaleFrom: string[]
   createdAt: string
   updatedAt: string
   /** How many batches have fed into it. */
@@ -60,9 +78,24 @@ export interface Proposition {
  */
 export type SavedProposition = Omit<
   Proposition,
-  'originalText' | 'originalEmbedding' | 'revisions'
+  | 'originalText'
+  | 'originalEmbedding'
+  | 'revisions'
+  | 'rationale'
+  | 'rationaleGrounds'
+  | 'rationaleFrom'
 > &
-  Partial<Pick<Proposition, 'originalText' | 'originalEmbedding' | 'revisions'>>
+  Partial<
+    Pick<
+      Proposition,
+      | 'originalText'
+      | 'originalEmbedding'
+      | 'revisions'
+      | 'rationale'
+      | 'rationaleGrounds'
+      | 'rationaleFrom'
+    >
+  >
 
 /** What the VLM returns before it has been placed in the model. */
 interface CandidateProposition {
@@ -124,6 +157,30 @@ export interface UserModelOptions {
     before: { text: string; confidence: number } | null
     after: { text: string; confidence: number }
   }) => void
+  /**
+   * One rationale, with what it was read off.
+   *
+   * The grounds go out here rather than only into the file because they are the
+   * instrument for judging this stage. A rationale drawn from a proposition no
+   * note touched is where invention would show up first, and `readWith` is what
+   * makes that visible without opening the model.
+   */
+  onRationale?: (change: {
+    text: string
+    before: string | null
+    after: string
+    grounds: string
+    readWith: string[]
+  }) => void
+  /**
+   * A rationale the model asked for and did not get, with the reason.
+   *
+   * Everything the guard drops is invisible otherwise: a batch where the model
+   * wrote five and three were refused looks identical to one where it wrote
+   * two. Which end is at fault — a prompt that is not landing, or a guard that
+   * is too strict — cannot be told apart without this.
+   */
+  onRationaleDropped?: (reason: string) => void
   /** What was read out of an observation, before any of it was applied. */
   onCandidates?: (candidates: CandidateProposition[]) => void
   onStage?: (stage: PipelineStage) => void
@@ -132,7 +189,7 @@ export interface UserModelOptions {
   onError?: (error: unknown) => void
 }
 
-export type PipelineStage = 'idle' | 'proposing' | 'revising'
+export type PipelineStage = 'idle' | 'proposing' | 'revising' | 'reasoning'
 
 export interface FrameMeta {
   /**
@@ -248,6 +305,42 @@ function readScore(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.min(1, Math.max(0, (n - 1) / 9))
+}
+
+/**
+ * One rationale, as asked for. `grounds` is required and not decoration: it is
+ * the only thing standing between a reading of scarce evidence and a guess
+ * dressed up as knowledge, and a model that cannot write it has not got one.
+ */
+interface RequestedRationale {
+  id: string
+  rationale: string
+  grounds: string
+  from: string[]
+}
+
+interface RawRationaleItem {
+  id?: unknown
+  rationale?: unknown
+  rationale_grounds?: unknown
+  rationale_from?: unknown
+}
+
+function readRequestedRationales(raw: string): RequestedRationale[] {
+  return parseJsonArray(raw)
+    .map((item): RequestedRationale | null => {
+      if (typeof item !== 'object' || item === null) return null
+      const row = item as RawRationaleItem
+      const id = readString(row.id)
+      const rationale = readString(row.rationale)
+      const grounds = readString(row.rationale_grounds)
+      if (!id || !rationale || !grounds) return null
+      const from = Array.isArray(row.rationale_from)
+        ? row.rationale_from.map(readString).filter(Boolean)
+        : []
+      return { id, rationale, grounds, from }
+    })
+    .filter((op): op is RequestedRationale => op !== null)
 }
 
 function readCandidatePropositions(raw: string): CandidateProposition[] {
@@ -448,6 +541,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
           confidence: op.confidence,
           decay: op.decay,
           reasoning: op.reasoning,
+          // Never set here. A proposition is born from what someone did; the
+          // why comes later, from the call that reads feedback.
+          rationale: null,
+          rationaleGrounds: null,
+          rationaleFrom: [],
           createdAt: now,
           updatedAt: now,
           observations: 1,
@@ -478,6 +576,65 @@ export function createUserModel(options: UserModelOptions): UserModel {
    * than getting a shortcut of its own.
    */
   /** A proposition as the revision prompts want to see it, drift and all. */
+  /**
+   * The why, written from feedback and nothing else.
+   *
+   * Separate from `applyRevisions` because the permissions are opposite. There,
+   * an existing proposition's wording is fixed and only its confidence moves;
+   * here, only the rationale moves and the wording and confidence are not even
+   * read. A proposition may appear in both lists in the same batch without the
+   * two treading on each other.
+   *
+   * A rationale is allowed on any proposition, including ones no note touched —
+   * finding the reason three unexplained propositions have in common is the
+   * whole point of showing the model all of them. What is checked is that the
+   * ids are real and the grounds were written: the guard is against invention,
+   * not against reach.
+   */
+  function applyRationales(asked: RequestedRationale[], now: string): Proposition[] {
+    const known = new Map(propositions.map((p) => [p.id, p]))
+    const touched: Proposition[] = []
+    for (const op of asked) {
+      const target = known.get(op.id)
+      if (!target) {
+        options.onRationaleDropped?.(`no proposition with id ${op.id}: "${op.rationale}"`)
+        continue
+      }
+      const unknownIds = op.from.filter((id) => !known.has(id))
+      if (unknownIds.length > 0) {
+        options.onRationaleDropped?.(
+          `read-with ids do not exist (${unknownIds.join(', ')}) on "${target.text}"`
+        )
+        continue
+      }
+      options.onRationale?.({
+        text: target.text,
+        before: target.rationale,
+        after: op.rationale,
+        grounds: op.grounds,
+        readWith: op.from.map((id) => known.get(id)?.text ?? id)
+      })
+      target.rationale = op.rationale
+      target.rationaleGrounds = op.grounds
+      target.rationaleFrom = op.from
+      target.updatedAt = now
+      touched.push(target)
+    }
+    return touched
+  }
+
+  /** What the revision call just did to one proposition, for the call that
+   * writes the why. Read after the change, so `wasNew` is the only part that
+   * cannot be recovered from the proposition itself. */
+  function describeChange(proposition: Proposition): ChangedProposition {
+    return {
+      text: proposition.text,
+      confidence: proposition.confidence,
+      reasoning: proposition.reasoning,
+      wasNew: proposition.observations === 1
+    }
+  }
+
   function describe(proposition: Proposition, now: number): ReviseNeighbour {
     return {
       id: proposition.id,
@@ -602,8 +759,37 @@ export function createUserModel(options: UserModelOptions): UserModel {
           [...shown.values()].map((p) => describe(p, now))
         )
       })
+      const stamp = new Date(now).toISOString()
       const asked = keepWordingOfStanding(readRequestedRevisions(raw))
-      await reEmbed(applyRevisions(asked, new Date(now).toISOString()))
+      const changed = applyRevisions(asked, stamp)
+      if (changed.length > 0) await reEmbed(changed)
+
+      // A second call, not a second half of the first. What changed and why
+      // this person wanted it are different questions from different evidence,
+      // and the why is answered better knowing the answer to the what: a belief
+      // that just died and a belief whose reason turned out narrower look the
+      // same in the notes and different in `changed`. Rationales are also
+      // written across the whole model, so folding them in would have meant
+      // handing the first call every proposition it has no business touching.
+      stage('reasoning')
+      const rawRationales = await deps.revise({
+        system: RATIONALE_SYSTEM,
+        prompt: rationaleUserPrompt(notes, changed.map(describeChange), propositions)
+      })
+      const askedRationales = readRequestedRationales(rawRationales)
+      // Counted rather than inspected: an entry missing an id, a rationale or
+      // its grounds is dropped before `applyRationales` can name it, and the
+      // difference is the only sign the prompt is not landing.
+      const malformed = parseJsonArray(rawRationales).length - askedRationales.length
+      if (malformed > 0) {
+        options.onRationaleDropped?.(`${malformed} entries missing an id, a rationale or grounds`)
+      }
+      const rationales = applyRationales(askedRationales, stamp)
+
+      // `reEmbed` saves as a side effect of embedding, and a rationale changes
+      // no wording, so a batch that only wrote rationales would otherwise be
+      // computed and thrown away.
+      if (rationales.length > 0) options.onChange([...propositions])
     } catch (error) {
       options.onError?.(error)
     } finally {
@@ -627,7 +813,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
         ...p,
         originalText: p.originalText || p.text,
         originalEmbedding: p.originalEmbedding?.length ? p.originalEmbedding : p.embedding,
-        revisions: p.revisions ?? 0
+        revisions: p.revisions ?? 0,
+        // Written before rationales existed, or never given one.
+        rationale: p.rationale ?? null,
+        rationaleGrounds: p.rationaleGrounds ?? null,
+        rationaleFrom: p.rationaleFrom ?? []
       }))
     },
 

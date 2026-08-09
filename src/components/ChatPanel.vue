@@ -173,8 +173,19 @@ async function handleSubmit(text: string) {
   })
 }
 
+/**
+ * Stop, from the button.
+ *
+ * `abandonTurn` first, for the same reason the marker resume needs it: aborting
+ * the request does not reach a step parked at a hold point, and marks now hold
+ * the run on their own, so pressing stop while one is up did nothing visible —
+ * the held tool call went through as soon as the hold lifted. Also lets go of
+ * every hold, so a run stopped mid-hold cannot leave the app paused forever.
+ */
 function handleStop() {
-  chat.value?.stop()
+  abandonTurn()
+  void chat.value?.stop()
+  releaseAnswerHold()
 }
 
 /**

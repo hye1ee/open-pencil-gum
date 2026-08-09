@@ -240,6 +240,34 @@ export function logPropositionChange(change: {
   )
 }
 
+/**
+ * One rationale, with what it was read off.
+ *
+ * The grounds are here rather than only in the model file because they are how
+ * this stage gets judged. A rationale drawn from propositions no note touched is
+ * where invention would show up first, so `read with` is printed even when it is
+ * the only interesting part of the line — and everything is printed as sentences,
+ * since the ids in the model are UUIDs and say nothing to a reader.
+ */
+export function logRationaleChange(change: {
+  text: string
+  before: string | null
+  after: string
+  grounds: string
+  readWith: string[]
+}): void {
+  const lines = [
+    change.text,
+    `why:   ${change.after}`,
+    ...(change.before === null ? [] : [`was:   ${change.before}`]),
+    ...(change.readWith.length === 0
+      ? []
+      : ['read with:', ...change.readWith.map((t) => `  · ${t}`)]),
+    `because: ${change.grounds}`
+  ]
+  writeBlock('MODEL', `rationale ${lines.join('\n')}`)
+}
+
 /** A place in the run that actually stopped, and for how long. Written on
  * release, since that is when the duration is known. */
 export function logTurnHeld(where: string, ms: number): void {

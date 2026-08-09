@@ -188,7 +188,8 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   runPropositions = saved.map((proposition) => ({
     id: proposition.id,
     text: proposition.text,
-    confidence: proposition.confidence
+    confidence: proposition.confidence,
+    rationale: proposition.rationale ?? null
   }))
   logJudgeLifecycle(`loaded ${runPropositions.length} saved user-model propositions`)
   ensureAgent(store).beginTurn()

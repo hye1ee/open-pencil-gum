@@ -1,4 +1,8 @@
-import { logPropositionChange, logUserModelStage } from '@/app/ai/chat/agent-log'
+import {
+  logPropositionChange,
+  logRationaleChange,
+  logUserModelStage
+} from '@/app/ai/chat/agent-log'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
@@ -101,7 +105,14 @@ export function createPropositionSink(sessionId: string): UserModel {
   const model = createUserModel({
     deps: modelCalls(),
 
-    onStage: noteStage,
+    onStage: (stage) => {
+      noteStage(stage)
+      // Only this one reaches the log. The others fire every thirty seconds
+      // from the capture loop; this one fires when a person said something, and
+      // it is the only way to tell a rationale call that returned nothing from
+      // a rationale call that never happened.
+      if (stage === 'reasoning') logUserModelStage('rationale', 'working out why')
+    },
 
     onCandidates: (candidates) => {
       for (const candidate of candidates) {
@@ -112,6 +123,10 @@ export function createPropositionSink(sessionId: string): UserModel {
     },
 
     onRevision: logPropositionChange,
+
+    onRationale: logRationaleChange,
+
+    onRationaleDropped: (reason) => logUserModelStage('rationale', `dropped — ${reason}`),
 
     onIdle: (pixelChange) => {
       console.debug(`[user-model] screen still (${pixelChange.toFixed(2)}), batch skipped`)

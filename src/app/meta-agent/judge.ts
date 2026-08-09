@@ -30,6 +30,10 @@ export interface Proposition {
   id: string
   text: string
   confidence: number
+  /** What this preference does for the person, if anyone has worked it out yet.
+   * A conflict is easier to get right against the purpose than against the
+   * wording: the wording breaks on cases the purpose covers fine. */
+  rationale: string | null
 }
 
 export interface MarkEvidence {
@@ -63,6 +67,14 @@ export interface Mark {
    * already put this, and the hover card can show that it moved.
    */
   notes: MarkNote[]
+  /**
+   * Which step of the turn it first went up in.
+   *
+   * Only a warning about the design as a whole needs it. Every other warning
+   * retires when a change lands on the node it names, and one that names no
+   * node has to be given the same window some other way.
+   */
+  raisedInStep: number
   /** 1–10, the model's own call on how much this matters. */
   importance: number
 }
@@ -361,6 +373,9 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   /** Warned, landed, stood. Available for update, revival, or deletion. */
   let retired: Mark[] = []
   let nextId = 1
+  /** Which step of the turn we are in, counted from `beginStep`. Only used to
+   * give a warning that names no node a window of its own. */
+  let step = 0
   let busy = false
   /** Arrived while an answer was in flight; run once that one lands. */
   let pending: ConsiderInput | null = null
@@ -408,6 +423,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
           nodeId: action.nodeId,
           relation: action.relation,
           notes: [action.note],
+          raisedInStep: step,
           importance: action.importance
         }
         marks.push(mark)
@@ -427,11 +443,19 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       if (!mark) continue
       if (wasRetired) {
         retired = retired.filter((candidate) => candidate.id !== action.id)
+        // Back on the canvas is back at the start: it gets the same window to
+        // be read as one raised here for the first time.
+        mark.raisedInStep = step
         marks.push(mark)
       }
       if (action.nodeId !== undefined) mark.nodeId = action.nodeId
       mark.relation = action.relation
-      mark.notes.push(action.note)
+      // Only when the wording actually moved. An update that changes the node,
+      // the relation or the importance and leaves the sentence alone is normal,
+      // and appending it anyway puts the same sentence in the card twice — once
+      // struck through, which reads as the mark having changed its mind about
+      // nothing.
+      if (mark.notes.at(-1)?.text !== action.note.text) mark.notes.push(action.note)
       mark.importance = action.importance
       applied.push({
         toolName: 'update_mark',
@@ -490,6 +514,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     beginTurn() {
       const hadState = marks.length > 0 || retired.length > 0
       retired = []
+      step = 0
       pending = null
       marks = []
       if (hadState) {
@@ -499,6 +524,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     },
 
     beginStep() {
+      step += 1
       pending = null
       // Dropping the queued chunk can be the thing that leaves nothing in
       // flight, and a waiter that is not woken here holds the run for good.
@@ -526,9 +552,16 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
 
     retireWarnings(nodeIds) {
       const targets = new Set(nodeIds)
-      const warnings = marks.filter(
-        (mark) => isWarning(mark) && mark.nodeId !== null && targets.has(mark.nodeId)
-      )
+      const warnings = marks.filter((mark) => {
+        if (!isWarning(mark)) return false
+        // A warning about the design as a whole names no node, so no change can
+        // ever match it — before this it stayed on the canvas for the rest of
+        // the build, next to a cursor that had long since moved on. It gets the
+        // same window as any other warning instead: the step it was raised in,
+        // and then the first change that lands after it.
+        if (mark.nodeId === null) return mark.raisedInStep < step
+        return targets.has(mark.nodeId)
+      })
       if (warnings.length === 0) return
       retired = [...retired, ...warnings]
       const retiredIds = new Set(warnings.map((mark) => mark.id))
