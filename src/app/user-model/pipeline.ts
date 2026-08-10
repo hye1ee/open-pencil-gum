@@ -138,6 +138,8 @@ export interface UserModelDeps {
  * know. Turning it into a sentence and then finding the proposition again by
  * embedding similarity is throwing away an exact answer to go and guess it.
  */
+export type FeedbackRelation = 'conflict' | 'alignment' | 'unknown'
+
 export interface FeedbackNote {
   /** What the person read, in the words they read it in. */
   note: string
@@ -145,6 +147,15 @@ export interface FeedbackNote {
   quote: string
   /** The proposition the note rested on, or null if none covered it. */
   citedId: string | null
+  /**
+   * Whether the note said the agent was going against that proposition, going
+   * along with it, or working somewhere the model is silent.
+   *
+   * Without this a note and a silence mean the wrong thing. Letting a conflict
+   * stand is agreeing the belief failed; letting an alignment stand is agreeing
+   * it held — opposite readings of the same absence of a reply.
+   */
+  relation: FeedbackRelation
   /** What they typed back, or null if they saw it and let it stand. */
   reply: string | null
 }

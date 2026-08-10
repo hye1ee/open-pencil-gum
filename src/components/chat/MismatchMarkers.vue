@@ -4,6 +4,7 @@ import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import {
   answerMark,
   cancelMarkFeedback,
+  dismissMark,
   mismatch,
   openMarkFeedback,
   setHoveredMark
@@ -51,12 +52,20 @@ const CURSOR_STRIP_LEFT = 8
 const CURSOR_STRIP_TOP = 24 + 10
 const CURSOR_STRIP_GAP = 20
 
-/** Yellow at 1, red at 10. Sitting on a light canvas, so the lightness comes
- * down as it reddens rather than the badge just changing hue. */
+/**
+ * The sign picks the direction, the magnitude picks how far along it sits.
+ *
+ * Conflict runs yellow at −1 to red at −5, alignment pale at +1 to deep at +5.
+ * Both darken as they strengthen rather than only changing hue, because the
+ * badge sits on a light canvas and hue alone is not a difference you can read at
+ * this size. Unknown is grey: it points nowhere on the scale.
+ */
 function badgeColor(mark: Mark): string {
-  if (!isWarning(mark)) return 'hsl(220 9% 60%)'
-  const t = Math.min(1, Math.max(0, (mark.importance - 1) / 9))
-  return `hsl(${48 - 48 * t} ${85 + 6 * t}% ${56 - 12 * t}%)`
+  if (mark.relation === 'unknown') return 'hsl(220 9% 60%)'
+  const t = Math.min(1, Math.max(0, (Math.abs(mark.alignment) - 1) / 4))
+  return isWarning(mark)
+    ? `hsl(${48 - 48 * t} ${85 + 6 * t}% ${56 - 12 * t}%)`
+    : `hsl(${158 - 8 * t} ${52 + 20 * t}% ${58 - 16 * t}%)`
 }
 
 const draft = ref('')
@@ -142,11 +151,17 @@ const markers = computed(() => {
 
 <template>
   <div class="pointer-events-none absolute inset-0 z-30">
+    <!-- Hover is tracked on the wrapper rather than the badge, so moving onto
+         the card to reach its dismiss button is still hovering this mark. On the
+         badge alone that move reads as leaving, and the card starts closing
+         under the pointer on its way there. -->
     <div
       v-for="marker in markers"
       :key="marker.mark.id"
       class="absolute"
       :style="{ left: `${marker.x}px`, top: `${marker.y}px` }"
+      @pointerenter="setHoveredMark(store, marker.mark.id)"
+      @pointerleave="setHoveredMark(store, null)"
     >
       <!-- Clicking is the whole disagreement path: a mark left alone is taken
            as agreed with, so this is how the person says otherwise. -->
@@ -156,8 +171,6 @@ const markers = computed(() => {
         :class="markerClass(marker.mark.id)"
         :style="{ background: marker.color }"
         :aria-label="marker.mark.notes[marker.mark.notes.length - 1]?.text ?? ''"
-        @pointerenter="setHoveredMark(store, marker.mark.id)"
-        @pointerleave="setHoveredMark(store, null)"
         @click="openMarkFeedback(store, marker.mark.id)"
       />
 
@@ -169,15 +182,39 @@ const markers = computed(() => {
       >
         <!-- Pinned open while this mark's box is up, so the note stays readable
              above the answer being written about it. -->
+        <!-- The card opens the answer box too, not only the badge. The badge is
+             16px and unlabelled, and once the dismiss button went on the card it
+             became the only control anyone could see — a whole run went by with
+             three marks waved away and the answer box never once opened. -->
         <div
           v-if="mismatch.hovered === marker.mark.id || mismatch.composing === marker.mark.id"
-          class="absolute top-3 w-max rounded-lg bg-panel px-2.5 py-1.5 text-[11px] leading-snug text-surface shadow-lg ring-1 ring-border"
+          class="pointer-events-auto absolute top-3 w-max cursor-pointer rounded-lg bg-panel py-1.5 pl-2.5 text-[11px] leading-snug text-surface shadow-lg ring-1 ring-border"
           :class="[
             marker.flip ? 'right-3' : 'left-3',
-            mismatch.composing === marker.mark.id ? 'pointer-events-auto' : 'pointer-events-none'
+            // Room for the dismiss button, on the only marks that have one.
+            marker.mark.relation === 'unknown' ? 'pr-6' : 'pr-2.5'
           ]"
           :style="{ maxWidth: `${CARD_MAX_PX}px` }"
+          @click="openMarkFeedback(store, marker.mark.id)"
         >
+          <!-- Questions only, and `dismissMark` enforces the same rule. Waving a
+               question away is agreeing with it, the same as letting it stand.
+               A warning has no such control on purpose: it is the one chance to
+               stop a change before it lands, and a button that clears it in a
+               click is a button for clearing warnings without reading them.
+               It is here rather than on the badge because the badge already has
+               the other answer on it, and one control cannot mean both. -->
+          <button
+            v-if="marker.mark.relation === 'unknown'"
+            type="button"
+            class="absolute top-1 right-1 rounded p-0.5 text-muted hover:text-surface"
+            aria-label="Dismiss this marker"
+            data-test-id="mark-dismiss"
+            @click.stop="dismissMark(store, marker.mark.id)"
+          >
+            <icon-lucide-x class="size-2.5" />
+          </button>
+
           <!-- Oldest first, faded: an updated mark should read as having moved
                rather than as having always said the newest thing. -->
           <p
@@ -197,9 +234,20 @@ const markers = computed(() => {
             {{ answerFor(marker.mark.id) }}
           </p>
 
+          <!-- Says the disagreement path exists. Leaving a mark alone is taken
+               as agreeing with it, which is only a fair default if the other
+               option was visible. -->
+          <p v-if="mismatch.composing !== marker.mark.id" class="mt-1.5 text-muted">
+            click to reply
+          </p>
+
+          <!-- Stops the box, its send button and its cancel button from
+               bubbling a click back to the card, which would reopen the box in
+               the same gesture that closed it. -->
           <form
             v-if="mismatch.composing === marker.mark.id"
             class="mt-1.5 flex gap-1"
+            @click.stop
             @submit.prevent="send(marker.mark.id)"
           >
             <input

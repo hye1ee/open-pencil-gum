@@ -218,7 +218,7 @@ export function logMarkRelease(id: string, ms: number): void {
  * before the run offered to carry on.
  */
 export function logMarkAnswer(
-  event: 'opened' | 'answered' | 'dismissed' | 'quiet' | 'resumed' | 'passed',
+  event: 'opened' | 'answered' | 'dismissed' | 'removed' | 'quiet' | 'resumed' | 'passed',
   detail: string
 ): void {
   write('ANSWER', `${event.padEnd(9)} ${detail}`)

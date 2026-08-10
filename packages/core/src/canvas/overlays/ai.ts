@@ -10,6 +10,8 @@ import {
   AI_MISMATCH_COLOR,
   AI_MISMATCH_EDGE_WIDTH,
   AI_MISMATCH_GLOW_WIDTH,
+  AI_ALIGNMENT_COLOR,
+  AI_QUESTION_COLOR,
   AI_MISMATCH_MAX_SEVERITY,
   AI_MISMATCH_PADDING,
   AI_MISMATCH_PULSE_DEPTH,
@@ -34,20 +36,38 @@ import {
  * Two passes per node: a wide blurred stroke for the glow, then a thin crisp
  * one so the shape stays readable against busy artwork.
  */
+/** Where on the loudness range a question sits: visible without competing with a
+ * warning beside it. */
+const QUESTION_STRENGTH = 0.45
+
 function drawMismatch(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: number): void {
   if (r._aiMismatch.size === 0) return
   const paint = ensureGlowPaint(r)
   const phase = (now % AI_MISMATCH_PULSE_MS) / AI_MISMATCH_PULSE_MS
   const pulse = 1 - AI_MISMATCH_PULSE_DEPTH * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2))
-  // 1 maps to nothing rather than a tenth, so the mildest objection is the
-  // faintest glow the scale allows instead of an already-visible one.
-  const strength = (severity: number) =>
-    Math.min(1, Math.max(0, (severity - 1) / (AI_MISMATCH_MAX_SEVERITY - 1)))
+  // The rating is signed: the sign says which way the mark points and only the
+  // magnitude sets how loud it is. 1 maps to nothing rather than a fifth, so the
+  // mildest reading is the faintest glow the scale allows rather than an
+  // already-visible one.
+  //
+  // Zero is a question, which is off the scale rather than at the bottom of it.
+  // It only reaches here while its answer is being written, and the whole job of
+  // the glow then is to keep saying which node that sentence is about — so it
+  // takes a fixed middle brightness rather than the faintest one the formula
+  // would give it.
+  const strength = (rating: number) =>
+    rating === 0
+      ? QUESTION_STRENGTH
+      : Math.min(1, Math.max(0, (Math.abs(rating) - 1) / (AI_MISMATCH_MAX_SEVERITY - 1)))
+  const hue = (rating: number) => {
+    if (rating === 0) return AI_QUESTION_COLOR
+    return rating < 0 ? AI_MISMATCH_COLOR : AI_ALIGNMENT_COLOR
+  }
 
   paint.setMaskFilter(r.getCachedMaskBlur(AI_MISMATCH_BLUR_SIGMA))
-  for (const [nodeId, severity] of r._aiMismatch) {
-    const opacity = (0.12 + 0.33 * strength(severity)) * pulse
-    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_MISMATCH_COLOR, opacity, 0, {
+  for (const [nodeId, rating] of r._aiMismatch) {
+    const opacity = (0.12 + 0.33 * strength(rating)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, hue(rating), opacity, 0, {
       paint,
       strokeWidth: AI_MISMATCH_GLOW_WIDTH,
       padding: AI_MISMATCH_PADDING
@@ -57,9 +77,9 @@ function drawMismatch(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: n
   // Always reset — the paint is reused next frame and a stale filter would blur
   // the crisp edge too (same convention as the shadow renderer).
   paint.setMaskFilter(null)
-  for (const [nodeId, severity] of r._aiMismatch) {
-    const opacity = (0.25 + 0.45 * strength(severity)) * pulse
-    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_MISMATCH_COLOR, opacity, 0, {
+  for (const [nodeId, rating] of r._aiMismatch) {
+    const opacity = (0.25 + 0.45 * strength(rating)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, hue(rating), opacity, 0, {
       paint,
       strokeWidth: AI_MISMATCH_EDGE_WIDTH,
       padding: AI_MISMATCH_PADDING

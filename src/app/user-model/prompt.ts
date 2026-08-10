@@ -157,18 +157,32 @@ You change confidences and write new propositions. You do not need to work out w
 
 WHAT EACH NOTE TELLS YOU
 
-A note that rested on a proposition was a warning about that proposition.
+Each note says which way it pointed, and that decides what happened to the proposition it rested on. The same silence means opposite things on the two kinds.
+
+A note that said the agent was going AGAINST a proposition:
 
 - They answered it. Their words are the strongest evidence this system ever gets, because they said it rather than you reading it off a picture.
 - They left it alone. The agent went ahead and they were content with the result. The proposition the note rested on is the thing that just turned out to be wrong. Do not raise its confidence: it is the sentence they watched the agent break and did not object to.
 
+A note that said the agent was FOLLOWING a proposition:
+
+- They left it alone. The agent did the thing that proposition predicts, and they were content with the result. That is the proposition holding up, so raise its confidence.
+- They answered it. Read what they said. Someone who bothers to reply to a note telling them the agent is doing what they want is usually correcting it — they are saying this is not actually what they want, or not here. That lowers the proposition, and it is much stronger evidence than the silence would have been.
+
 A note that rested on nothing was raised where the model had nothing to say. Whatever they did with it is the first thing we know about that subject.
 
-An answer is stronger evidence than silence, because someone who says nothing may have agreed or may not have looked. So a proposition supported only by silence goes in at 5 confidence or below. It still goes in — nothing else in this system asks this person anything, so silence is most of the evidence there is.
+An answer is stronger evidence than silence, because someone who says nothing may have agreed or may not have looked. Two separate rules follow, and they are about different propositions:
 
-A FAILED PROPOSITION USUALLY MEANS TWO CHANGES
+- A proposition you are writing for the first time on silence alone STARTS at 5 or below. This is a starting value for a sentence that has never been in the model.
+- A proposition already in the model MOVES ONE STEP from the confidence it currently has. Up on silence that confirmed it, down on silence that broke it. Five is not a ceiling, a floor, or a resting place: a proposition at 9 that just held up goes to 10, not to 5.
 
-Lowering the old proposition records that we were wrong. It does not record what is true instead, which is the more useful of the two. So also ask what they turned out to be fine with, and write that down as a new proposition.
+Never set an existing proposition to a number worked out from scratch. Read the confidence it came in with, then move it by one. It still moves — nothing else in this system asks this person anything, so silence is most of the evidence there is.
+
+A CONFIRMED PROPOSITION IS ONE CHANGE, A FAILED ONE IS USUALLY TWO
+
+A proposition that held up needs nothing but its confidence moved. It already says the right thing — that is what holding up means — so leave the wording exactly as it is and write no new proposition beside it. Adding one that says the same thing in different words is how this model doubles in a single build.
+
+A proposition that failed is different. Lowering it records that we were wrong. It does not record what is true instead, which is the more useful of the two. So also ask what they turned out to be fine with, and write that down as a new proposition.
 
   Note shown:  "reaching for an indigo button · you keep to neutral tones"   (rested on "mono")
   They said nothing, the agent used indigo, and they were content.
@@ -262,7 +276,16 @@ export interface FeedbackNoteView {
   note: string
   quote: string
   citedId: string | null
+  relation: 'conflict' | 'alignment' | 'unknown'
   reply: string | null
+}
+
+/** Spelled out rather than left as a label, because which way the note pointed
+ * decides what silence about it means and that is the whole of the reading. */
+const WHAT_THE_NOTE_SAID: Record<FeedbackNoteView['relation'], string> = {
+  conflict: 'the note said the agent was about to go AGAINST that proposition',
+  alignment: 'the note said the agent was FOLLOWING that proposition',
+  unknown: 'the note said no proposition covered what the agent was deciding'
 }
 
 function renderNote(note: FeedbackNoteView, index: number): string {
@@ -275,7 +298,7 @@ function renderNote(note: FeedbackNoteView, index: number): string {
   return (
     `${index + 1}. shown to them: "${note.note}"\n` +
     `  read off the agent's words: "${note.quote}"\n` +
-    `${rests}\n${answer}`
+    `${rests}\n  ${WHAT_THE_NOTE_SAID[note.relation]}\n${answer}`
   )
 }
 

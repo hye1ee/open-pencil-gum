@@ -2,7 +2,29 @@ import { valibotSchema } from '@ai-sdk/valibot'
 import { tool } from 'ai'
 import * as v from 'valibot'
 
-const relationSchema = v.picklist(['conflict', 'unknown'])
+const relationSchema = v.picklist(['conflict', 'alignment', 'unknown'])
+
+/**
+ * How strongly, never which way — `relation` already says that.
+ *
+ * A picklist rather than a number with a range, so the provider rejects
+ * anything else before it reaches us and the model gets to try again. Asking for
+ * a signed −5…+5 instead put a zero in the middle of the scale that meant
+ * nothing, and left the sign free to disagree with the relation beside it.
+ *
+ * The digits are strings because Gemini only takes `enum` on a string field.
+ * Sent as numbers, the whole function declaration is refused before the call is
+ * ever made — `Invalid value at parameters.properties[5].value.enum[0]
+ * (TYPE_STRING)` — which silently costs every mark in the run, not just the
+ * strength. `readAlignment` parses the digit back out.
+ *
+ * Optional because an `unknown` has no strength to give. It rests on nothing we
+ * believe, so there is no fit to rate; the only thing a number there could mean
+ * is how much the blind spot matters, which is a second meaning in one field and
+ * was read by nothing. A `conflict` or an `alignment` that leaves it out is
+ * rejected rather than defaulted.
+ */
+const strengthSchema = v.optional(v.picklist(['1', '2', '3', '4', '5']))
 const evidenceSchema = {
   evidence_from_reasoning: v.string(),
   evidence_from_user_model: v.nullable(v.string())
@@ -11,20 +33,20 @@ const evidenceSchema = {
 export const MARK_TOOLS = {
   generate_mark: tool({
     description:
-      'Create one genuinely new conflict or unknown mark. Never call for support/alignment or for a concern already listed as standing/retired.',
+      'Create one genuinely new mark. Never for a decision already listed as standing or retired.',
     inputSchema: valibotSchema(
       v.object({
         node_id: v.nullable(v.string()),
         relation: relationSchema,
         text: v.string(),
         ...evidenceSchema,
-        importance: v.number()
+        strength: strengthSchema
       })
     )
   }),
   update_mark: tool({
     description:
-      'Update a standing mark, or revive a retired mark with the same id when the concern returns. Preserve whether the reasoning is only considering or actually intending a choice.',
+      'Update a standing mark, or revive a retired mark with the same id when the decision returns. Preserve whether the reasoning is only considering or actually intending a choice.',
     inputSchema: valibotSchema(
       v.object({
         id: v.string(),
@@ -32,7 +54,7 @@ export const MARK_TOOLS = {
         relation: relationSchema,
         text: v.string(),
         ...evidenceSchema,
-        importance: v.number()
+        strength: strengthSchema
       })
     )
   })
@@ -49,8 +71,9 @@ export const MARK_TOOLS = {
  * marks gone before anyone could finish the sentence, and a mark the person
  * never got to answer being counted as one they accepted.
  *
- * So one way off remains, and it is an event rather than an opinion: the change
- * landed and nobody stopped it. A decision genuinely taken back is an update
- * to importance 1, which leaves the mark where it was and says it no longer
- * needs attention.
+ * Two ways off remain, and neither is the model changing its mind: the change
+ * landed and nobody stopped it, or the person dismissed the mark themselves. A
+ * withdrawal value existed for a while and was removed — it left the mark in
+ * `answerable`, so the user model still counted a belief this person had watched
+ * break, and it bought only that the run stopped being held.
  */

@@ -18,9 +18,10 @@
  * fixes both — the sentence that justified it comes along.
  *
  * There is no delete, and that is load-bearing rather than an omission — see
- * `tools.ts`. The one way a mark ends is `retireWarnings`, which the caller
- * fires when a change the mark warned about has been carried out and the person
- * did not answer the mark to stop it.
+ * `tools.ts`. The one way a mark ends here is `retireSettledMarks`, which the
+ * caller fires when a change the mark spoke about has been carried out and the
+ * person did not answer it to stop it. The other way is outside this file
+ * entirely: the person waves the badge away, and this list never hears of it.
  *
  * No app imports and no provider SDK: the caller supplies `judge`, and
  * `prompt.ts` holds everything that knows this is a design tool.
@@ -54,12 +55,40 @@ export interface MarkNote {
   evidence: MarkEvidence
 }
 
-export type MarkRelation = 'conflict' | 'unknown'
+export type MarkRelation = 'conflict' | 'alignment' | 'unknown'
+
+/**
+ * How the thinking sits against the user model, on one signed scale.
+ *
+ * Conflict and alignment are the two halves of the same question — how well
+ * does this decision fit what we know about this person — so they are one axis
+ * rather than two labels. The judge used to be told to call no tool at all when
+ * the thinking followed a proposition, which meant the only evidence ever
+ * reaching the user model was evidence against it and confidence could only
+ * fall.
+ *
+ * `unknown` is not a point on this axis and carries no number at all: it sits at
+ * zero, which here means off the scale rather than in the middle of it. "Nothing
+ * we know covers this" is a different statement from "this fits badly", and a
+ * strength on it would have been a second meaning in the same field — how much a
+ * blind spot matters, not how well something fits. Asked for and never read: the
+ * badge is flat grey, `lit` keeps unknowns off the canvas entirely, and the only
+ * consumer was the cap, which now goes by age.
+ *
+ * There is no way for the model to take a mark back. It used to have one — a mark
+ * dropped to the bottom of the old 1-10 scale meant "never mind" — and it bought
+ * almost nothing: the mark stayed in `answerable`, so it still reached the user
+ * model as a belief this person had watched break. Marks leave one of two ways,
+ * neither of which is the model changing its mind: the change lands and they
+ * retire, or the person dismisses them — and dismissal retires them too, for the
+ * same reason. Both mean shown, not objected to, off the canvas.
+ */
+export const MAX_ALIGNMENT = 5
 
 export interface Mark {
   id: string
   nodeId: string | null
-  /** Conflict with a proposition, or a decision our user model does not cover. */
+  /** Against a proposition, with one, or about ground the model does not cover. */
   relation: MarkRelation
   /**
    * Oldest first. An update appends rather than overwrites, so the earlier
@@ -70,18 +99,33 @@ export interface Mark {
   /**
    * Which step of the turn it first went up in.
    *
-   * Only a warning about the design as a whole needs it. Every other warning
-   * retires when a change lands on the node it names, and one that names no
-   * node has to be given the same window some other way.
+   * Only a mark about the design as a whole needs it. Every other one retires
+   * when a change lands on the node it names, and one that names no node has to
+   * be given the same window some other way.
    */
   raisedInStep: number
-  /** 1–10, the model's own call on how much this matters. */
-  importance: number
+  /**
+   * −5…−1 conflict, +1…+5 alignment, 0 for unknown, which is off the scale.
+   *
+   * Built from the strength the model gave and the relation beside it, not asked
+   * for signed — see `readAlignment`.
+   */
+  alignment: number
 }
 
 /** Only an actual conflict is a warning. Merely citing a proposition is not. */
 export function isWarning(mark: Mark): boolean {
   return mark.relation === 'conflict'
+}
+
+/**
+ * `+4`, `-3`, and nothing at all for an unknown. The sign is the reading, so it
+ * is never left implicit; a zero printed beside a mark that carries no rating
+ * reads as the weakest rating there is.
+ */
+export function signed(alignment: number): string {
+  if (alignment === 0) return ''
+  return alignment > 0 ? `+${alignment}` : String(alignment)
 }
 
 export type MarkAction =
@@ -90,7 +134,7 @@ export type MarkAction =
       nodeId: string | null
       relation: MarkRelation
       note: MarkNote
-      importance: number
+      alignment: number
     }
   | {
       type: 'update'
@@ -98,7 +142,7 @@ export type MarkAction =
       nodeId?: string | null
       relation: MarkRelation
       note: MarkNote
-      importance: number
+      alignment: number
     }
 
 export interface MarkToolCall {
@@ -112,14 +156,14 @@ export type AppliedMarkTool =
       id: string
       nodeId: string | null
       relation: MarkRelation
-      importance: number
+      alignment: number
     }
   | {
       toolName: 'update_mark'
       id: string
       nodeId: string | null
       relation: MarkRelation
-      importance: number
+      alignment: number
       revived: boolean
     }
 
@@ -198,12 +242,24 @@ export interface MetaAgent {
    */
   consider(input: ConsiderInput): void
   /**
-   * The change the standing warnings were about has landed and the person did
-   * not stop it. They come off the canvas and become memory. Marks resting on
+   * The change the standing marks were about has landed and the person did not
+   * stop it. They come off the canvas and become memory. Marks resting on
    * nothing we believe stay: they are questions about the result, and the
    * result is what makes them answerable.
    */
-  retireWarnings(nodeIds: readonly string[]): void
+  retireSettledMarks(nodeIds: readonly string[]): void
+  /**
+   * The person waved a mark away, which retires it for the same reason a settled
+   * change does: it was shown, it was not objected to, and it is off the canvas.
+   *
+   * It has to be done here and not by filtering the canvas copy. This agent
+   * re-sends its whole list on every judgment, so a mark hidden downstream keeps
+   * arriving and keeps having to be filtered out, keeps occupying a slot under
+   * `MAX_OPEN_QUESTIONS`, and never reaches `retired` — where the prompt shows it
+   * back as already raised, which is what stops the next chunk generating the
+   * same question again under a new id.
+   */
+  dismissMark(id: string): void
   /** A replace tool preserved the design role but assigned the node a new id. */
   remapNode(oldId: string, newId: string): void
   readonly marks: Mark[]
@@ -247,17 +303,31 @@ interface RawMarkInput {
   text?: unknown
   evidence_from_reasoning?: unknown
   evidence_from_user_model?: unknown
-  importance?: unknown
+  strength?: unknown
 }
 
 function asRawMarkInput(value: unknown): RawMarkInput | null {
   return typeof value === 'object' && value !== null ? (value as RawMarkInput) : null
 }
 
-function clampImportance(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(n)) return 1
-  return Math.min(10, Math.max(1, Math.round(n)))
+/**
+ * The signed rating, built here rather than asked for.
+ *
+ * The model gives a strength of 1 to 5 and a relation; the sign follows from the
+ * relation. Asking it for a signed number instead meant the two could disagree —
+ * a conflict carrying `+3` glowing green on a node it meant to warn about.
+ *
+ * An unknown is off the scale and sends no strength, so it lands on zero. A
+ * conflict or an alignment that arrives without one is rejected rather than
+ * guessed at: the number decides how loud the badge is and, on a conflict,
+ * whether the run stops, and a default would be this file inventing both.
+ */
+function readAlignment(value: unknown, relation: MarkRelation): number | null {
+  if (relation === 'unknown') return 0
+  const raw = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(raw) || raw === 0) return null
+  const strength = Math.min(MAX_ALIGNMENT, Math.max(1, Math.round(Math.abs(raw))))
+  return relation === 'conflict' ? -strength : strength
 }
 
 /** Whitespace-insensitive, because the model retypes a quote rather than
@@ -302,15 +372,17 @@ function readRelation(row: RawMarkInput, known: Set<string>): MarkRelation | nul
     const cited = row.evidence_from_user_model
     return cited === null || cited === undefined || cited === '' ? 'unknown' : null
   }
-  if (row.relation !== 'conflict') return null
+  // Alignment is held to the same standard as conflict: both are claims about a
+  // particular belief, and one that cannot name the belief is not a claim.
+  if (row.relation !== 'conflict' && row.relation !== 'alignment') return null
   const cited = row.evidence_from_user_model
-  return typeof cited === 'string' && cited !== '' && known.has(cited) ? 'conflict' : null
+  return typeof cited === 'string' && cited !== '' && known.has(cited) ? row.relation : null
 }
 
 function readNote(row: RawMarkInput, relation: MarkRelation, quote: string): MarkNote | null {
   if (typeof row.text !== 'string' || row.text.trim() === '') return null
   const cited = row.evidence_from_user_model
-  const fromUserModel = relation === 'conflict' && typeof cited === 'string' ? cited : null
+  const fromUserModel = relation !== 'unknown' && typeof cited === 'string' ? cited : null
   return { text: row.text, evidence: { fromUserModel, fromReasoning: quote } }
 }
 
@@ -334,7 +406,8 @@ function readAction(
   if (!relation) return null
   const note = readNote(row, relation, quote)
   if (!note) return null
-  const importance = clampImportance(row.importance)
+  const alignment = readAlignment(row.strength, relation)
+  if (alignment === null) return null
 
   if (call.toolName === 'update_mark') {
     const id = readId(row, markIds)
@@ -343,10 +416,10 @@ function readAction(
     if (row.node_id !== undefined) {
       nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
     }
-    return { type: 'update', id, nodeId, relation, note, importance }
+    return { type: 'update', id, nodeId, relation, note, alignment }
   }
   const nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
-  return { type: 'generate', nodeId, relation, note, importance }
+  return { type: 'generate', nodeId, relation, note, alignment }
 }
 
 function readActions(
@@ -396,21 +469,23 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   }
 
   /**
-   * Keeps the highest-importance few of the marks that rest on nothing we
-   * believe. A backstop under the prompt rule, not a replacement for it: the
-   * model is told to drop one itself, and dropping by importance here at least
-   * loses the least useful question rather than the oldest.
+   * Keeps the newest few of the marks that rest on nothing we believe. A
+   * backstop under the prompt rule, not a replacement for it: the model is told
+   * to drop one itself.
+   *
+   * By age, because `marks` is already in the order they were raised and because
+   * the alternative was asking the model how much each blind spot mattered — a
+   * number nothing else read. Newest wins: a question about the sentence being
+   * thought right now beats one about a subject the thinking left thirty seconds
+   * ago, and the older one has had the longer look.
    */
   function capOpenQuestions(): void {
     const questions = marks.filter((mark) => mark.relation === 'unknown')
     if (questions.length <= MAX_OPEN_QUESTIONS) return
-    const keep = new Set(
-      [...questions]
-        .sort((a, b) => b.importance - a.importance)
-        .slice(0, MAX_OPEN_QUESTIONS)
-        .map((mark) => mark.id)
+    const dropped = new Set(
+      questions.slice(0, questions.length - MAX_OPEN_QUESTIONS).map((mark) => mark.id)
     )
-    marks = marks.filter((mark) => mark.relation === 'conflict' || keep.has(mark.id))
+    marks = marks.filter((mark) => !dropped.has(mark.id))
   }
 
   function apply(actions: MarkAction[]): AppliedMarkTool[] {
@@ -424,7 +499,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
           relation: action.relation,
           notes: [action.note],
           raisedInStep: step,
-          importance: action.importance
+          alignment: action.alignment
         }
         marks.push(mark)
         applied.push({
@@ -432,7 +507,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
           id,
           nodeId: action.nodeId,
           relation: action.relation,
-          importance: action.importance
+          alignment: action.alignment
         })
         continue
       }
@@ -451,18 +526,18 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       if (action.nodeId !== undefined) mark.nodeId = action.nodeId
       mark.relation = action.relation
       // Only when the wording actually moved. An update that changes the node,
-      // the relation or the importance and leaves the sentence alone is normal,
-      // and appending it anyway puts the same sentence in the card twice — once
+      // the relation or the rating and leaves the sentence alone is normal, and
+      // appending it anyway puts the same sentence in the card twice — once
       // struck through, which reads as the mark having changed its mind about
       // nothing.
       if (mark.notes.at(-1)?.text !== action.note.text) mark.notes.push(action.note)
-      mark.importance = action.importance
+      mark.alignment = action.alignment
       applied.push({
         toolName: 'update_mark',
         id: action.id,
         nodeId: mark.nodeId,
         relation: mark.relation,
-        importance: mark.importance,
+        alignment: mark.alignment,
         revived: wasRetired
       })
     }
@@ -550,23 +625,37 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       start(input)
     },
 
-    retireWarnings(nodeIds) {
+    retireSettledMarks(nodeIds) {
       const targets = new Set(nodeIds)
-      const warnings = marks.filter((mark) => {
-        if (!isWarning(mark)) return false
-        // A warning about the design as a whole names no node, so no change can
+      const settledMarks = marks.filter((mark) => {
+        // Alignment retires on the same event as conflict: both are claims about
+        // the change that just landed, and both have said what they had to say
+        // once it stands. Leaving alignment on the canvas would fill MAX_MARKS,
+        // and `setMarks` drops the oldest — so the conflicts raised early in a
+        // run would be the ones to go.
+        if (mark.relation === 'unknown') return false
+        // A mark about the design as a whole names no node, so no change can
         // ever match it — before this it stayed on the canvas for the rest of
         // the build, next to a cursor that had long since moved on. It gets the
-        // same window as any other warning instead: the step it was raised in,
-        // and then the first change that lands after it.
+        // same window as any other instead: the step it was raised in, and then
+        // the first change that lands after it.
         if (mark.nodeId === null) return mark.raisedInStep < step
         return targets.has(mark.nodeId)
       })
-      if (warnings.length === 0) return
-      retired = [...retired, ...warnings]
-      const retiredIds = new Set(warnings.map((mark) => mark.id))
+      if (settledMarks.length === 0) return
+      retired = [...retired, ...settledMarks]
+      const retiredIds = new Set(settledMarks.map((mark) => mark.id))
       marks = marks.filter((mark) => !retiredIds.has(mark.id))
-      options.onLifecycle?.(`retired ${warnings.map((mark) => mark.id).join(', ')}`, marks)
+      options.onLifecycle?.(`retired ${settledMarks.map((mark) => mark.id).join(', ')}`, marks)
+      options.onChanged(marks, null)
+    },
+
+    dismissMark(id) {
+      const mark = marks.find((candidate) => candidate.id === id)
+      if (!mark) return
+      retired = [...retired, mark]
+      marks = marks.filter((candidate) => candidate.id !== id)
+      options.onLifecycle?.(`dismissed ${id}`, marks)
       options.onChanged(marks, null)
     },
 

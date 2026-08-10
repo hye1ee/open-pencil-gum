@@ -10,7 +10,7 @@ import {
   logJudgment,
   logMarkTool
 } from '@/app/ai/chat/agent-log'
-import { setMarks } from '@/app/ai/chat/mismatch'
+import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import {
@@ -24,6 +24,7 @@ import { actionsSoFar, summariseCanvas, withAncestors } from '@/app/meta-agent/c
 import { setMetaAgentNodeReplacedObserver } from '@/app/meta-agent/events'
 import {
   createMetaAgent,
+  signed,
   type AppliedMarkTool,
   type Mark,
   type MarkToolCall,
@@ -73,14 +74,14 @@ function describeMark(mark: Mark): string {
         `"${note.evidence.fromReasoning}"`
     )
     .join(' | ')
-  return `  ${mark.id}  ${mark.relation}  ${where}  imp ${mark.importance}  ${notes}`
+  return `  ${mark.id}  ${mark.relation}  ${where}  ${signed(mark.alignment)}  ${notes}`
 }
 
 function describeTool(event: AppliedMarkTool): string {
   const revived = event.toolName === 'update_mark' && event.revived ? ' revived' : ''
   return (
     `${event.toolName} ${event.id}${revived} → ${event.nodeId ?? 'whole design'} ` +
-    `${event.relation} imp ${event.importance}`
+    `${event.relation} ${signed(event.alignment)}`
   )
 }
 
@@ -182,11 +183,18 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
 // preview *is* the window they exist for, and taking them down as the change
 // lands would leave nothing to read during it.
 setPreviewSettledObserver((nodeIds) => {
-  agent?.retireWarnings(withAncestors(getActiveEditorStore(), nodeIds))
+  agent?.retireSettledMarks(withAncestors(getActiveEditorStore(), nodeIds))
 })
 
 setMetaAgentNodeReplacedObserver((oldId, newId) => {
   agent?.remapNode(oldId, newId)
+})
+
+// The canvas cannot import this module — it would be a cycle, since `setMarks`
+// comes the other way — and it must not hold the list itself. So the badge says
+// what happened and the agent decides what that means.
+setMarkDismissedObserver((id) => {
+  agent?.dismissMark(id)
 })
 
 // Registered here rather than imported by the tap, which must not depend on

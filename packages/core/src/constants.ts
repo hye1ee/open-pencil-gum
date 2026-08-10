@@ -138,14 +138,25 @@ export const AI_DONE_DURATION_MS = 800
  * says this person wants. Red, and deliberately not the agent's own blue/green:
  * this is the one glow that is not the agent reporting on itself. */
 export const AI_MISMATCH_COLOR = { r: 0.94, g: 0.27, b: 0.27 }
+/** Nodes where it looks like what the user model says they want. The other end
+ * of the same scale, so it shares every other constant here — only the hue says
+ * which way the mark points. Distinct from AI_DONE_COLOR, which flashes once
+ * when the agent finishes a node; this one stands while the mark does. */
+export const AI_ALIGNMENT_COLOR = { r: 0.13, g: 0.72, b: 0.51 }
+/** Nodes the agent is deciding something about that the user model says nothing
+ * on. Rated zero because it is off the red-to-green scale rather than in the
+ * middle of it, and grey for the same reason — it is not a mild version of
+ * either end. Matches the badge these glow with. */
+export const AI_QUESTION_COLOR = { r: 0.56, g: 0.58, b: 0.62 }
 /** Blur sigma of the outer glow, in screen px (kept constant across zoom). */
 export const AI_MISMATCH_BLUR_SIGMA = 7
 export const AI_MISMATCH_GLOW_WIDTH = 10
 export const AI_MISMATCH_EDGE_WIDTH = 1.5
 export const AI_MISMATCH_PADDING = 3
-/** The meta-agent rates severity 1-10; 1 is the faintest the glow gets and 10
- * is as loud as the canvas can be without drowning the design underneath. */
-export const AI_MISMATCH_MAX_SEVERITY = 10
+/** The meta-agent rates a mark −5…+5. The sign picks the colour and this is the
+ * magnitude at which the glow is as loud as the canvas can take without
+ * drowning the design underneath; 1 is the faintest it gets. */
+export const AI_MISMATCH_MAX_SEVERITY = 5
 /** Slower than the agent's own flashes: this marker stands until the user
  * answers it, and a fast blink on something that is not going away nags. */
 export const AI_MISMATCH_PULSE_MS = 2400

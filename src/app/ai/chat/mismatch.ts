@@ -5,7 +5,7 @@ import { agentTurn, pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { isWarning } from '@/app/meta-agent/judge'
-import type { Mark } from '@/app/meta-agent/judge'
+import type { Mark, MarkRelation } from '@/app/meta-agent/judge'
 
 /**
  * The marks the meta-agent has standing, mirrored where the canvas can see them.
@@ -15,22 +15,26 @@ import type { Mark } from '@/app/meta-agent/judge'
  * answer and this file must not invent one of its own. All that happens here is
  * the mirror, plus dropping marks whose node has since gone.
  *
- * Two kinds, told apart by whether any note cites a proposition:
+ * Three kinds:
  *
- * - a warning rests on something we believe, and is a chance to stop a change
- *   before it lands. It comes off once the change has stood.
+ * - a warning rests on something we believe and goes against it. It is a chance
+ *   to stop a change before it lands, and comes off once the change has stood.
+ * - an alignment rests on something we believe and follows it. Nothing to stop,
+ *   so it never holds the run; it comes off on the same event a warning does.
  * - a question rests on nothing we believe, and asks what this person would want
  *   somewhere we have no idea. The change landing does not answer it — seeing
  *   the result is what makes it answerable — so it stays until the turn ends.
  *
- * `importance` is the meta-agent's own call, 1-10, and drives both the badge
- * colour and the glow. There is deliberately no count of how often something was
- * raised: repetition is an input to how much a thing matters, not a second
- * number for the person to weigh against the first.
+ * `alignment` is the meta-agent's own call, −5 to +5, and drives both the badge
+ * colour and the glow: the sign picks red or green, the magnitude sets how loud
+ * it is. There is deliberately no count of how often something was raised:
+ * repetition is an input to how much a thing matters, not a second number for
+ * the person to weigh against the first.
  */
 
-/** Beyond a handful the canvas is more warning than design. A backstop only —
- * the meta-agent caps its own questions, and warnings retire on their own. */
+/** Beyond a handful the canvas is more noticeboard than design. A backstop only
+ * — the meta-agent caps its own questions, the rest retire when their change
+ * lands, and a question can also be waved away. */
 const MAX_MARKS = 8
 
 /** How long a new warning glows before it settles back to just a badge. */
@@ -85,6 +89,9 @@ export interface MarkAnswer {
   note: string
   quote: string
   citedId: string | null
+  /** Carried so the user model can tell a reply that disputed a warning from one
+   * that disputed us saying the agent had got it right. */
+  relation: MarkRelation
   text: string
 }
 
@@ -123,26 +130,32 @@ export function hasWarnings(nodeIds?: readonly string[]): boolean {
  * Which marks are lit up on the canvas right now.
  *
  * Not all of them: a glow around everything the meta-agent has ever said turns
- * the page into a warning board and stops meaning anything. A warning flares
- * when it appears, so it is not missed, then leaves a badge behind; pointing at
- * the badge lights it again, which is also what tells you which node the badge
- * belongs to.
+ * the page into a noticeboard and stops meaning anything. A mark that rests on a
+ * proposition flares when it appears, so it is not missed, then leaves a badge
+ * behind; pointing at the badge lights it again, which is also what tells you
+ * which node the badge belongs to.
  *
- * A mark being answered always glows, warning or not. The person is looking at
+ * A mark being answered always glows, whatever it says. The person is looking at
  * the chat while they type, so the canvas has to keep saying which node the
  * sentence they are writing is about.
+ *
+ * Unknowns never flare. There is nothing to catch before it lands — they ask
+ * about a result that does not exist yet — so they wait as badges.
  */
 function lit(mark: Mark): boolean {
   if (state.composing === mark.id) return true
   if (state.answers.some((answer) => answer.id === mark.id)) return true
-  return isWarning(mark) && (state.hovered === mark.id || state.intro.includes(mark.id))
+  if (mark.relation === 'unknown') return false
+  return state.hovered === mark.id || state.intro.includes(mark.id)
 }
 
 function sync(store: EditorStore): void {
   const anchored = state.marks.filter(
     (mark): mark is Mark & { nodeId: string } => mark.nodeId !== null && lit(mark)
   )
-  store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, mark.importance]))
+  // Signed: the renderer reads the sign for the colour and the magnitude for how
+  // loud the glow is.
+  store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, mark.alignment]))
 }
 
 /**
@@ -188,10 +201,16 @@ function letGo(store: EditorStore): void {
 const unread = new Set<string>()
 const unreadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-/** Importance 1 is how the meta-agent takes a mark back now that it cannot
- * delete one. Nothing it has withdrawn is worth stopping the run for. */
+/**
+ * Only a conflict stops the run.
+ *
+ * Zero is how the meta-agent takes a mark back now that it cannot delete one,
+ * and nothing it has withdrawn is worth stopping for. Alignment never holds
+ * either: interrupting a build to say the agent is doing the right thing is the
+ * reaction test this hold was rewritten to stop being.
+ */
 function worthHolding(mark: Mark): boolean {
-  return mark.importance > 1
+  return mark.alignment < 0
 }
 
 function holdForNewMark(store: EditorStore, mark: Mark): void {
@@ -342,6 +361,7 @@ export function answerMark(store: EditorStore, id: string, text: string): void {
       note: latest?.text ?? '',
       quote: latest?.evidence.fromReasoning ?? '',
       citedId: latest?.evidence.fromUserModel ?? null,
+      relation: mark?.relation ?? 'unknown',
       text: body
     }
   ]
@@ -412,6 +432,50 @@ function releaseIfHoveredGone(store: EditorStore): void {
   if (state.hovered === null) return
   if (state.marks.some((mark) => mark.id === state.hovered)) return
   letGo(store)
+}
+
+/**
+ * Told to the meta-agent, which owns the list, rather than filtered out here.
+ *
+ * This file holds a mirror: the meta-agent re-sends its whole list on every
+ * judgment. Hiding a mark downstream meant it kept arriving and kept having to
+ * be filtered out again, kept a slot under `MAX_OPEN_QUESTIONS`, and never
+ * reached `retired` — so the next chunk was free to raise the same question
+ * under a new id. Registered rather than imported because the meta-agent
+ * already imports `setMarks` from here.
+ */
+let onDismiss: ((id: string) => void) | null = null
+
+export function setMarkDismissedObserver(handler: (id: string) => void): void {
+  onDismiss = handler
+}
+
+/**
+ * Waved away. Not an answer and not a disagreement — the same as letting it
+ * stand, said out loud so the badge stops taking up room. The meta-agent retires
+ * it for the same reason a settled change does, so it still reaches the user
+ * model as something this person was shown and did not object to.
+ *
+ * Questions only. A question asks about something we have no belief on, so
+ * "nothing to say here" is a complete response to it and the badge has no
+ * further work to do. A warning is not the same: it rests on something we do
+ * believe, it is the one chance to stop a change before it lands, and a control
+ * that clears it in one click is a control for clearing warnings without reading
+ * them. Warnings come off the way they always did — the change lands and stands,
+ * or it does not.
+ */
+export function dismissMark(store: EditorStore, id: string): void {
+  const mark = state.marks.find((candidate) => candidate.id === id)
+  if (mark?.relation !== 'unknown') return
+  // Not 'dismissed', which already means the answer box was closed unused.
+  logMarkAnswer('removed', id)
+  // Before the list shrinks: the hold is keyed on the id and `nowRead` is what
+  // lets go of it.
+  nowRead(store, id)
+  if (state.composing === id) state.composing = null
+  if (state.hovered === id) letGo(store)
+  // Comes back through `setMarks` with this mark gone from it.
+  onDismiss?.(id)
 }
 
 /**

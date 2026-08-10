@@ -148,12 +148,14 @@ export function feedbackNotes(report: MarkReport): FeedbackNote[] {
       note: answer.note,
       quote: answer.quote,
       citedId: answer.citedId,
+      relation: answer.relation,
       reply: answer.text
     })),
     ...report.agreed.map((mark) => ({
       note: noteOf(mark),
       quote: latestNote(mark)?.evidence.fromReasoning ?? '',
       citedId: citedProposition(mark),
+      relation: mark.relation,
       reply: null
     }))
   ]
