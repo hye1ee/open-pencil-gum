@@ -119,6 +119,19 @@ export function logModelRouting(lines: string[]): void {
   writeBlock('ROUTING', lines.join('\n'))
 }
 
+/**
+ * The user model's propositions as the building side was told them.
+ *
+ * The whole block, not a count, and written on a restart as well as a start.
+ * Half of what this feature promises is that answering a marker changes what the
+ * agent is told next — and the only way to see that is two blocks in one run
+ * that differ. A line saying "9 propositions" both times would look identical
+ * whether or not the answer landed.
+ */
+export function logUserModelPropositions(propositions: string): void {
+  writeBlock('USER-MODEL', propositions)
+}
+
 export function logPlan(plan: string | null, updated = false): void {
   if (!plan) return
   writeBlock(updated ? 'PLAN~' : 'PLAN', plan)

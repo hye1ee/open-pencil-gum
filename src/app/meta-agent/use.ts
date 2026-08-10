@@ -217,6 +217,19 @@ export function currentMetaRequest(): string {
 }
 
 /**
+ * The model this turn is being judged against.
+ *
+ * Read once in `startMetaAgentTurn` and held, so the design agent, the planning
+ * call and the judge all work from the same version. Reading the file again
+ * would give a different answer: the capture pipeline writes to it while the
+ * agent builds, and the wait for an in-flight revision has already been paid
+ * here rather than at each caller.
+ */
+export function runUserModel(): Proposition[] {
+  return runPropositions
+}
+
+/**
  * The agent has thought some more. `reasoning` is everything it has thought this
  * step, not the latest piece — an answer about a half-formed thought is an
  * answer about an idea that may not survive the next sentence.

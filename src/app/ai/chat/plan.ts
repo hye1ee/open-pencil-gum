@@ -33,6 +33,13 @@ ONE or TWO short lines. A high-level directive, nothing else.
 - Do not summarise the conversation or describe the canvas back to me.
 - No preamble, no markdown headings, no numbered list.
 
+### If you are given observations about this person
+A block of observations about how this person works may follow the request. They are things noticed on earlier sessions, not instructions, and they carry a confidence out of ten.
+
+Use them to settle how the request should be carried out — which direction to take among several that all answer it. Do not use them to change what the directive is about: the request decides that, and an observation is never a reason to add a goal nobody asked for. Where the request and an observation disagree, the request wins and the observation is dropped.
+
+Do not name the observations in the directive. It is one or two lines about what to build; the reasoning behind them belongs nowhere.
+
 ### Examples
 Build a pricing card with a clear plan/price hierarchy and one accent colour.
 Refine the header composition for balance; keep the existing type scale.
@@ -59,6 +66,9 @@ Do NOT rewrite for:
 - the user duplicating something to keep their own copy
 - anything that merely adds detail to the existing direction
 
+### Observations about this person are not a reason to rewrite
+A block of observations about how this person works may be included. It is the same block every time and nothing in it is news, so on its own it never justifies a change. Use it only to word a rewrite you were already going to make for one of the reasons above.
+
 ### When you do rewrite
 - Change only the direction, never add steps or implementation detail.
 - Keep any node ids and names already in the directive.
@@ -83,14 +93,19 @@ export async function runPlan(
   model: LanguageModel,
   store: EditorStore,
   request: string,
-  image: ImagePart | null
+  image: ImagePart | null,
+  userModelPropositions: string | null
 ): Promise<string | null> {
+  // After the request, so the request is what the directive is read against and
+  // the observations arrive as something to weigh against it.
+  const blocks = [`USER REQUEST:\n${request}`]
+  if (userModelPropositions) blocks.push(userModelPropositions)
   try {
     const result = await generateText({
       model,
       providerOptions: backgroundProviderOptions('task-planning'),
       system: PLAN_SYSTEM,
-      messages: [{ role: 'user', content: planInput([`USER REQUEST:\n${request}`], image) }]
+      messages: [{ role: 'user', content: planInput(blocks, image) }]
     })
     recordPlanUsage(result, store)
     return result.text.trim() || null
@@ -116,13 +131,17 @@ export async function runPlanUpdate(
   model: LanguageModel,
   store: EditorStore,
   plan: string,
-  change: { edits: string | null; messages: string[] }
+  change: { edits: string | null; messages: string[] },
+  userModelPropositions: string | null
 ): Promise<string> {
   const blocks = [`CURRENT DIRECTIVE:\n${plan}`]
   if (change.edits) blocks.push(`WHAT THE USER CHANGED:\n${change.edits}`)
   if (change.messages.length > 0) {
     blocks.push(`WHAT THE USER SAID:\n${change.messages.join('\n')}`)
   }
+  // Last, after what actually happened. This block is identical on every call
+  // and is the one thing here that is never a reason to rewrite anything.
+  if (userModelPropositions) blocks.push(userModelPropositions)
   try {
     const result = await generateText({
       model,
