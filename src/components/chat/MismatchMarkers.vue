@@ -9,9 +9,8 @@ import {
   openMarkFeedback,
   setHoveredMark
 } from '@/app/ai/chat/mismatch'
+import { markColor } from '@/app/ai/chat/mark-colors'
 import { useEditorStore } from '@/app/editor/active-store'
-import { isWarning } from '@/app/meta-agent/judge'
-import type { Mark } from '@/app/meta-agent/judge'
 
 // The glow says a node is in question; this says what the question is. Both are
 // needed — the glow is visible from across the canvas and survives zoom, the
@@ -26,7 +25,7 @@ import type { Mark } from '@/app/meta-agent/judge'
 // No number on the badge. How often the agent came back to something is already
 // folded into how much the meta-agent says it matters, and two numbers to weigh
 // against each other is one more than anybody reads at a glance. Colour carries
-// it instead: yellow through to red as it climbs.
+// it instead — `markColor`, the same ten the steering space rings use.
 
 const { canvasEl } = defineProps<{ canvasEl: HTMLCanvasElement | null }>()
 
@@ -52,22 +51,6 @@ const CURSOR_STRIP_LEFT = 8
 const CURSOR_STRIP_TOP = 24 + 10
 const CURSOR_STRIP_GAP = 20
 
-/**
- * The sign picks the direction, the magnitude picks how far along it sits.
- *
- * Conflict runs yellow at −1 to red at −5, alignment pale at +1 to deep at +5.
- * Both darken as they strengthen rather than only changing hue, because the
- * badge sits on a light canvas and hue alone is not a difference you can read at
- * this size. Unknown is grey: it points nowhere on the scale.
- */
-function badgeColor(mark: Mark): string {
-  if (mark.relation === 'unknown') return 'hsl(220 9% 60%)'
-  const t = Math.min(1, Math.max(0, (Math.abs(mark.rating) - 1) / 4))
-  return isWarning(mark)
-    ? `hsl(${48 - 48 * t} ${85 + 6 * t}% ${56 - 12 * t}%)`
-    : `hsl(${158 - 8 * t} ${52 + 20 * t}% ${58 - 16 * t}%)`
-}
-
 const draft = ref('')
 
 // An array because the box sits inside the `v-for` over markers, so Vue
@@ -76,13 +59,14 @@ const draft = ref('')
 const boxes = useTemplateRef<HTMLInputElement[]>('box')
 
 /** Three states, and the person has to be able to tell them apart at a glance:
- * untouched, box open, already answered. */
+ * untouched, box open, already answered. The grey border is on all three — the
+ * palest ratings are near white and the canvas behind them is light. */
 function markerClass(id: string): string {
   if (mismatch.composing === id) return 'scale-150 ring-2 ring-surface'
   if (mismatch.answers.some((answer) => answer.id === id)) {
     return 'scale-125 opacity-60 ring-2 ring-accent'
   }
-  return 'ring-1 ring-white/40 hover:scale-125'
+  return 'hover:scale-125'
 }
 
 function answerFor(id: string): string {
@@ -124,7 +108,7 @@ const markers = computed(() => {
 
   return mismatch.marks.flatMap((mark) => {
     const place = (x: number, y: number) => [
-      { mark, x, y, flip: x > width - CARD_MAX_PX, color: badgeColor(mark) }
+      { mark, x, y, flip: x > width - CARD_MAX_PX, color: markColor(mark) }
     ]
 
     if (mark.nodeId === null) {
@@ -167,7 +151,7 @@ const markers = computed(() => {
            as agreed with, so this is how the person says otherwise. -->
       <button
         type="button"
-        class="pointer-events-auto size-4 -translate-y-1/2 rounded-full shadow transition-transform"
+        class="pointer-events-auto size-4 -translate-y-1/2 rounded-full border border-[#BBBBBB] shadow transition-transform"
         :class="markerClass(marker.mark.id)"
         :style="{ background: marker.color }"
         :aria-label="marker.mark.notes[marker.mark.notes.length - 1]?.text ?? ''"

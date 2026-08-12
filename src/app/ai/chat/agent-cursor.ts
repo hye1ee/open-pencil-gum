@@ -1,4 +1,4 @@
-import { AI_ACTIVE_COLOR, AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
+import { AI_ACTIVE_COLOR } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
@@ -17,10 +17,13 @@ import type { EditorStore } from '@/app/editor/active-store'
  * orbit to feel alive, but a cursor circling on its own — including between
  * actions, which is most of a step — reads as a loading spinner.
  *
- * So the sign that it is working is carried by colour and a halo rather than by
- * motion: while a turn is advancing the arrow beats between its resting violet
- * and the blue the agent already uses on the node it is touching. Position stays
- * honest — it points where the work is, and stands still when there is none.
+ * So the sign that it is working is colour and nothing else: while a turn is
+ * advancing the arrow is the blue the agent already uses on the node it is
+ * touching, and violet otherwise. Position stays honest — it points where the
+ * work is, and stands still when there is none.
+ *
+ * It used to beat between the two colours and swell a halo with it. Too loud
+ * next to everything else on the canvas, and the swell dragged the nameplate.
  *
  * Nothing here answers the pointer. The cursor used to be draggable, and
  * grabbing it paused the turn; pointing at a mismatch marker does that now, and
@@ -36,26 +39,17 @@ const RESTING_COLOR: Color = { r: 0.49, g: 0.36, b: 0.96, a: 1 }
 const FOLLOW = 0.08 // easing toward the goal per frame
 
 /**
- * How fast the working state arrives and fades, per frame.
- *
- * Deliberately slow (~2s either way). A turn restarted after someone answered a
- * marker stops and starts again within a second or so, and a signal that snapped
- * off and back on would flash at exactly the moment the person is reading. At
- * this rate the pulse only dims through the handover.
+ * How fast the working colour arrives and fades, per frame — about 0.3s either
+ * way. Not instant: a turn restarted after someone answered a marker stops and
+ * starts again within a second, and a hard switch would blink at exactly the
+ * moment the person is reading.
  */
-const ENERGY_FOLLOW = 0.06
-
-/**
- * Peak halo at full pulse. Kept low because the arrow is nine pixels and the
- * renderer scales it with the same number — a bigger swell drags the nameplate
- * around with it, which reads as jitter rather than breathing.
- */
-const WORKING_EMPHASIS = 0.5
+const ENERGY_FOLLOW = 0.15
 
 interface AgentCursorState {
   nodeAnchor: Vector | null // node the agent is currently building (world space)
   cur: Vector | null // eased position (world space)
-  /** 0 resting, 1 working. Eased, so the pulse fades in and out. */
+  /** 0 resting, 1 working. Eased, so the colour crosses rather than snaps. */
   energy: number
   rafId: number
   active: boolean
@@ -114,7 +108,7 @@ function frame(store: EditorStore, state: AgentCursorState): void {
   }
 
   // Working means a turn is actually advancing, not merely open. A held turn has
-  // stopped for the person to read a marker, and a cursor still pulsing through
+  // stopped for the person to read a marker, and a cursor still blue through
   // that would contradict the frozen position right above.
   const working = agentTurn.running && !agentTurn.paused
   state.energy += ((working ? 1 : 0) - state.energy) * ENERGY_FOLLOW
@@ -124,19 +118,15 @@ function frame(store: EditorStore, state: AgentCursorState): void {
     return
   }
 
-  // The same period as the glow on the node being built, so the two read as one
-  // heartbeat rather than two things blinking at each other.
-  const phase = (performance.now() % AI_PULSE_PERIOD_MS) / AI_PULSE_PERIOD_MS
-  const beat = state.energy * (0.5 + 0.5 * Math.sin(phase * Math.PI * 2))
-
+  // No `emphasis`: that is the halo and the size swell, and the colour says the
+  // same thing without moving anything.
   store.state.agentCursor = {
     name: 'Agent',
-    // Toward the blue the agent already uses to mark what it is touching, so
-    // "this is the agent working" is one colour across the canvas.
-    color: mixColor(RESTING_COLOR, AI_ACTIVE_COLOR, beat),
+    // The blue the agent already uses to mark what it is touching, so "this is
+    // the agent working" is one colour across the canvas.
+    color: mixColor(RESTING_COLOR, AI_ACTIVE_COLOR, state.energy),
     x: state.cur.x,
-    y: state.cur.y,
-    emphasis: beat * WORKING_EMPHASIS
+    y: state.cur.y
   }
   store.requestRepaint()
 
