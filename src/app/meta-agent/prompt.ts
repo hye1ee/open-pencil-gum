@@ -74,30 +74,31 @@ Watch for that reach in both directions. Naming a proposition the quote does not
   If the quote follows the claim                               → alignment, cite the proposition
   If the quote is about something no proposition claims        → unknown, cite nothing
   If the quote is near a proposition but does not settle it    → unknown, cite nothing
-  If the agent was told to do it before it started              → no mark at all
+  If the person asked for it in their request                  → no mark at all
 
-WHAT THE AGENT WAS HANDED IS NOT ALIGNMENT
+Mark a decision whether or not the agent was told about the proposition. Being told does not make the mark pointless: the person reads it, and it is their one chance to say that a belief we hold about them is wrong, or wrong here. A decision nobody shows them is a decision they cannot answer.
 
-The last line of that table is the one that goes wrong most, and now that alignment is a mark it will go wrong far more often than conflict ever did.
+REPORTING IS NOT DECIDING
 
-The agent starts a build holding three things it did not decide: the person's request, a written plan, and this same list of propositions, which is given to it in its own instructions. Any of the three can produce a decision directly. When one does, and a proposition says the same thing, the two agree by construction and tell us nothing new about this person. Marking it \`alignment\` would raise our confidence in a proposition on the strength of the agent having been handed it.
-
-The list is the worst of the three, because the agreement is exact. The agent is told this person works in near-monochrome greys, it writes that it will use greys, and marking that would have us confirm a belief using nothing but our own belief.
-
-  They asked for "a muted grey card". The agent says it will use greys.
-  → No mark. It read the request.
+The agent spends some of its thinking saying what it is doing rather than choosing what to do. There is nothing in those sentences for the person to agree or disagree with, so they get no mark.
 
   "I'm operating under the instruction to use a strict 4px grid, square corners,
-  and near-monochrome styling, accented with a single warm color."
-  → No mark, on any of those propositions. The agent is repeating what it was
-    given. You cannot see the plan or the agent's instructions, but you can see
-    this: it says it was told.
+  and near-monochrome styling."
+  "Every field and button is consistently lowercase, as specified."
+  "Following the plan, I will now build the three button styles."
 
-Reciting is not deciding. Listing the constraints it is working under, saying what it is "operating under" or "instructed to" or "planning per", opening a step by summarising the brief — none of that is a choice yet. Wait for the decision. One sentence of recital can look like it agrees with four propositions at once, and four marks off one sentence is the clearest sign this rule was skipped.
+Each of these says the agent read its instructions. None of them is a choice. Wait for the sentence where it settles something.
 
-Alignment is for the decisions nothing handed the agent settled. The person asked for a product card, nothing said anything about icons, and the agent reaches for outline icons; the list says this person draws icons as thin outlines. Nobody told it to. That is an observation, and it is worth marking.
+The tell is the phrasing: "as specified", "operating under", "instructed to", "following the plan", "adheres to", "as the user prefers". One sentence like this can look like it agrees with four propositions at once, and four marks off one sentence is the clearest sign this rule was skipped.
 
-Before every \`alignment\`, ask what would have produced this decision anyway: a phrase in the request, or the proposition itself, sitting in the agent's instructions where it can read it. If the quote sounds like the agent repeating an instruction, it is, and there is no mark.
+  "a warm rust accent for the primary button"       → a choice. Mark it.
+  "the accent is warm, as the spec requires"        → a report. No mark.
+
+WHAT THE AGENT WAS TOLD
+
+Each proposition above says whether the agent was given it. Withheld ones are not in its instructions and it has no way to know we hold them.
+
+Use it for one thing: a conflict against a proposition the agent WAS given is the firmer reading, because it went against something in front of it rather than something it never saw. Nothing else changes. Do not use it to decide whether to mark.
 
 WHAT NOT TO MARK
 
@@ -209,7 +210,12 @@ You have exactly the two tools above. Use either freely and make zero or more ca
 function renderPropositions(input: JudgeInput): string {
   return input.propositions
     .map((p) => {
-      const head = `- ${p.id}: "${p.text}" (confidence ${(p.confidence * 9 + 1).toFixed(0)}/10)`
+      // Spelled out on every line rather than as two lists, because it is read
+      // one proposition at a time — the question is always about the one the
+      // mark is being raised against.
+      const given = p.shownToAgent ? 'THE AGENT WAS GIVEN THIS' : 'the agent was NOT given this'
+      const rating = (p.confidence * 9 + 1).toFixed(0)
+      const head = `- ${p.id}: "${p.text}" (confidence ${rating}/10, ${given})`
       // Only when there is one. A "why: —" under every line is a column of
       // dashes, and this list is re-sent on every chunk of the agent's thinking.
       return p.rationale === null ? head : `${head}\n  why: ${p.rationale}`
@@ -229,7 +235,7 @@ function renderMark(mark: Mark): string {
         `      from the reasoning:  "${note.evidence.fromReasoning}"`
     )
     .join('\n')
-  return `- ${mark.id} — ${mark.relation}, ${where}, ${signed(mark.alignment)}\n${notes}`
+  return `- ${mark.id} — ${mark.relation}, ${where}, ${signed(mark.rating)}\n${notes}`
 }
 
 function renderMarks(marks: Mark[]): string {
@@ -264,7 +270,10 @@ export function renderJudgePrompt(input: JudgeInput): string {
   return `They asked for:
 ${input.request || '(no message — the agent is continuing earlier work)'}
 
-What we believe about them:
+The plan it is building to:
+${input.plan ?? '(no plan yet — this is before the first planning call)'}
+
+What we believe about them, and whether the agent was told each one:
 ${renderPropositions(input)}
 
 The canvas right now:

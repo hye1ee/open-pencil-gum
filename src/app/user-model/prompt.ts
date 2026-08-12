@@ -1,12 +1,5 @@
-/**
- * The domain pack — everything the user model knows about *this* product lives
- * in these two strings. Porting it to another web system means rewriting this
- * file and nothing else.
- *
- * Adapted from `previous_agent/tacit-gum-agent` with the Figma framing removed,
- * and extended to the confidence/decay/reasoning fields the revision step needs
- * (Shaikh et al., arXiv:2505.10831, §3.1 and §5.3).
- */
+/** The domain pack: everything the user model knows about this product. Adapted
+ * from Shaikh et al., arXiv:2505.10831, §3.1 and §5.3. */
 
 export const PROPOSE_SYSTEM = `TASK
 
@@ -108,11 +101,8 @@ export interface ReviseNeighbour {
 
 const outOfTen = (value: number) => (value * 9 + 1).toFixed(0)
 
-/**
- * Renders one neighbour, including how far it has already travelled. The drift
- * note is only shown once there is drift to report — on a proposition that has
- * never been rewritten it would be three lines saying nothing.
- */
+/** The drift note only appears once there is drift: on a proposition never
+ * rewritten it would be three lines saying nothing. */
 function renderNeighbour(n: ReviseNeighbour): string {
   const seen = n.ageDays < 1 ? 'today' : `${Math.round(n.ageDays)} days ago`
   const head =
@@ -161,7 +151,9 @@ Each note says which way it pointed, and that decides what happened to the propo
 
 A note that said the agent was going AGAINST a proposition:
 
-- They answered it. Their words are the strongest evidence this system ever gets, because they said it rather than you reading it off a picture.
+- They answered it. Their words are the strongest evidence this system ever gets, because they said it rather than you reading it off a picture. Read which side they took, because both happen and they move the proposition opposite ways:
+    - They told the agent to do the thing the proposition says. They have just defended it in their own words, against a case where the agent was about to do otherwise. RAISE its confidence, and by more than silence would have.
+    - They told the agent to carry on, or asked for something different again. The proposition did not survive their own words. LOWER it, and write down what they asked for instead.
 - They left it alone. The agent went ahead and they were content with the result. The proposition the note rested on is the thing that just turned out to be wrong. Do not raise its confidence: it is the sentence they watched the agent break and did not object to.
 
 A note that said the agent was FOLLOWING a proposition:
@@ -280,8 +272,8 @@ export interface FeedbackNoteView {
   reply: string | null
 }
 
-/** Spelled out rather than left as a label, because which way the note pointed
- * decides what silence about it means and that is the whole of the reading. */
+/** Spelled out, not labelled: which way the note pointed decides what silence
+ * about it means. */
 const WHAT_THE_NOTE_SAID: Record<FeedbackNoteView['relation'], string> = {
   conflict: 'the note said the agent was about to go AGAINST that proposition',
   alignment: 'the note said the agent was FOLLOWING that proposition',
@@ -436,8 +428,7 @@ export interface ChangedProposition {
   wasNew: boolean
 }
 
-/** Every proposition in the model, as the rationale call sees it. Ids are here
- * because the reply has to name one; the grounds are asked for in words. */
+/** Ids are here because the reply has to name one; the grounds are in words. */
 export interface RationaleTarget {
   id: string
   text: string

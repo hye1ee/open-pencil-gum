@@ -12,7 +12,16 @@ import {
 
 const BASE: ConsiderInput = {
   request: 'Make three product cards',
-  propositions: [{ id: 'outlined', text: 'Uses outlined icons', confidence: 0.9 }],
+  plan: null,
+  propositions: [
+    {
+      id: 'outlined',
+      text: 'Uses outlined icons',
+      confidence: 0.9,
+      rationale: null,
+      shownToAgent: true
+    }
+  ],
   canvas: 'Card (0:1) FRAME',
   reasoning: '',
   actions: []
@@ -114,7 +123,7 @@ describe('meta-agent mark tools', () => {
     expect(marks.map((mark) => mark.relation)).toEqual(['alignment'])
     expect(marks.map(isWarning)).toEqual([false])
     // The sign is the relation's, not the model's: it sent 4 either way.
-    expect(marks[0]?.alignment).toBe(4)
+    expect(marks[0]?.rating).toBe(4)
     // The cited id has to survive, or the user model cannot tell which belief
     // just held up.
     expect(marks[0]?.notes[0]?.evidence.fromUserModel).toBe('outlined')
@@ -129,7 +138,7 @@ describe('meta-agent mark tools', () => {
       `${quote}, alongside several other options that remain undecided for now.`
     )
 
-    expect(marks[0]?.alignment).toBe(-4)
+    expect(marks[0]?.rating).toBe(-4)
   })
 
   test('gives an unknown no rating at all, and rejects a conflict that sends none', async () => {
@@ -143,7 +152,7 @@ describe('meta-agent mark tools', () => {
     const marks = await h.run(`${unknown}, and ${conflict}, with the rest still undecided.`)
 
     // Zero here is off the scale, not the weakest point on it.
-    expect(marks.map((mark) => [mark.relation, mark.alignment])).toEqual([['unknown', 0]])
+    expect(marks.map((mark) => [mark.relation, mark.rating])).toEqual([['unknown', 0]])
   })
 
   test('drops the oldest question when a fourth arrives, not the weakest', async () => {

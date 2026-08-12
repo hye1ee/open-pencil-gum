@@ -3,19 +3,9 @@ import type { Mark, MarkNote } from '@/app/meta-agent/judge'
 import type { FeedbackNote } from '@/app/user-model/pipeline'
 
 /**
- * What the person said, once they stop saying it.
- *
- * Marks were shown to them one at a time, but the reply is not one at a time:
- * a chunk of thinking raises two or three marks about one decision, and which
- * of those they answered is only meaningful next to which they let pass.
- * Leaving a mark alone is agreement — that is the rule the whole interaction
- * rests on — so an unanswered mark carries as much as an answered one and both
- * go in the report.
- *
- * Two readers, and they need different things from it. The agent needs to know
- * what to do differently and that it is redoing a step. The user model needs
- * the claims: which of our beliefs about this person just held up, and which
- * one they contradicted in their own words.
+ * What the person said, answered and unanswered alike — leaving a mark alone is
+ * agreement, so both carry. Two readers want different things: the agent wants
+ * what to do differently, the user model wants which belief held or broke.
  */
 
 export interface MarkReport {
@@ -41,14 +31,8 @@ function citedProposition(mark: Mark): string | null {
   return null
 }
 
-/**
- * Marks already reported on, so the same one is never reported twice.
- *
- * A single build reports more than once: when someone answers a marker the turn
- * restarts, and the run then ends again for real at the finish. Both endings
- * read the same list of marks, so without this every mark from the first half
- * of a build would arrive a second time as fresh agreement and count double.
- */
+/** A build reports twice — once when a marker answer restarts the turn, once at
+ * the finish — and both read the same list, so a mark would count double. */
 const reported = new Set<string>()
 
 export function forgetReportedMarks(): void {
@@ -62,11 +46,8 @@ export function takeUnreportedMarks(marks: Mark[]): Mark[] {
   return fresh
 }
 
-/**
- * `raised` is every mark of the turn, standing or not — a mark the person saw
- * and passed over may well have been deleted by the meta-agent since, and it
- * still counts as agreed with.
- */
+/** `raised` is every mark of the turn, standing or not: one the person saw and
+ * passed over still counts as agreed with. */
 export function buildMarkReport(raised: Mark[], answers: MarkAnswer[]): MarkReport {
   const answeredIds = new Set(answers.map((answer) => answer.id))
   return {
@@ -79,15 +60,8 @@ export function hasContent(report: MarkReport): boolean {
   return report.answered.length > 0 || report.agreed.length > 0
 }
 
-/**
- * The message the agent restarts from.
- *
- * It never saw any of these notes — the meta-agent writes to the person, not to
- * it — so the note has to travel with the reply or the reply is a non sequitur.
- * The instruction to discard is explicit because the transcript it is handed
- * still contains the thinking that led to the abandoned step, and a model that
- * is not told otherwise will read its own half-finished plan as settled.
- */
+/** The agent never saw these notes, so each has to travel with its reply. The
+ * discard instruction is explicit: the transcript still holds the dead plan. */
 export function renderReportForAgent(
   report: MarkReport,
   stepNumber: number,
@@ -103,9 +77,8 @@ export function renderReportForAgent(
     'Discard whatever you were about to do in that step and do it again, differently,',
     'in light of what they said. Everything from the steps before it stands.',
     '',
-    // Restated rather than left to the transcript: the planning call at the top
-    // of the restarted turn reads the newest user message, and a plan made from
-    // an interruption note alone would forget what is being built.
+    // The restarted turn's planning call reads the newest user message, and an
+    // interruption note alone would forget what is being built.
     `The request has not changed. They asked for: ${request}`
   ]
 
@@ -133,15 +106,8 @@ export function renderReportForAgent(
   return lines.join('\n')
 }
 
-/**
- * The same event as evidence about the person, handed over with its structure
- * intact.
- *
- * Not prose. Each note already knows the proposition it was raised against and
- * the words it was read off — that is what the evidence fields on a mark are
- * for — and flattening them into a sentence means the user model has to work
- * back to a proposition id it was already holding.
- */
+/** Structured, not prose: each note already knows its proposition id and the
+ * words it was read off, and flattening makes the user model recover them. */
 export function feedbackNotes(report: MarkReport): FeedbackNote[] {
   return [
     ...report.answered.map((answer) => ({
@@ -161,16 +127,8 @@ export function feedbackNotes(report: MarkReport): FeedbackNote[] {
   ]
 }
 
-/**
- * Drop the tool call the abort cut in half.
- *
- * Stopping mid-stream leaves the assistant message holding a tool call whose
- * result never arrived. Every provider rejects a transcript like that — "Tool
- * result is missing for tool call …" — so replaying it as history to restart
- * the build fails before the first token. A call with no result also had no
- * effect on the canvas, so nothing is lost by removing it; completed calls from
- * the same step stay, because those did happen.
- */
+/** A call whose result never arrived makes every provider reject the transcript
+ * on replay, and it never touched the canvas, so nothing is lost dropping it. */
 export function withoutDanglingToolCalls<T extends { role: string; parts: unknown[] }>(
   messages: readonly T[]
 ): T[] {
@@ -185,8 +143,7 @@ export function withoutDanglingToolCalls<T extends { role: string; parts: unknow
   if (kept.length === last.parts.length) return [...messages]
 
   const head = messages.slice(0, -1)
-  // Nothing but a step marker left: the message says the agent started a step
-  // and did nothing, which is noise in the transcript and in the chat.
+  // Only a step marker left: the agent started a step and did nothing.
   const onlyMarkers = kept.every(
     (part) =>
       typeof part === 'object' && part !== null && 'type' in part && part.type === 'step-start'

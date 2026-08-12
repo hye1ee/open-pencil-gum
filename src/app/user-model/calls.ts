@@ -12,16 +12,9 @@ import {
 import type { ModelSlot } from '@/app/ai/model-routing'
 import type { RevisionPurpose, UserModelDeps } from '@/app/user-model/pipeline'
 
-/**
- * Which models the user model calls, and with what budget. Everything here is
- * about cost and provider quirks; nothing here knows what a proposition is.
- *
- * Three slots rather than one. Propose sends six images every thirty seconds and
- * is the expensive one; revising from those frames is a short text call on the
- * same timer; revising from feedback runs only when a person has just answered a
- * marker, which is rare and worth more. `model-routing.ts` decides what each one
- * actually resolves to.
- */
+/** Which models the user model calls and with what budget. Three slots because
+ * vision, revising on a timer and revising from an answer are worth different
+ * money; nothing here knows what a proposition is. */
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 /** Enough to separate paraphrases at this scale, at a fraction of the storage. */
@@ -31,21 +24,13 @@ function reviseSlot(purpose: RevisionPurpose): ModelSlot {
   return purpose === 'revise-from-feedback' ? 'feedback' : 'user-model-revise'
 }
 
-/**
- * Generous because on a reasoning model the thinking is drawn from this same
- * budget: a measured Revise call spent 898 tokens thinking and 88 answering,
- * so a 1024 cap left the JSON one thought away from being cut off mid-object.
- * It is a ceiling, not a reservation — nothing is charged for headroom.
- */
+/** Generous because thinking comes out of this budget: a measured call spent 898
+ * tokens thinking and 88 answering. A ceiling, not a reservation. */
 const PROPOSE_MAX_TOKENS = 4096
 const REVISE_MAX_TOKENS = 4096
 
-/**
- * Whether there is a model to call and something to embed with.
- *
- * Only the propose slot is checked: without it there are no candidates for the
- * revise slots to place, so a model that can revise but not see is no model.
- */
+/** Only the propose slot is checked: without it there are no candidates for the
+ * revise slots to place. */
 export function canBuildUserModel(): boolean {
   return isSlotConfigured('user-model-propose') && embeddingApiKey() !== ''
 }
@@ -54,11 +39,9 @@ export function modelCalls(): UserModelDeps {
   return {
     propose: async ({ system, images, instruction, context }) => {
       const frames = await Promise.all(images.map((image) => image.arrayBuffer()))
-      // Each image is labelled with its position. Unlabelled, the model tends
-      // to describe the last frame; numbered, it talks about what changed.
+      // Unlabelled, the model describes the last frame; numbered, what changed.
       const content: UserContent = [{ type: 'text', text: instruction }]
-      // Before the frames, so it colours how they are read rather than
-      // arriving as an afterthought once conclusions are formed.
+      // Before the frames, so it colours how they are read.
       if (context.length > 0) content.push({ type: 'text', text: context.join('\n') })
       for (const [i, data] of frames.entries()) {
         content.push({ type: 'text', text: `Frame ${i + 1} of ${frames.length}:` })

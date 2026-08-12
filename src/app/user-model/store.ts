@@ -2,12 +2,8 @@ import { reactive, shallowRef } from 'vue'
 
 import type { PipelineStage, Proposition } from '@/app/user-model/pipeline'
 
-/**
- * What the panel reads, and the one place the app can reach the running model.
- *
- * The propositions themselves live on disk (`captures/user-model.json`) and
- * survive reloads; this is the in-memory mirror plus the status the panel shows.
- */
+/** The in-memory mirror of `captures/user-model.json` plus the status the panel
+ * shows. The propositions themselves live on disk and survive reloads. */
 
 export type UserModelStatus =
   /** Capture hasn't been armed yet — nobody has clicked. */

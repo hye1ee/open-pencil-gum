@@ -13,9 +13,20 @@
 
 const ENDPOINT = '/__agent-log'
 const FLUSH_MS = 300
-/** Args and results are truncated to this many chars — a full JSX string would
- * bury everything else. */
+/** Results are truncated to this many chars — most are an id and a name, and
+ * the long ones are listings the canvas summary already covers. */
 const MAX_VALUE = 200
+/**
+ * Tool arguments get far more room, because they are the change itself.
+ *
+ * They were cut at 120, which stopped one character into the body of a `render`
+ * — enough to see that a frame was made and not what was in it. That is the
+ * difference between a log you can check a judgment against and one you can
+ * only read the judgment in: a mark saying the agent put a border on an input
+ * could not be confirmed or refuted from this file. Only the payload arguments
+ * are ever near this long; ids and names are short whatever the ceiling is.
+ */
+const MAX_ARG = 1600
 /** Width of the label column, so the timeline stays readable. */
 const LABEL_WIDTH = 9
 const INDENT = ' '.repeat(18)
@@ -329,7 +340,7 @@ export function logSystemPrompt(chars: number): void {
 export function logToolCall(tool: string, args: Record<string, unknown>): void {
   const pairs = Object.entries(args)
     .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${truncate(value, 120)}`)
+    .map(([key, value]) => `${key}=${truncate(value, MAX_ARG)}`)
   write('TOOL', `${tool}  ${pairs.join(' ')}`)
 }
 

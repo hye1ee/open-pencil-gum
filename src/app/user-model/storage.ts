@@ -1,14 +1,7 @@
 import type { Proposition, SavedProposition } from '@/app/user-model/pipeline'
 
-/**
- * Where the user model is kept.
- *
- * Two files, for two questions. `captures/user-model.json` is the state — what
- * we believe about this person right now — and it is rewritten whole on every
- * change, because it is small and this is a dev tool. The per-session JSONL is
- * the history, appended beside the frames it came from, and it is the only way
- * to see how a proposition arrived at its current wording.
- */
+/** Two files: `captures/user-model.json` is the state, rewritten whole on every
+ * change, and the per-session JSONL is the history of how it got there. */
 
 const MODEL_ENDPOINT = '/__user-model'
 const AUDIT_ENDPOINT = '/__propositions'
@@ -62,9 +55,8 @@ export function appendAudit(sessionId: string, propositions: Proposition[]): Pro
       decay: p.decay,
       observations: p.observations,
       revisions: p.revisions,
-      // The state file only ever holds the current wording. Without these the
-      // history says a rationale exists but never how it got there, and a
-      // rationale rewritten five times looks the same as one written once.
+      // The state file holds only the current wording, so without these a
+      // rationale rewritten five times looks like one written once.
       rationale: p.rationale,
       rationaleGrounds: p.rationaleGrounds,
       rationaleFrom: p.rationaleFrom

@@ -1,25 +1,8 @@
 /**
- * A general user model built from screen captures, after Shaikh et al.,
- * *Creating General User Models from Computer Use* (arXiv:2505.10831).
- *
- * Per batch of frames:
- *
- *   PROPOSE   a VLM reads the frames and states what the user is doing
- *   EMBED     the candidates, in one call
- *   RETRIEVE  the closest existing propositions — cosine, weighted by staleness
- *   REVISE    one call per candidate, given its neighbours and their metadata,
- *             which rewrites them: merging, sharpening, or contradicting
- *
- * The paper has no pairwise same/different judge, and neither does this. Asking
- * "are these two the same?" can only ever answer yes or no; handing the model a
- * candidate and its whole neighbourhood at once lets it merge, split, or lower
- * its confidence in something it now doubts — and, crucially, rewrite the text.
- * Without that last part a proposition is frozen at whatever the first
- * observation happened to say, and the model stops improving.
- *
- * Self-contained on purpose: no app imports and no provider SDK, so the folder
- * copies into another web project as-is. Everything domain-specific is in
- * `prompt.ts`; everything network-specific is injected as `deps`.
+ * A general user model from screen captures, after Shaikh et al.
+ * (arXiv:2505.10831). Per batch: PROPOSE, EMBED, RETRIEVE by cosine weighted by
+ * staleness, then REVISE each candidate against its whole neighbourhood at once
+ * rather than pairwise. Self-contained: no app imports and no provider SDK.
  */
 
 import {
@@ -42,16 +25,8 @@ export interface Proposition {
   /** 0–1 staleness rate. Higher decays faster. */
   decay: number
   reasoning: string
-  /**
-   * Why this person wants what the proposition says they want — null until
-   * something they said or let happen gives a reason to write one.
-   *
-   * Kept apart from `text` because the two answer to different evidence and
-   * move on different schedules. The text is the falsifiable record and is
-   * fixed once written; the rationale is a reading of it, and is meant to get
-   * better. Only feedback writes it: a screenshot shows what someone did, never
-   * what for.
-   */
+  /** Apart from `text` because the two answer to different evidence: the text is
+   * fixed once written, the rationale is a reading of it and should improve. */
   rationale: string | null
   /** What the rationale was read off — which notes, and which other
    * propositions alongside them. Written together or not at all. */
@@ -71,11 +46,8 @@ export interface Proposition {
   revisions: number
 }
 
-/**
- * A proposition as read back from disk. Drift tracking was added after the
- * first files were written, so those three fields may be absent — the type
- * says so rather than letting `load` pretend otherwise.
- */
+/** Drift tracking arrived after the first files were written, so those fields
+ * may be absent rather than `load` pretending otherwise. */
 export type SavedProposition = Omit<
   Proposition,
   | 'originalText'
@@ -104,14 +76,8 @@ interface CandidateProposition {
   reasoning: string
 }
 
-/**
- * Which evidence a revision call is working from.
- *
- * Passed out to the caller so it can send the two down different models: one
- * reads screenshots on a timer, the other runs when a person has just said
- * something in their own words, and those are not worth the same money. Nothing
- * in this file behaves differently by it.
- */
+/** Passed out so the caller can route the two differently: a timer-driven read
+ * and a person's own words are not worth the same money. */
 export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback'
 
 export interface UserModelDeps {
@@ -129,15 +95,8 @@ export interface UserModelDeps {
   embed(texts: string[]): Promise<number[][]>
 }
 
-/**
- * One note that was shown to the person, and what became of it.
- *
- * This is the shape the notes already have, carried through intact rather than
- * flattened into prose. `citedId` in particular: the note was raised *against*
- * a specific proposition, and that is the one thing a revision most needs to
- * know. Turning it into a sentence and then finding the proposition again by
- * embedding similarity is throwing away an exact answer to go and guess it.
- */
+/** Carried through intact rather than flattened into prose: `citedId` is an
+ * exact answer, and recovering it later by similarity is guessing at it. */
 export type FeedbackRelation = 'conflict' | 'alignment' | 'unknown'
 
 export interface FeedbackNote {
@@ -147,14 +106,8 @@ export interface FeedbackNote {
   quote: string
   /** The proposition the note rested on, or null if none covered it. */
   citedId: string | null
-  /**
-   * Whether the note said the agent was going against that proposition, going
-   * along with it, or working somewhere the model is silent.
-   *
-   * Without this a note and a silence mean the wrong thing. Letting a conflict
-   * stand is agreeing the belief failed; letting an alignment stand is agreeing
-   * it held — opposite readings of the same absence of a reply.
-   */
+  /** Letting a conflict stand agrees the belief failed; letting an alignment
+   * stand agrees it held. Opposite readings of the same silence. */
   relation: FeedbackRelation
   /** What they typed back, or null if they saw it and let it stand. */
   reply: string | null
@@ -166,26 +119,15 @@ export interface UserModelOptions {
   batchSize?: number
   /** Called after every batch that changed something. */
   onChange: (propositions: Proposition[]) => void
-  /**
-   * One proposition, before and after. `before` is null for a new one.
-   *
-   * Fired per revision rather than once per batch because the state this
-   * pipeline keeps is a file overwritten in place: without a running account of
-   * what changed and why, all anyone can see later is where it ended up.
-   */
+  /** Per revision, not per batch: the state is a file overwritten in place, so
+   * without this all anyone sees later is where it ended up. */
   onRevision?: (change: {
     id: string
     before: { text: string; confidence: number } | null
     after: { text: string; confidence: number }
   }) => void
-  /**
-   * One rationale, with what it was read off.
-   *
-   * The grounds go out here rather than only into the file because they are the
-   * instrument for judging this stage. A rationale drawn from a proposition no
-   * note touched is where invention would show up first, and `readWith` is what
-   * makes that visible without opening the model.
-   */
+  /** The grounds go out here because a rationale drawn from a proposition no
+   * note touched is where invention shows up first. */
   onRationale?: (change: {
     text: string
     before: string | null
@@ -193,14 +135,8 @@ export interface UserModelOptions {
     grounds: string
     readWith: string[]
   }) => void
-  /**
-   * A rationale the model asked for and did not get, with the reason.
-   *
-   * Everything the guard drops is invisible otherwise: a batch where the model
-   * wrote five and three were refused looks identical to one where it wrote
-   * two. Which end is at fault — a prompt that is not landing, or a guard that
-   * is too strict — cannot be told apart without this.
-   */
+  /** Otherwise a batch where three of five were refused looks like one that
+   * wrote two, and a bad prompt cannot be told from a strict guard. */
   onRationaleDropped?: (reason: string) => void
   /** What was read out of an observation, before any of it was applied. */
   onCandidates?: (candidates: CandidateProposition[]) => void
@@ -213,29 +149,17 @@ export interface UserModelOptions {
 export type PipelineStage = 'idle' | 'proposing' | 'revising' | 'reasoning'
 
 export interface FrameMeta {
-  /**
-   * A small greyscale thumbnail of the frame (see `page-capture`). Supplying it
-   * lets a batch where nothing moved be dropped before any model call; without
-   * it every batch runs.
-   */
+  /** Supplying it lets an unchanged batch be dropped before any model call. */
   greyscaleThumbnail?: Uint8Array
-  /**
-   * Anything the caller knows about this moment that the pixels do not say —
-   * above all, whether something other than the user was driving. Screenshots
-   * cannot tell "the user did this" from "the user watched this happen", and
-   * a user model built without that distinction learns the wrong person.
-   */
+  /** Above all, who was driving: a screenshot cannot tell "the user did this"
+   * from "the user watched this happen". */
   note?: string
 }
 
 export interface UserModel {
   addFrame(frame: Blob, meta?: FrameMeta): void
-  /**
-   * The notes shown to the person during one build, and what became of each.
-   * Revised in straight away rather than batched: batching exists because
-   * frames arrive every five seconds whether or not anything happened, and this
-   * arrives because they answered something.
-   */
+  /** Revised straight away, not batched: batching exists for frames on a timer,
+   * and this arrives because the person said something. */
   observe(notes: FeedbackNote[]): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
@@ -247,24 +171,16 @@ const DEFAULT_BATCH_SIZE = 6
 
 /** §5.4: γ = exp(−α·k·age), k = 2, age in days. */
 const DECAY_K = 2
-/**
- * What one unit of `age` means. The paper uses days, which makes decay a no-op
- * inside a single sitting and only meaningful once observations span days —
- * which is the point. Shorten it to watch decay work in a single session.
- */
+/** The paper uses days, so decay is a no-op inside one sitting. Shorten it to
+ * watch decay work in a single session. */
 const AGE_UNIT_MS = 24 * 60 * 60 * 1000
 
 /** Below this a neighbour is unrelated; showing it to Revise only adds noise. */
 const SIMILARITY_FLOOR = 0.3
 const MAX_NEIGHBOURS = 5
 
-/**
- * Mean per-pixel greyscale difference below which a batch counts as "nothing
- * happened". Measured on a real session: batches where the user was working
- * scored 1.3–64, batches where they sat watching scored 0.17–1.41. A model
- * asked what changed when nothing did will invent an answer, so this is the
- * difference between revision and paraphrase.
- */
+/** Measured: working batches scored 1.3–64, watching batches 0.17–1.41. A model
+ * asked what changed when nothing did invents an answer. */
 const IDLE_PIXEL_DIFFERENCE = 1.0
 
 const PROPOSE_INSTRUCTION =
@@ -272,16 +188,8 @@ const PROPOSE_INSTRUCTION =
 
 // ---------------------------------------------------------------- parsing
 
-/**
- * Models wrap JSON in fences often enough that not handling it is a bug.
- *
- * The opening fence can also arrive without its closing one, because on a
- * reasoning model the thinking comes out of the same output budget as the
- * answer: think for long enough and the JSON is cut off mid-object. So rather
- * than trusting the fence, take everything between the first `[` and the last
- * `]`. A reply too truncated to contain both yields nothing and the batch is
- * dropped — the next one is thirty seconds away.
- */
+/** Fences arrive often, and sometimes unclosed because thinking ate the output
+ * budget, so take everything between the first `[` and the last `]`. */
 function parseJsonArray(raw: string): unknown[] {
   const fenced = /```(?:json)?\s*\n?([\s\S]*?)```/.exec(raw)
   const body = fenced ? fenced[1] : raw
@@ -292,16 +200,8 @@ function parseJsonArray(raw: string): unknown[] {
   return Array.isArray(parsed) ? parsed : []
 }
 
-/**
- * One entry of the JSON array a model returned, before any of it is trusted.
- *
- * The keys are spelled the way the two prompts ask for them, plus the ones
- * models reach for anyway when asked for a proposition: `proposition` is what
- * Propose is told to send and `text` is what Revise is told to send, and either
- * turns up in either answer. `what` is the third spelling seen in practice.
- * Reading all three costs nothing; dropping a whole batch over the key it chose
- * costs a batch.
- */
+/** Three spellings because models mix `proposition`, `text` and `what` whatever
+ * the prompt asked for, and dropping a batch over the key costs a batch. */
 interface RawReplyItem {
   id?: unknown
   proposition?: unknown
@@ -328,11 +228,8 @@ function readScore(value: unknown, fallback: number): number {
   return Math.min(1, Math.max(0, (n - 1) / 9))
 }
 
-/**
- * One rationale, as asked for. `grounds` is required and not decoration: it is
- * the only thing standing between a reading of scarce evidence and a guess
- * dressed up as knowledge, and a model that cannot write it has not got one.
- */
+/** `grounds` is required: it is the only thing between a reading of scarce
+ * evidence and a guess, and a model that cannot write it has not got one. */
 interface RequestedRationale {
   id: string
   rationale: string
@@ -425,15 +322,8 @@ export function cosine(a: number[], b: number[]): number {
   return denominator === 0 ? 0 : dot / denominator
 }
 
-/**
- * How far two frames are apart, as the mean absolute difference between their
- * thumbnails. Missing or mismatched thumbnails read as "it moved", so a batch is
- * never skipped blind.
- *
- * Named for what it measures rather than "drift", which in this folder already
- * means how far a proposition's wording has travelled from the one it was
- * written with — a different thing, on a different clock.
- */
+/** Mean absolute difference between thumbnails. Missing ones read as "it moved",
+ * so a batch is never skipped blind. Not called drift, which is taken. */
 function meanPixelDifference(earlier: Uint8Array, later: Uint8Array): number {
   if (earlier.length === 0 || earlier.length !== later.length) return Number.POSITIVE_INFINITY
   let sum = 0
@@ -441,16 +331,10 @@ function meanPixelDifference(earlier: Uint8Array, later: Uint8Array): number {
   return sum / earlier.length
 }
 
-/**
- * The largest single step across the batch, measured from the last batch we
- * actually looked at. Chaining from there rather than from the batch's own
- * first frame means a slow creep still eventually trips the threshold instead
- * of slipping past it one imperceptible batch at a time.
- */
+/** Measured from the last batch we actually looked at, so a slow creep trips the
+ * threshold instead of slipping past one imperceptible batch at a time. */
 function largestFrameChange(thumbnails: Uint8Array[], sinceThumbnail: Uint8Array | null): number {
-  // Nothing to compare against: either this is the first batch — still the
-  // first thing we know about the session — or the caller supplied no
-  // thumbnails, in which case we have no grounds to skip anything.
+  // First batch, or no thumbnails supplied: no grounds to skip anything.
   if (!sinceThumbnail || thumbnails.length === 0) return Number.POSITIVE_INFINITY
   const chain = [sinceThumbnail, ...thumbnails]
   let most = 0
@@ -460,22 +344,14 @@ function largestFrameChange(thumbnails: Uint8Array[], sinceThumbnail: Uint8Array
   return most
 }
 
-/**
- * How old a timestamp is, in whatever `AGE_UNIT_MS` calls a unit. Only decay
- * consumes it, which is what fixes the unit — the paper measures age in days
- * and `AGE_UNIT_MS` is where that is set.
- */
+/** In whatever `AGE_UNIT_MS` calls a unit. Only decay consumes it. */
 export function ageInDecayUnits(isoTimestamp: string, now: number): number {
   const at = Date.parse(isoTimestamp)
   return Number.isNaN(at) ? 0 : Math.max(0, (now - at) / AGE_UNIT_MS)
 }
 
-/**
- * The closest propositions, discounted by how stale each one expects to be. A
- * durable observation stays retrievable for weeks; "is aligning a row of cards"
- * drops out of contention within a day, so tomorrow's candidate is compared
- * against what actually persists rather than against yesterday's noise.
- */
+/** Discounted by how stale each expects to be, so tomorrow's candidate is
+ * compared against what persists rather than against yesterday's noise. */
 function nearestPropositions(
   embedding: number[],
   propositions: Proposition[],
@@ -513,21 +389,10 @@ export function createUserModel(options: UserModelOptions): UserModel {
     options.onStage?.(next)
   }
 
-  /**
-   * On the feedback path a proposition that is already held keeps its wording,
-   * whatever the model asked for. Only its confidence moves.
-   *
-   * The sentence is what made the mark fire, so a belief that fails and is then
-   * reworded loses the very clause it failed on. Measured: "near-monochrome
-   * greys with one warm accent, never a default blue or indigo" became
-   * "near-monochrome with one warm accent" on the evidence of a terracotta
-   * gradient — and indigo, which nothing had been observed about, stopped being
-   * detectable. Nothing is lost by holding the wording, because what the person
-   * actually accepted is written down as its own new proposition either way.
-   *
-   * Only here. The frame path revises from what a screenshot shows, where
-   * rewriting a sentence is the whole point.
-   */
+  /** On the feedback path the wording is fixed and only confidence moves: the
+   * sentence is what made the mark fire, so rewording loses the clause it failed
+   * on. Measured, "never a default blue or indigo" was deleted on the evidence of
+   * a terracotta gradient. The frame path still rewrites, which is its point. */
   function keepWordingOfStanding(revisions: RequestedRevision[]): RequestedRevision[] {
     return revisions.map((op) => {
       const held = op.id === null ? undefined : propositions.find((p) => p.id === op.id)
@@ -554,16 +419,14 @@ export function createUserModel(options: UserModelOptions): UserModel {
         existing.observations += 1
         touched.push(existing)
       } else {
-        // An id we don't know means the model invented one; treat it as new
-        // rather than dropping the revision on the floor.
+        // An invented id is treated as new rather than dropped.
         const created: Proposition = {
           id: crypto.randomUUID(),
           text: op.text,
           confidence: op.confidence,
           decay: op.decay,
           reasoning: op.reasoning,
-          // Never set here. A proposition is born from what someone did; the
-          // why comes later, from the call that reads feedback.
+          // The why comes later, from the call that reads feedback.
           rationale: null,
           rationaleGrounds: null,
           rationaleFrom: [],
@@ -587,31 +450,12 @@ export function createUserModel(options: UserModelOptions): UserModel {
     return touched
   }
 
-  /**
-   * The second half of the pipeline, from candidates to a revised model.
-   *
-   * Split out because candidates do not only come from screenshots. When the
-   * person answers a note about the agent's thinking, that is an observation
-   * too — a better one, since they said it rather than us inferring it from a
-   * picture — and it should go through the same retrieval and revision rather
-   * than getting a shortcut of its own.
-   */
+  /** Candidates to a revised model. Split out because an answered note is an
+   * observation too, and takes the same retrieval and revision. */
   /** A proposition as the revision prompts want to see it, drift and all. */
-  /**
-   * The why, written from feedback and nothing else.
-   *
-   * Separate from `applyRevisions` because the permissions are opposite. There,
-   * an existing proposition's wording is fixed and only its confidence moves;
-   * here, only the rationale moves and the wording and confidence are not even
-   * read. A proposition may appear in both lists in the same batch without the
-   * two treading on each other.
-   *
-   * A rationale is allowed on any proposition, including ones no note touched —
-   * finding the reason three unexplained propositions have in common is the
-   * whole point of showing the model all of them. What is checked is that the
-   * ids are real and the grounds were written: the guard is against invention,
-   * not against reach.
-   */
+  /** Opposite permissions to `applyRevisions`: only the rationale moves here, so
+   * a proposition can appear in both lists without the two colliding. Any
+   * proposition may get one — the guard is against invention, not reach. */
   function applyRationales(asked: RequestedRationale[], now: string): Proposition[] {
     const known = new Map(propositions.map((p) => [p.id, p]))
     const touched: Proposition[] = []
@@ -644,9 +488,8 @@ export function createUserModel(options: UserModelOptions): UserModel {
     return touched
   }
 
-  /** What the revision call just did to one proposition, for the call that
-   * writes the why. Read after the change, so `wasNew` is the only part that
-   * cannot be recovered from the proposition itself. */
+  /** Read after the change, so `wasNew` is the only part that cannot be
+   * recovered from the proposition itself. */
   function describeChange(proposition: Proposition): ChangedProposition {
     return {
       text: proposition.text,
@@ -665,8 +508,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
       ageDays: ageInDecayUnits(proposition.updatedAt, now),
       revisions: proposition.revisions,
       originalText: proposition.originalText,
-      // How much of the first wording survives. Measured here, judged by the
-      // model — the code offers the number, not a veto.
+      // Measured here, judged by the model: a number, not a veto.
       cosineToOriginalText: cosine(proposition.embedding, proposition.originalEmbedding)
     }
   }
@@ -676,13 +518,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
     if (changed.length === 0) return
     const vectors = await deps.embed(changed.map((p) => p.text))
     for (const [i, proposition] of changed.entries()) {
-      // `.at` rather than an index: a provider that returns fewer vectors
-      // than we asked for should leave the old one alone, not clear it.
+      // `.at`, so a short reply leaves the old vector alone rather than clearing it.
       const vector = vectors.at(i)
       if (!vector) continue
       proposition.embedding = vector
-      // Pinned the first time we manage to embed it, so later revisions
-      // always have something to be measured against.
+      // Pinned on first success, so later revisions have a baseline.
       if (proposition.originalEmbedding.length === 0) proposition.originalEmbedding = vector
     }
     options.onChange([...propositions])
@@ -697,8 +537,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     const stamp = new Date(now).toISOString()
     const changed: Proposition[] = []
 
-    // Sequential: each revision changes what the next one retrieves, and two
-    // candidates from the same batch are often about the same thing.
+    // Sequential: each revision changes what the next one retrieves.
     for (const [i, candidate] of candidates.entries()) {
       const neighbours = nearestPropositions(embeddings[i] ?? [], propositions, now)
       const raw = await deps.revise({
@@ -736,20 +575,9 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
-  /**
-   * The notes shown during one build, revised in directly.
-   *
-   * One model call, not the propose-then-revise pair the frame path uses, and
-   * no retrieval for anything the notes already name. A note raised against a
-   * proposition carries that proposition's id: it is the exact answer to "which
-   * belief is this about", and the only reason to drop it and search by
-   * embedding similarity instead would be not having it.
-   *
-   * Retrieval still runs for the notes that cite nothing. Those are the ones
-   * raised where the model was blank, and without neighbours the revision has
-   * no way to see it is about to write a near-duplicate of something already
-   * held.
-   */
+  /** One call, no propose step, and no retrieval for anything a note already
+   * names by id. Notes citing nothing still get neighbours, or the revision
+   * cannot see it is about to duplicate something already held. */
   async function observe(notes: FeedbackNote[]): Promise<void> {
     if (running || notes.length === 0) return
     running = true
@@ -787,13 +615,8 @@ export function createUserModel(options: UserModelOptions): UserModel {
       const changed = applyRevisions(asked, stamp)
       if (changed.length > 0) await reEmbed(changed)
 
-      // A second call, not a second half of the first. What changed and why
-      // this person wanted it are different questions from different evidence,
-      // and the why is answered better knowing the answer to the what: a belief
-      // that just died and a belief whose reason turned out narrower look the
-      // same in the notes and different in `changed`. Rationales are also
-      // written across the whole model, so folding them in would have meant
-      // handing the first call every proposition it has no business touching.
+      // A second call: the why is answered better knowing the what, and it is
+      // written across the whole model, which the first call must not see.
       stage('reasoning')
       const rawRationales = await deps.revise({
         system: RATIONALE_SYSTEM,
@@ -801,18 +624,15 @@ export function createUserModel(options: UserModelOptions): UserModel {
         prompt: rationaleUserPrompt(notes, changed.map(describeChange), propositions)
       })
       const askedRationales = readRequestedRationales(rawRationales)
-      // Counted rather than inspected: an entry missing an id, a rationale or
-      // its grounds is dropped before `applyRationales` can name it, and the
-      // difference is the only sign the prompt is not landing.
+      // Malformed entries are dropped before `applyRationales` can name them,
+      // and this count is the only sign the prompt is not landing.
       const malformed = parseJsonArray(rawRationales).length - askedRationales.length
       if (malformed > 0) {
         options.onRationaleDropped?.(`${malformed} entries missing an id, a rationale or grounds`)
       }
       const rationales = applyRationales(askedRationales, stamp)
 
-      // `reEmbed` saves as a side effect of embedding, and a rationale changes
-      // no wording, so a batch that only wrote rationales would otherwise be
-      // computed and thrown away.
+      // `reEmbed` is what normally saves, and a rationale changes no wording.
       if (rationales.length > 0) options.onChange([...propositions])
     } catch (error) {
       options.onError?.(error)
@@ -830,9 +650,8 @@ export function createUserModel(options: UserModelOptions): UserModel {
     observe,
 
     load(saved) {
-      // A file written before drift was tracked has no original to compare
-      // against; treat whatever it says now as where it started, so the note
-      // reads "never rewritten" rather than "unrecognisably changed".
+      // A file predating drift tracking has no original, so take where it is
+      // now as where it started.
       propositions = saved.map((p) => ({
         ...p,
         originalText: p.originalText || p.text,
@@ -859,8 +678,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
       if (meta?.note) notes.push(meta.note)
       if (buffer.length < batchSize) return
       if (running) {
-        // Drop the oldest instead of queueing: falling behind should cost
-        // history, not memory, and the recent frames are the relevant ones.
+        // Falling behind should cost history, not memory.
         buffer = buffer.slice(-batchSize)
         thumbnails = thumbnails.slice(-batchSize)
         notes = notes.slice(-batchSize)
@@ -869,22 +687,20 @@ export function createUserModel(options: UserModelOptions): UserModel {
 
       const batch = buffer
       const batchThumbnails = thumbnails
-      // The same note repeats across a batch — the agent does not start and
-      // stop between frames — so it is the distinct ones that carry meaning.
+      // The same note repeats across a batch, so only distinct ones carry meaning.
       const batchNotes = [...new Set(notes)]
       buffer = []
       thumbnails = []
       notes = []
 
-      // A batch only partly covered by thumbnails is not evidence of stillness
-      // — the frames we cannot see might be the ones that moved.
+      // Partly-covered batches are not evidence of stillness.
       const pixelChange =
         batchThumbnails.length === batch.length
           ? largestFrameChange(batchThumbnails, lastFrameReasonedAbout)
           : Number.POSITIVE_INFINITY
       if (pixelChange < IDLE_PIXEL_DIFFERENCE) {
-        // Deliberately does not advance `lastFrameReasonedAbout`: the comparison
-        // stays anchored to the last frame we actually reasoned about.
+        // Does not advance `lastFrameReasonedAbout`, so the comparison stays
+        // anchored to the last frame we spent a call on.
         options.onIdle?.(pixelChange)
         return
       }

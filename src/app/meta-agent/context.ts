@@ -2,8 +2,11 @@ import { colorToHex } from '@open-pencil/core/color'
 import type { SceneNode } from '@open-pencil/scene-graph'
 
 import { targetNodeIds } from '@/app/ai/chat/tool-targets'
+import { shownToAgent } from '@/app/ai/chat/user-model-propositions'
 import { getToolLogEntries } from '@/app/ai/tools'
 import type { EditorStore } from '@/app/editor/active-store'
+import type { Proposition } from '@/app/meta-agent/judge'
+import type { SavedProposition } from '@/app/user-model/pipeline'
 
 /** Deep enough to see cards inside a row; past that it is implementation. */
 const CANVAS_DEPTH = 3
@@ -66,16 +69,8 @@ export function actionsSoFar(store: EditorStore): string[] {
     .slice(-12)
 }
 
-/**
- * The nodes a change landed on, plus everything they sit inside.
- *
- * A mark names the most specific node the thinking was about, and for anything
- * said about a group that is the container — "the cards", "the row". The tool
- * call that follows then creates or edits a *child* of it, so matching ids
- * exactly retires nothing: measured across every run of this feature, not one
- * warning ever came off, and warnings about changes that had already landed sat
- * on the canvas until the turn ended.
- */
+/** The nodes a change landed on, plus their ancestors. A mark names a container
+ * and the tool call edits a child of it, so exact id matching retired nothing. */
 export function withAncestors(store: EditorStore, nodeIds: readonly string[]): string[] {
   const all = new Set<string>()
   for (const nodeId of nodeIds) {
@@ -86,4 +81,16 @@ export function withAncestors(store: EditorStore, nodeIds: readonly string[]): s
     }
   }
   return [...all]
+}
+
+/** `shownToAgent` comes from the same function the building side filters with,
+ * so the two can never disagree about what the agent was told. */
+export function propositionsForRun(saved: readonly SavedProposition[]): Proposition[] {
+  return saved.map((proposition) => ({
+    id: proposition.id,
+    text: proposition.text,
+    confidence: proposition.confidence,
+    rationale: proposition.rationale ?? null,
+    shownToAgent: shownToAgent(proposition.confidence)
+  }))
 }

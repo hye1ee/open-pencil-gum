@@ -45,6 +45,7 @@ import {
   resetRunSteps
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
+import { noteAgentPlan } from '@/app/meta-agent/events'
 import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
@@ -298,6 +299,9 @@ export function createToolLoopTransport({
           image,
           userModelPropositions
         )
+        // The meta-agent needs it to tell a decision the agent made from one the
+        // planning call made for it.
+        noteAgentPlan(plan)
         logPlan(plan)
       } else if (plan && (diff || userMessages.length > 0)) {
         // Only on an intervention. The agent runs for twenty-odd steps, so
@@ -309,6 +313,7 @@ export function createToolLoopTransport({
           { edits: diff, messages: userMessages },
           userModelPropositions
         )
+        noteAgentPlan(plan)
         logPlan(plan, true)
       }
 

@@ -62,7 +62,7 @@ const CURSOR_STRIP_GAP = 20
  */
 function badgeColor(mark: Mark): string {
   if (mark.relation === 'unknown') return 'hsl(220 9% 60%)'
-  const t = Math.min(1, Math.max(0, (Math.abs(mark.alignment) - 1) / 4))
+  const t = Math.min(1, Math.max(0, (Math.abs(mark.rating) - 1) / 4))
   return isWarning(mark)
     ? `hsl(${48 - 48 * t} ${85 + 6 * t}% ${56 - 12 * t}%)`
     : `hsl(${158 - 8 * t} ${52 + 20 * t}% ${58 - 16 * t}%)`

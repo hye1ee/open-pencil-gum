@@ -21,8 +21,30 @@ export interface UserModelProposition {
 }
 
 /** Stored 0–1 like every other confidence here, shown out of ten. */
-function outOfTen(confidence: number): string {
-  return (confidence * 9 + 1).toFixed(0)
+export function outOfTen(confidence: number): number {
+  return Math.round(confidence * 9 + 1)
+}
+
+/** Out of ten, so it is the number a person reads in the panel and the log. */
+const SHOWN_TO_AGENT_MIN = 5
+
+/**
+ * Whether the building agents are told this one.
+ *
+ * Handing over everything we believe made the agent follow all of it, which
+ * sounds like the point and costs the only way we had of finding out whether any
+ * of it was true. Nothing can confirm a belief the agent was told to hold: it
+ * complies, nobody objects, and the confidence rises on the strength of our own
+ * sentence. Below the line the agent decides for itself, and what it decides is
+ * evidence — it either reaches for the thing we believe, or it does not and the
+ * person gets a marker to disagree with.
+ *
+ * The cost is paid on those builds. A withheld belief that happens to be right
+ * produces a worse result until the person says so, and saying so is the
+ * strongest evidence this system takes. That trade is the whole design.
+ */
+export function shownToAgent(confidence: number): boolean {
+  return outOfTen(confidence) >= SHOWN_TO_AGENT_MIN
 }
 
 const HEADER = `# What we have observed about this person
@@ -59,8 +81,9 @@ What to do with it:
 export function renderUserModelPropositions(
   propositions: readonly UserModelProposition[]
 ): string | null {
-  if (propositions.length === 0) return null
-  const lines = propositions.map((proposition) => {
+  const shown = propositions.filter((proposition) => shownToAgent(proposition.confidence))
+  if (shown.length === 0) return null
+  const lines = shown.map((proposition) => {
     const head = `- ${proposition.text} (${outOfTen(proposition.confidence)}/10)`
     // Only where there is one. A "why: —" under every line is a column of
     // dashes, and this list goes into a prompt that is cached and re-sent.
