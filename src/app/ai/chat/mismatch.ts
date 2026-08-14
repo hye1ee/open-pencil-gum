@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 
+import { setAgentCursorFlash } from '@/app/ai/chat/agent-cursor'
 import { logMarkAnswer, logMarkHover, logMarkRelease } from '@/app/ai/chat/agent-log'
 import { agentTurn, pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore } from '@/app/editor/active-store'
@@ -51,6 +52,9 @@ export interface MarkAnswer {
 
 const state = reactive<{
   marks: Mark[]
+  /** Off the canvas but still shown, faintly, in the steering space: a mark
+   * whose change landed, or a question the person cleared. */
+  retired: Mark[]
   hovered: string | null
   intro: string[]
   /** The mark whose answer box is open, if any. */
@@ -61,6 +65,7 @@ const state = reactive<{
   askingToResume: boolean
 }>({
   marks: [],
+  retired: [],
   hovered: null,
   intro: [],
   composing: null,
@@ -82,29 +87,38 @@ export function hasWarnings(nodeIds?: readonly string[]): boolean {
 
 /** Not all of them: a glow on everything stops meaning anything. A mark flares
  * when raised and again on hover, and always while it is being answered, since
- * the canvas has to say which node the sentence is about. Unknowns never flare. */
+ * the canvas has to say which node the sentence is about. */
 function lit(mark: Mark): boolean {
   if (state.composing === mark.id) return true
   if (state.answers.some((answer) => answer.id === mark.id)) return true
-  if (mark.relation === 'unknown') return false
-  return state.hovered === mark.id || state.intro.includes(mark.id)
+  if (state.hovered === mark.id) return true
+  // Only on hover for a question: raising one is not worth a glow, but pointing
+  // at it in the steering space has to say which node it is about.
+  return mark.relation !== 'unknown' && state.intro.includes(mark.id)
 }
 
+/** Retired marks included: they are still pointed at from the steering space,
+ * and hovering one there has to reach the canvas like any other. */
 function sync(store: EditorStore): void {
-  const anchored = state.marks.filter(
-    (mark): mark is Mark & { nodeId: string } => mark.nodeId !== null && lit(mark)
-  )
+  const shown = [...state.marks, ...state.retired].filter(lit)
+  const anchored = shown.filter((mark): mark is Mark & { nodeId: string } => mark.nodeId !== null)
   // Signed: the renderer reads the sign for colour, the magnitude for loudness.
   store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, mark.rating]))
+  // A mark naming no node is about the design as a whole, and rides with the
+  // agent cursor. There is nothing to glow, so the cursor itself blinks.
+  setAgentCursorFlash(shown.some((mark) => mark.nodeId === null))
 }
 
 /** Not zero: the pointer slides off a 16px badge on the way to the next one, and
  * restarting there moves the thing being read out from under the reader. */
-const RESUME_DELAY_MS = 5000
+const RESUME_DELAY_MS = 3000
 
 let releaseTimer: ReturnType<typeof setTimeout> | null = null
 /** When the pointer landed, so the log can say how long the run was held. */
 let hoverStarted = 0
+/** The mark the pointer has left, still holding the run through the delay. The
+ * highlight comes down at once; only the hold waits. */
+let releasing: string | null = null
 
 function cancelRelease(): void {
   if (releaseTimer === null) return
@@ -114,9 +128,11 @@ function cancelRelease(): void {
 
 function letGo(store: EditorStore): void {
   cancelRelease()
-  if (state.hovered === null) return
-  logMarkRelease(state.hovered, Date.now() - hoverStarted)
+  const id = state.hovered ?? releasing
+  if (id === null) return
+  logMarkRelease(id, Date.now() - hoverStarted)
   state.hovered = null
+  releasing = null
   resumeTurn('marker')
   sync(store)
 }
@@ -167,6 +183,7 @@ function forgetUnread(): void {
 export function setHoveredMark(store: EditorStore, id: string | null): void {
   if (id !== null) {
     cancelRelease()
+    releasing = null
     if (state.hovered === id) return
     state.hovered = id
     hoverStarted = Date.now()
@@ -179,6 +196,11 @@ export function setHoveredMark(store: EditorStore, id: string | null): void {
     return
   }
   if (state.hovered === null || releaseTimer !== null) return
+  // The pointer has gone, so the glow and the note go with it. The hold stays on
+  // for the delay, which is about not restarting under a reader who looks back.
+  releasing = state.hovered
+  state.hovered = null
+  sync(store)
   releaseTimer = setTimeout(() => {
     releaseTimer = null
     letGo(store)
@@ -302,7 +324,7 @@ export function resumeAfterAnswers(): void {
  * so without this the hold is never released and the run stops for good. */
 function releaseIfHoveredGone(store: EditorStore): void {
   if (state.hovered === null) return
-  if (state.marks.some((mark) => mark.id === state.hovered)) return
+  if ([...state.marks, ...state.retired].some((mark) => mark.id === state.hovered)) return
   letGo(store)
 }
 
@@ -325,7 +347,12 @@ export function dismissMark(store: EditorStore, id: string): void {
   logMarkAnswer('removed', id)
   // Before the list shrinks: the hold is keyed on the id.
   nowRead(store, id)
-  if (state.composing === id) state.composing = null
+  // Closing the box from here has to let go of the same hold `cancelMarkFeedback`
+  // does, or the run stays paused on a mark that is gone.
+  if (state.composing === id) {
+    state.composing = null
+    if (state.answers.length === 0) resumeTurn('feedback')
+  }
   if (state.hovered === id) letGo(store)
   // Comes back through `setMarks` with this mark gone from it.
   onDismiss?.(id)
@@ -333,10 +360,13 @@ export function dismissMark(store: EditorStore, id: string): void {
 
 /** Marks on a vanished node are dropped here, not at the renderer: the badge
  * would float over empty canvas, and the meta-agent's listing can be a step old. */
-export function setMarks(store: EditorStore, marks: Mark[]): void {
+export function setMarks(store: EditorStore, marks: Mark[], retired: Mark[] = []): void {
   const known = new Set(state.marks.map((mark) => mark.id))
   const valid = marks.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
   state.marks = valid.slice(Math.max(0, valid.length - MAX_MARKS))
+  // Not capped: these are faint and the whole point of them is that a turn's
+  // judgments accumulate somewhere.
+  state.retired = retired.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
   releaseIfHoveredGone(store)
 
   // Taken back, or gone because its change landed: nothing left to read.
@@ -365,8 +395,9 @@ export function setMarks(store: EditorStore, marks: Mark[]): void {
 }
 
 export function clearMarks(store: EditorStore): void {
-  if (state.marks.length === 0) return
+  if (state.marks.length === 0 && state.retired.length === 0) return
   state.marks = []
+  state.retired = []
   state.intro = []
   forgetUnread()
   letGo(store)
@@ -378,11 +409,12 @@ export function clearMarks(store: EditorStore): void {
 
 /** Drop marks whose nodes are gone, so nothing glows around a deleted node. */
 export function pruneMarks(store: EditorStore): void {
-  const alive = state.marks.filter(
-    (mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId)
-  )
-  if (alive.length === state.marks.length) return
+  const onLiveNode = (mark: Mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId)
+  const alive = state.marks.filter(onLiveNode)
+  const aliveRetired = state.retired.filter(onLiveNode)
+  if (alive.length === state.marks.length && aliveRetired.length === state.retired.length) return
   state.marks = alive
+  state.retired = aliveRetired
   releaseIfHoveredGone(store)
   sync(store)
 }

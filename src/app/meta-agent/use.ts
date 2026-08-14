@@ -105,11 +105,11 @@ function ensureAgent(store: EditorStore): MetaAgent {
         )
       }
     },
-    onChanged: (marks, from) => {
+    onChanged: (marks, retired, from) => {
       // Length off the input this answer was made from: answers land out of
       // order, so a shared counter attributes them to the wrong thought.
       if (from) logJudgment(from.reasoning.length, marks.map(describeMark))
-      setMarks(store, marks)
+      setMarks(store, marks, retired)
     },
     onTools: (tools, input) => {
       for (const event of tools) logMarkTool(input.reasoning.length, describeTool(event))

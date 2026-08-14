@@ -164,8 +164,10 @@ export interface MetaAgentDeps {
 export interface MetaAgentOptions {
   deps: MetaAgentDeps
   /** `from` is the input the actions were read from, or null when nobody was
-   * asked — a turn starting, a mark retiring. A logger has to tell them apart. */
-  onChanged(marks: Mark[], from: JudgeInput | null): void
+   * asked — a turn starting, a mark retiring. A logger has to tell them apart.
+   * `retired` rides along because a mark that has left the canvas is still shown,
+   * faintly, where it stood. */
+  onChanged(marks: Mark[], retired: Mark[], from: JudgeInput | null): void
   onTools?(tools: AppliedMarkTool[], input: JudgeInput): void
   onRejectedTools?(tools: MarkToolCall[], input: JudgeInput): void
   onLifecycle?(event: string, marks: Mark[]): void
@@ -428,7 +430,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     if (rejected.length > 0) options.onRejectedTools?.(rejected, full)
     const applied = apply(actions)
     if (applied.length > 0) options.onTools?.(applied, full)
-    options.onChanged(marks, full)
+    options.onChanged(marks, retired, full)
   }
 
   function start(input: ConsiderInput): void {
@@ -467,7 +469,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       marks = []
       if (hadState) {
         options.onLifecycle?.('turn reset', marks)
-        options.onChanged(marks, null)
+        options.onChanged(marks, retired, null)
       }
     },
 
@@ -509,7 +511,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       const retiredIds = new Set(settledMarks.map((mark) => mark.id))
       marks = marks.filter((mark) => !retiredIds.has(mark.id))
       options.onLifecycle?.(`retired ${settledMarks.map((mark) => mark.id).join(', ')}`, marks)
-      options.onChanged(marks, null)
+      options.onChanged(marks, retired, null)
     },
 
     dismissMark(id) {
@@ -518,7 +520,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       retired = [...retired, mark]
       marks = marks.filter((candidate) => candidate.id !== id)
       options.onLifecycle?.(`dismissed ${id}`, marks)
-      options.onChanged(marks, null)
+      options.onChanged(marks, retired, null)
     },
 
     remapNode(oldId, newId) {
@@ -530,7 +532,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       }
       if (!changed) return
       options.onLifecycle?.(`remapped ${oldId} → ${newId}`, marks)
-      options.onChanged(marks, null)
+      options.onChanged(marks, retired, null)
     },
 
     get marks() {

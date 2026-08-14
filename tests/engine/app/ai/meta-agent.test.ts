@@ -79,7 +79,7 @@ function harness(): Harness {
       },
       judge: async () => queue.shift() ?? []
     },
-    onChanged: (marks, from) => {
+    onChanged: (marks, _retired, from) => {
       if (!from) return
       waiting.shift()?.(structuredClone(marks))
     }

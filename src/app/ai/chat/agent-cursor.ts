@@ -1,4 +1,4 @@
-import { AI_ACTIVE_COLOR } from '@open-pencil/core/constants'
+import { AI_ACTIVE_COLOR, AI_MISMATCH_PULSE_MS } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
@@ -45,6 +45,21 @@ const FOLLOW = 0.08 // easing toward the goal per frame
  * moment the person is reading.
  */
 const ENERGY_FOLLOW = 0.15
+
+/**
+ * How far the halo swells while a mark riding the cursor is being pointed at.
+ * Not the working signal — that is colour and nothing else. This runs only while
+ * someone is hovering the mark, and stands in for the glow a node would get.
+ */
+const FLASH_EMPHASIS = 0.6
+
+let flashing = false
+
+/** Marks naming no node hang off the cursor, so this is how the canvas answers
+ * a hover on one of them in the steering space. */
+export function setAgentCursorFlash(on: boolean): void {
+  flashing = on
+}
 
 interface AgentCursorState {
   nodeAnchor: Vector | null // node the agent is currently building (world space)
@@ -118,15 +133,19 @@ function frame(store: EditorStore, state: AgentCursorState): void {
     return
   }
 
-  // No `emphasis`: that is the halo and the size swell, and the colour says the
-  // same thing without moving anything.
+  // The same period as the glow on a marked node, so a hover reads as one beat
+  // wherever it lands. Zero while nothing is hovered, and then nothing moves.
+  const phase = (performance.now() % AI_MISMATCH_PULSE_MS) / AI_MISMATCH_PULSE_MS
+  const flash = flashing ? FLASH_EMPHASIS * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2)) : 0
+
   store.state.agentCursor = {
     name: 'Agent',
     // The blue the agent already uses to mark what it is touching, so "this is
     // the agent working" is one colour across the canvas.
     color: mixColor(RESTING_COLOR, AI_ACTIVE_COLOR, state.energy),
     x: state.cur.x,
-    y: state.cur.y
+    y: state.cur.y,
+    emphasis: flash
   }
   store.requestRepaint()
 
