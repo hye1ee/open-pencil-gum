@@ -24,6 +24,7 @@ import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
+import { recordSteeringStep } from '@/app/ai/chat/mismatch'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
 import { anthropicThinkingOptions, googleThinkingOptions } from '@/app/ai/chat/model-trace'
 import { runPlan, runPlanUpdate } from '@/app/ai/chat/plan'
@@ -46,7 +47,7 @@ import {
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { noteAgentPlan } from '@/app/meta-agent/events'
-import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
+import { runUserModel, startMetaAgentStep, startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -282,6 +283,7 @@ export function createToolLoopTransport({
         logTurnAbandoned('step skipped at step-boundary')
         return {}
       }
+      const runStep = currentRunSteps(store) + 1
       // Drain any user edits made since the last step (also paces the build).
       const diff = await intervention.prepareStep()
       // Messages the user sent mid-run, and the canvas PNG for overall layout.
@@ -317,10 +319,19 @@ export function createToolLoopTransport({
         logPlan(plan, true)
       }
 
+      // Preparing vision or a plan can take long enough for the person to
+      // reach a marker. Check again before exposing or starting the next step.
+      if (!(await awaitTurnResume('prepared step-boundary'))) {
+        logTurnAbandoned('step skipped after preparation')
+        return {}
+      }
+      recordSteeringStep(runStep)
+      startMetaAgentStep(runStep)
+
       logStep(
         // Ours, not the SDK's, which counts from zero again in the second call
         // of a restarted build and would report step 8 as step 0.
-        currentRunSteps(store),
+        runStep,
         [
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',

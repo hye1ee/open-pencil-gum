@@ -1,36 +1,41 @@
 import { reactive } from 'vue'
 
 import { setAgentCursorFlash } from '@/app/ai/chat/agent-cursor'
-import { logMarkAnswer, logMarkHover, logMarkRelease } from '@/app/ai/chat/agent-log'
+import { logMarkAnswer, logMarkHover, logMarkRelease, logSteering } from '@/app/ai/chat/agent-log'
 import { agentTurn, pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
-import { isWarning } from '@/app/meta-agent/judge'
-import type { Mark, MarkRating, MarkRelation } from '@/app/meta-agent/judge'
+import { OPENING_STEP, SPECTRUM, isUnrelated } from '@/app/meta-agent/judge'
+import type { Mark, SpectrumStep } from '@/app/meta-agent/judge'
 
 // Reactive UI mirror of the marks owned by the meta-agent.
 
 const MAX_MARKS = 8
+/** History has its own ceiling: an event per generate and per update. */
+const MAX_TIMELINE_EVENTS = 240
 const INTRO_MS = 2600
-const QUESTION_WINDOW_MS = 5000
-const WARNING_HOLD_CEILING_MS = 60_000
+/** Every mark now carries a spectrum to choose from, so they all wait the same
+ * time to be read. Any interaction releases it sooner. */
+const HOLD_MS = 20_000
 export interface MarkAnswer {
   id: string
+  lineageId: string
+  topic: string
   nodeId: string | null
   note: string
   quote: string
   citedId: string | null
-  relation: MarkRelation
   text: string
-  fromRating?: MarkRating
-  toRating?: MarkRating
+  fromPosition?: SpectrumStep
+  toPosition?: SpectrumStep
   steering?: boolean
 }
 
 export interface SteeringDraft {
   id: string
-  fromRating: MarkRating | null
-  toRating: MarkRating | null
+  source: 'canvas' | 'timeline'
+  fromPosition: SpectrumStep | null
+  toPosition: SpectrumStep | null
   text: string
 }
 
@@ -42,6 +47,9 @@ const state = reactive<{
   answers: MarkAnswer[]
   steeringDraft: SteeringDraft | null
   hidden: string[]
+  activeSteeringStep: number
+  steeringSteps: number[]
+  timelineMarks: Mark[]
 }>({
   marks: [],
   retired: [],
@@ -49,18 +57,52 @@ const state = reactive<{
   intro: [],
   answers: [],
   steeringDraft: null,
-  hidden: []
+  hidden: [],
+  activeSteeringStep: 1,
+  steeringSteps: [],
+  timelineMarks: []
 })
 
 export const mismatch = state
+/** `run` expires the entry: one that survives a whole turn was never going to
+ * match, and would later attach to whatever reused the name. */
+const pendingLineages = new Map<string, { lineageId: string; run: number }>()
+let steeringRun = 0
 
-/** Whether the whole canvas, or a particular preview, carries a warning. */
-export function hasWarnings(nodeIds?: readonly string[]): boolean {
-  if (!nodeIds) return state.marks.some(isWarning)
+/** Topic alone collides — it is a free string. The cited proposition is an id we
+ * issued, so the pair is far harder to hit by accident. */
+function lineageKey(topic: string, citedId: string | null, nodeId: string | null): string {
+  return `${topic.trim().toLocaleLowerCase()}|${citedId ?? nodeId ?? ''}`
+}
+
+export function resetSteeringSteps(): void {
+  state.steeringSteps = []
+  state.timelineMarks = []
+  state.activeSteeringStep = 1
+  steeringRun = 0
+  pendingLineages.clear()
+}
+
+export function beginSteeringRun(): void {
+  for (const [key, entry] of pendingLineages) {
+    if (entry.run < steeringRun) pendingLineages.delete(key)
+  }
+  steeringRun += 1
+}
+
+/** `step` already runs continuously across a restart. */
+export function recordSteeringStep(step: number): void {
+  const runStep = Math.max(1, step)
+  state.activeSteeringStep = runStep
+  if (!state.steeringSteps.includes(runStep)) state.steeringSteps.push(runStep)
+}
+
+/** Whether the whole canvas, or a particular preview, carries a mark. Nothing
+ * judges a decision any more, so any mark is a place the person may step in. */
+export function hasMarks(nodeIds?: readonly string[]): boolean {
+  if (!nodeIds) return state.marks.length > 0
   const targets = new Set(nodeIds)
-  return state.marks.some(
-    (mark) => isWarning(mark) && mark.nodeId !== null && targets.has(mark.nodeId)
-  )
+  return state.marks.some((mark) => mark.nodeId !== null && targets.has(mark.nodeId))
 }
 
 /** Not all of them: a glow on everything stops meaning anything. A mark flares
@@ -71,13 +113,22 @@ function lit(mark: Mark): boolean {
   if (state.hovered === mark.id) return true
   // Only on hover for a question: raising one is not worth a glow, but pointing
   // at it in the steering space has to say which node it is about.
-  return mark.relation !== 'unknown' && state.intro.includes(mark.id)
+  return !isUnrelated(mark) && state.intro.includes(mark.id)
+}
+
+/** Faint until the person moves it, brightest at either end: the glow says how
+ * much has been done to a decision, never whether it was any good. */
+function glowStrength(mark: Mark): number {
+  const step = steeringPosition(mark)
+  if (step === null) return 0.45
+  const middle = (SPECTRUM.length - 1) / 2
+  return 0.35 + 0.65 * (Math.abs(SPECTRUM.indexOf(step) - middle) / middle)
 }
 
 function sync(store: EditorStore): void {
   const shown = [...state.marks, ...state.retired].filter(lit)
   const anchored = shown.filter((mark): mark is Mark & { nodeId: string } => mark.nodeId !== null)
-  store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, mark.rating]))
+  store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, glowStrength(mark)]))
   setAgentCursorFlash(shown.some((mark) => mark.nodeId === null))
 }
 
@@ -109,20 +160,15 @@ function letGo(store: EditorStore): void {
 const unread = new Set<string>()
 const unreadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function worthHolding(mark: Mark): boolean {
-  return mark.rating < 0
-}
-
+/** Every new mark holds: all of them can be steered. */
 function holdForNewMark(store: EditorStore, mark: Mark): void {
-  if (!agentTurn.running || !worthHolding(mark)) return
+  if (!agentTurn.running) return
   unread.add(mark.id)
   pauseTurn('new-mark')
   unreadTimers.set(
     mark.id,
-    setTimeout(
-      () => nowRead(store, mark.id),
-      isWarning(mark) ? WARNING_HOLD_CEILING_MS : QUESTION_WINDOW_MS
-    )
+    // A warning waits to be read; the rest take their window.
+    setTimeout(() => nowRead(store, mark.id), HOLD_MS)
   )
 }
 
@@ -142,17 +188,21 @@ function forgetUnread(): void {
   resumeTurn('new-mark')
 }
 
-export function setHoveredMark(store: EditorStore, id: string | null): void {
+/** `hold` is off for a mark from an earlier step: it lights the canvas so the
+ * person can see which node the history is about, but there is nothing to
+ * answer there, so stopping the agent for it only stalls the run. */
+export function setHoveredMark(store: EditorStore, id: string | null, hold = true): void {
   if (id !== null) {
     cancelRelease()
     releasing = null
     if (state.hovered === id) return
     state.hovered = id
     hoverStarted = Date.now()
+    sync(store)
+    if (!hold) return
     nowRead(store, id)
     logMarkHover(id, agentTurn.running)
     if (agentTurn.running) pauseTurn('marker')
-    sync(store)
     return
   }
   if (state.hovered === null || releaseTimer !== null) return
@@ -166,47 +216,78 @@ export function setHoveredMark(store: EditorStore, id: string | null): void {
 }
 
 let onLock: ((id: string, locked: boolean) => void) | null = null
+let onFeedbackConfirmed: (() => void) | null = null
 
 export function setMarkLockObserver(handler: (id: string, locked: boolean) => void): void {
   onLock = handler
 }
 
-export function beginSteeringFeedback(store: EditorStore, id: string): void {
+export function setFeedbackConfirmedObserver(handler: () => void): void {
+  onFeedbackConfirmed = handler
+}
+
+/** Only one draft is open at a time, so reaching for a second mark has to settle
+ * the first. Dropping it instead sent the mark it was on back to the middle,
+ * which reads as the app undoing a move the person had just made and watched. */
+function settleOpenDraft(store: EditorStore, id: string): void {
+  const draft = state.steeringDraft
+  if (!draft || draft.id === id) return
+  if (draft.text.trim() === '') cancelSteeringFeedback(store)
+  else confirmSteeringFeedback(store)
+}
+
+/** Standing marks only: the agent is told earlier steps stand, so feedback on a
+ * finished one contradicts that. */
+export function beginSteeringFeedback(
+  store: EditorStore,
+  id: string,
+  source: SteeringDraft['source'] = 'canvas'
+): void {
+  settleOpenDraft(store, id)
   const mark = state.marks.find((candidate) => candidate.id === id)
-  if (!mark?.feedbackContents || mark.rating === 0) return
+  if (!mark?.feedbackContents) return
   const previous = state.answers.find((answer) => answer.id === id)
-  const fromRating = previous?.fromRating ?? (mark.rating as MarkRating)
-  const toRating = previous?.toRating ?? fromRating
+  const fromPosition = previous?.fromPosition ?? mark.position ?? OPENING_STEP
+  const toPosition = previous?.toPosition ?? fromPosition
   state.steeringDraft = {
     id,
-    fromRating,
-    toRating,
-    text: previous?.text ?? mark.feedbackContents[String(toRating) as `${MarkRating}`]
+    source,
+    fromPosition,
+    toPosition,
+    text: previous?.text ?? mark.feedbackContents[toPosition]
   }
   onLock?.(id, true)
   nowRead(store, id)
   pauseTurn('feedback')
 }
 
-export function moveSteeringFeedback(rating: MarkRating): void {
+export function moveSteeringFeedback(step: SpectrumStep): void {
   const draft = state.steeringDraft
   if (!draft) return
   const mark = state.marks.find((candidate) => candidate.id === draft.id)
-  const text = mark?.feedbackContents?.[String(rating) as `${MarkRating}`]
+  const text = mark?.feedbackContents?.[step]
   if (!text) return
-  draft.toRating = rating
+  draft.toPosition = step
   draft.text = text
 }
 
-export function beginUnknownFeedback(store: EditorStore, id: string): void {
+/** Standing marks only, for the same reason as `beginSteeringFeedback`. */
+export function beginUnknownFeedback(
+  store: EditorStore,
+  id: string,
+  source: SteeringDraft['source'] = 'canvas'
+): void {
+  settleOpenDraft(store, id)
   const mark = state.marks.find((candidate) => candidate.id === id)
-  if (mark?.relation !== 'unknown' || !mark.suggestedFeedback) return
+  if (!mark || !isUnrelated(mark)) return
   const previous = state.answers.find((answer) => answer.id === id)
   state.steeringDraft = {
     id,
-    fromRating: null,
-    toRating: null,
-    text: previous?.text ?? mark.suggestedFeedback
+    source,
+    fromPosition: null,
+    toPosition: null,
+    // Empty when there is no draft: the box opens for them to type.
+    text: previous?.text ?? mark.suggestedFeedback ?? ''
   }
   onLock?.(id, true)
   nowRead(store, id)
@@ -217,29 +298,57 @@ export function editSteeringFeedback(text: string): void {
   if (state.steeringDraft) state.steeringDraft.text = text
 }
 
+/** The mark as it stood when the box opened, or its last snapshot if it has
+ * since left the standing list. */
+function markForDraft(draft: SteeringDraft): Mark | undefined {
+  return (
+    state.marks.find((candidate) => candidate.id === draft.id) ??
+    state.timelineMarks.findLast((candidate) => candidate.id === draft.id)
+  )
+}
+
+function answerFromDraft(draft: SteeringDraft, mark: Mark | undefined): MarkAnswer {
+  const latest = mark?.notes.at(-1)
+  const moved =
+    draft.fromPosition !== null && draft.toPosition !== null
+      ? { fromPosition: draft.fromPosition, toPosition: draft.toPosition }
+      : {}
+  return {
+    id: draft.id,
+    lineageId: mark?.lineageId ?? draft.id,
+    topic: mark?.topic ?? 'Decision',
+    nodeId: mark?.nodeId ?? null,
+    note: latest?.text ?? '',
+    quote: latest?.evidence.fromReasoning ?? '',
+    citedId: latest?.evidence.fromUserModel ?? null,
+    text: draft.text.trim(),
+    steering: true,
+    ...moved
+  }
+}
+
 export function confirmSteeringFeedback(store: EditorStore): void {
   const draft = state.steeringDraft
   if (!draft || draft.text.trim() === '') return
-  const mark = state.marks.find((candidate) => candidate.id === draft.id)
-  const latest = mark?.notes.at(-1)
   state.answers = [
     ...state.answers.filter((answer) => answer.id !== draft.id),
-    {
-      id: draft.id,
-      nodeId: mark?.nodeId ?? null,
-      note: latest?.text ?? '',
-      quote: latest?.evidence.fromReasoning ?? '',
-      citedId: latest?.evidence.fromUserModel ?? null,
-      relation: mark?.relation ?? 'unknown',
-      text: draft.text.trim(),
-      steering: true,
-      ...(draft.fromRating !== null && draft.toRating !== null
-        ? { fromRating: draft.fromRating, toRating: draft.toRating }
-        : {})
-    }
+    answerFromDraft(draft, markForDraft(draft))
   ]
+  onFeedbackConfirmed?.()
+  // Onto the standing mark as well as the timeline copy. Written only on the
+  // copy it lasted until the next judgment, which rebuilds every copy from the
+  // standing mark — so answering one mark sent all the others back to the middle.
+  if (draft.toPosition !== null) {
+    const standing = state.marks.find((candidate) => candidate.id === draft.id)
+    if (standing) standing.position = draft.toPosition
+    const historical = state.timelineMarks.findLast((candidate) => candidate.id === draft.id)
+    if (historical) historical.position = draft.toPosition
+  }
   state.steeringDraft = null
   logMarkAnswer('answered', draft.id)
+  if (draft.fromPosition !== null && draft.toPosition !== null) {
+    logSteering(draft.id, draft.fromPosition, draft.toPosition, draft.text.trim())
+  }
   sync(store)
 }
 
@@ -252,10 +361,12 @@ export function cancelSteeringFeedback(store: EditorStore): void {
   sync(store)
 }
 
-export function steeringRating(mark: Mark): number {
+/** Where the mark reads as sitting right now: the open draft first, then a
+ * settled answer, then wherever the mark itself stands. */
+export function steeringPosition(mark: Mark): SpectrumStep | null {
   const draft = state.steeringDraft?.id === mark.id ? state.steeringDraft : null
-  if (draft?.toRating !== null && draft?.toRating !== undefined) return draft.toRating
-  return state.answers.find((answer) => answer.id === mark.id)?.toRating ?? mark.rating
+  if (draft?.toPosition != null) return draft.toPosition
+  return state.answers.find((answer) => answer.id === mark.id)?.toPosition ?? mark.position
 }
 
 /** The hold stays on: the parked step already holds its tool call, so letting go
@@ -263,6 +374,12 @@ export function steeringRating(mark: Mark): number {
  * then calls `releaseAnswerHold`. */
 export function takeAnswers(store: EditorStore): MarkAnswer[] {
   const answers = state.answers
+  for (const answer of answers) {
+    pendingLineages.set(lineageKey(answer.topic, answer.citedId, answer.nodeId), {
+      lineageId: answer.lineageId,
+      run: steeringRun
+    })
+  }
   state.answers = []
   state.steeringDraft = null
   sync(store)
@@ -271,6 +388,13 @@ export function takeAnswers(store: EditorStore): MarkAnswer[] {
 
 export function releaseAnswerHold(): void {
   resumeTurn('feedback')
+}
+
+export function resetMarkInteraction(store: EditorStore): void {
+  forgetUnread()
+  letGo(store)
+  state.steeringDraft = null
+  sync(store)
 }
 
 // Bridges the canvas overlay to the chat panel.
@@ -301,10 +425,10 @@ export function setMarkDismissedObserver(handler: (id: string) => void): void {
   onDismiss = handler
 }
 
-// Only unknown marks can be dismissed explicitly.
+// Only marks no proposition covers can be dismissed explicitly.
 export function acceptAndHideMark(store: EditorStore, id: string): void {
   const mark = state.marks.find((candidate) => candidate.id === id)
-  if (mark?.relation !== 'unknown') return
+  if (!mark || !isUnrelated(mark)) return
   state.hidden = [...state.hidden, id]
   onLock?.(id, true)
   logMarkAnswer('removed', id)
@@ -313,20 +437,61 @@ export function acceptAndHideMark(store: EditorStore, id: string): void {
   onDismiss?.(id)
 }
 
+/** Slim: feedback opens from standing marks only, so the five instructions and
+ * the older notes would pile up on every event for nothing. `position` stays —
+ * it is the seat on the scale and also what says whether there is one. */
+function timelineSnapshot(mark: Mark): Mark {
+  const latest = mark.notes.at(-1)
+  const snapshot = structuredClone({
+    ...mark,
+    // Where the person has it, not where the meta-agent opened it: an answer
+    // taken but not yet folded in lives only in `answers`.
+    position: steeringPosition(mark),
+    notes: latest ? [latest] : [],
+    feedbackContents: null,
+    suggestedFeedback: null
+  })
+  snapshot.lineageId ||= snapshot.id
+  return snapshot
+}
+
 /** Marks on a vanished node are dropped here, not at the renderer: the badge
  * would float over empty canvas, and the meta-agent's listing can be a step old. */
 export function setMarks(store: EditorStore, marks: Mark[], retired: Mark[] = []): void {
   const known = new Set(state.marks.map((mark) => mark.id))
+  for (const mark of marks) {
+    mark.lineageId ||= mark.id
+    if (known.has(mark.id)) continue
+    const key = lineageKey(
+      mark.topic,
+      mark.notes.at(-1)?.evidence.fromUserModel ?? null,
+      mark.nodeId
+    )
+    const entry = pendingLineages.get(key)
+    if (!entry) continue
+    mark.lineageId = entry.lineageId
+    pendingLineages.delete(key)
+  }
   const valid = marks.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
   state.marks = valid.slice(Math.max(0, valid.length - MAX_MARKS))
   state.retired = retired.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
+  const eventKey = (mark: Mark) => `${mark.id}:${mark.raisedInStep}:${mark.raisedOrder}`
+  const history = new Map(state.timelineMarks.map((mark) => [eventKey(mark), mark]))
+  for (const mark of [...marks, ...retired]) {
+    const snapshot = timelineSnapshot(mark)
+    snapshot.raisedInStep = Math.max(1, mark.changedInStep)
+    snapshot.raisedOrder = mark.changedOrder
+    history.set(eventKey(snapshot), snapshot)
+  }
+  const events = [...history.values()]
+  state.timelineMarks = events.slice(Math.max(0, events.length - MAX_TIMELINE_EVENTS))
   releaseIfHoveredGone(store)
 
   const standing = new Map(state.marks.map((mark) => [mark.id, mark]))
   const gone: string[] = []
   for (const id of unread) {
     const mark = standing.get(id)
-    if (mark === undefined || !worthHolding(mark)) gone.push(id)
+    if (mark === undefined) gone.push(id)
   }
   // Collected first: `nowRead` deletes from the set being iterated.
   for (const id of gone) nowRead(store, id)
@@ -334,7 +499,7 @@ export function setMarks(store: EditorStore, marks: Mark[], retired: Mark[] = []
   for (const mark of state.marks) {
     if (known.has(mark.id)) continue
     holdForNewMark(store, mark)
-    if (!isWarning(mark)) continue
+    if (isUnrelated(mark)) continue
     state.intro = [...state.intro, mark.id]
     setTimeout(() => {
       state.intro = state.intro.filter((id) => id !== mark.id)
@@ -372,8 +537,8 @@ export function pruneMarks(store: EditorStore): void {
 
 // Dev handle: drives the badges, the glow and the answer box with no model call.
 //
-//   __mismatch.set([{ id: 'm1', nodeId: __mismatch.pageNodes()[0], rating: -4,
-//                     relation: 'conflict', raisedInStep: 0,
+//   __mismatch.set([{ id: 'm1', nodeId: __mismatch.pageNodes()[0], raisedInStep: 0,
+//                     position: 'halfway', feedbackContents: { as_reasoned: '…', … },
 //                     notes: [{ text: 'wants a shadow · you use thin borders',
 //                               evidence: { fromUserModel: 'flat',
 //                                           fromReasoning: 'a soft drop shadow' } }] }])

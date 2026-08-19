@@ -236,6 +236,35 @@ export function logMarkAnswer(
 }
 
 /**
+ * Where they left the marker and the words that went out. Both halves matter and
+ * neither is recoverable later: the step is overwritten by the next event on the
+ * mark, and the text is the agent's instruction, not anything the model file
+ * keeps. Staying at the opening step is printed too — choosing the middle and
+ * never touching it are different answers, and they look the same otherwise.
+ */
+export function logSteering(id: string, from: string, to: string, text: string): void {
+  const move = from === to ? `left at ${to}` : `${from} → ${to}`
+  writeBlock('ANSWER', `steered   ${id} ${move}\n${text}`)
+}
+
+/** The five instructions a related mark arrived with, in scale order. Written
+ * once when the mark is raised: this is the whole of what the person will be
+ * offered, and a run only shows whichever one they happen to drag to. */
+export function logMarkInstructions(id: string, steps: Array<[string, string]>): void {
+  writeBlock(
+    'META-FEED',
+    `${id}\n${steps.map(([step, text]) => `${step.padEnd(18)} ${text}`).join('\n')}`
+  )
+}
+
+/** One note exactly as the user model is about to read it. The label that used
+ * to say which way it pointed is gone, so this is where to see whether the two
+ * quotes were enough to work it out. */
+export function logFeedbackNote(detail: string): void {
+  writeBlock('MODEL-IN', detail)
+}
+
+/**
  * What the user model did with what it was told.
  *
  * Its own state lives in a file that is overwritten in place, so without this

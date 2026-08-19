@@ -1,57 +1,130 @@
-import type { Vector } from '@open-pencil/scene-graph/primitives'
+import { SPECTRUM, isUnrelated } from '@/app/meta-agent/judge'
+import type { Mark, SpectrumStep } from '@/app/meta-agent/judge'
 
-import { MAX_RATING } from '@/app/meta-agent/judge'
-import type { Mark } from '@/app/meta-agent/judge'
+export const TIMELINE_HEIGHT = 180
+export const TIMELINE_PADDING_X = 112
+export const TIMELINE_EVENT_GAP = 92
+export const TIMELINE_EMPTY_STEP_WIDTH = 64
+export const TIMELINE_STEP_WIDTH = 180
 
-/**
- * Where a mark sits in the steering space. The rating picks the ring, and the
- * angle is shared out evenly among whatever else is on that ring.
- */
-
-/** Ten rings: following 5…1 innermost, then against 1…5. */
-export const RING_COUNT = MAX_RATING * 2
-
-export interface PlacedMark {
+export interface TimelinePoint {
   mark: Mark
-  /** 0 innermost. Matches the index into `RING_COLORS`. */
-  ring: number
-  /** Radians, 0 at twelve o'clock and growing clockwise. */
-  angle: number
+  x: number
+  y: number
+  unknown: boolean
 }
 
-/** Off the scale — an unknown has no ring, and neither has a withdrawn mark. */
-export function ringIndexFor(rating: number): number | null {
-  if (rating === 0 || Math.abs(rating) > MAX_RATING) return null
-  return rating > 0 ? MAX_RATING - rating : MAX_RATING - 1 - rating
+export interface TimelineRegion {
+  key: string
+  kind: 'rated' | 'unknown'
+  start: number
+  end: number
 }
 
+export interface TimelineStep {
+  number: number
+  label: string
+  start: number
+  end: number
+}
 
-function hash(id: string): number {
-  let value = 0x81_1c_9d_c5
-  for (let i = 0; i < id.length; i++) {
-    value = Math.imul(value ^ id.charCodeAt(i), 0x01_00_01_93)
+export interface TimelineLayout {
+  points: TimelinePoint[]
+  regions: TimelineRegion[]
+  steps: TimelineStep[]
+  width: number
+}
+
+/** Five even rows, our end on top. A mark with no spectrum has no row of its
+ * own and sits on the middle line. */
+export function positionY(step: SpectrumStep | null, height = TIMELINE_HEIGHT): number {
+  const middle = height / 2
+  if (step === null) return middle
+  const index = SPECTRUM.indexOf(step)
+  const top = 30
+  const bottom = height - 30
+  return bottom - (index / (SPECTRUM.length - 1)) * (bottom - top)
+}
+
+export function layoutTimeline(
+  marks: readonly Mark[],
+  recordedSteps: readonly number[] = [],
+  height = TIMELINE_HEIGHT
+): TimelineLayout {
+  const ordered = [...marks].sort(
+    (a, b) => a.raisedInStep - b.raisedInStep || a.raisedOrder - b.raisedOrder
+  )
+  const stepNumbers = [
+    ...new Set([...recordedSteps, ...ordered.map((mark) => mark.raisedInStep)])
+  ].sort((a, b) => a - b)
+  const stepEntries: Array<{ number: number; label: string; gap: boolean }> = []
+  for (const number of stepNumbers) {
+    const previous = stepEntries.at(-1)
+    if (previous && number - previous.number > 1) {
+      const first = previous.number + 1
+      const last = number - 1
+      stepEntries.push({
+        number: first,
+        label: first === last ? `Step ${first}` : `Steps ${first}–${last}`,
+        gap: true
+      })
+    }
+    stepEntries.push({ number, label: `Step ${number}`, gap: false })
   }
-  value ^= value >>> 16
-  value = Math.imul(value, 0x85_eb_ca_6b)
-  value ^= value >>> 13
-  value = Math.imul(value, 0xc2_b2_ae_35)
-  value ^= value >>> 16
-  return (value >>> 0) / 0x1_00_00_00_00
-}
-
-
-export function placeMarks(marks: readonly Mark[]): PlacedMark[] {
-  const placed: PlacedMark[] = []
-  for (const mark of marks) {
-    const ring = ringIndexFor(mark.rating)
-    if (ring === null) continue
-    placed.push({ mark, ring, angle: hash(mark.id) * Math.PI * 2 })
+  const padding = TIMELINE_PADDING_X
+  let cursor = padding
+  /** A skipped range is a thin marker, an empty step is narrow, and a step with
+   * marks widens to fit them. */
+  function widthOf(count: number, gap: boolean): number {
+    if (gap) return 56
+    if (count === 0) return TIMELINE_EMPTY_STEP_WIDTH
+    return Math.max(TIMELINE_STEP_WIDTH, TIMELINE_STEP_WIDTH + (count - 1) * TIMELINE_EVENT_GAP)
   }
-  return placed
+
+  const steps = stepEntries.map(({ number, label, gap }) => {
+    const count = ordered.filter((mark) => mark.raisedInStep === number).length
+    const stepWidth = widthOf(count, gap)
+    const step = { number, label, start: cursor, end: cursor + stepWidth }
+    cursor = step.end
+    return step
+  })
+  const points = ordered.map((mark) => {
+    const step = steps.find((candidate) => candidate.number === mark.raisedInStep)
+    const peers = ordered.filter((candidate) => candidate.raisedInStep === mark.raisedInStep)
+    const peerIndex = peers.indexOf(mark)
+    const start = step?.start ?? padding
+    const x = start + TIMELINE_STEP_WIDTH / 2 + peerIndex * TIMELINE_EVENT_GAP
+    return { mark, x, y: positionY(mark.position, height), unknown: isUnrelated(mark) }
+  })
+
+  const width = Math.max(360, cursor + padding)
+  // Only where marks landed. A step the meta-agent found nothing in stays empty,
+  // and so do the margins — the band is a record of what happened, not a track
+  // laid ahead of the run.
+  const regions = points.map((point) => {
+    const step = steps.find((candidate) => candidate.number === point.mark.raisedInStep)
+    const peers = points.filter(
+      (candidate) => candidate.mark.raisedInStep === point.mark.raisedInStep
+    )
+    const index = peers.indexOf(point)
+    return {
+      key: `${point.mark.id}:${point.mark.raisedInStep}:${point.mark.raisedOrder}`,
+      kind: point.unknown ? ('unknown' as const) : ('rated' as const),
+      start: index === 0 ? (step?.start ?? 0) : (peers[index - 1].x + point.x) / 2,
+      end: index === peers.length - 1 ? (step?.end ?? width) : (point.x + peers[index + 1].x) / 2
+    }
+  })
+  return { points, regions, steps, width }
 }
 
-/** Screen offset from the centre. Twelve o'clock is −y, and the angle turns
- * clockwise from there. */
-export function offsetFor(placed: PlacedMark, radius: number): Vector {
-  return { x: Math.sin(placed.angle) * radius, y: -Math.cos(placed.angle) * radius }
+export function curvePath(points: readonly TimelinePoint[]): string {
+  if (points.length === 0) return ''
+  let path = `M ${points[0].x} ${points[0].y}`
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1]
+    const point = points[index]
+    const middle = (previous.x + point.x) / 2
+    path += ` C ${middle} ${previous.y}, ${middle} ${point.y}, ${point.x} ${point.y}`
+  }
+  return path
 }

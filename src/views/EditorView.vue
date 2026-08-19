@@ -25,6 +25,7 @@ import LayersPanel from '@/components/LayersPanel.vue'
 import MobileDrawer from '@/components/MobileDrawer.vue'
 import MobileHud from '@/components/MobileHud/MobileHud.vue'
 import PropertiesPanel from '@/components/PropertiesPanel.vue'
+import ReasoningInteractionPanel from '@/components/ReasoningInteractionPanel.vue'
 import SafariBanner from '@/components/SafariBanner.vue'
 import TabBar from '@/components/TabBar.vue'
 import Tip from '@/components/ui/Tip.vue'
@@ -142,10 +143,31 @@ onUnmounted(() => {
         <div class="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2" />
       </SplitterResizeHandle>
       <SplitterPanel id="canvas" :default-size="initialEditorLayout[1]" :min-size="30" class="flex">
-        <div class="relative flex min-w-0 flex-1">
-          <EditorCanvas />
-          <Toolbar />
-        </div>
+        <SplitterGroup
+          direction="vertical"
+          auto-save-id="canvas-steering-layout"
+          class="min-w-0 flex-1"
+        >
+          <SplitterPanel :default-size="72" :min-size="35" class="flex">
+            <div class="relative flex min-w-0 flex-1">
+              <EditorCanvas />
+              <Toolbar />
+            </div>
+          </SplitterPanel>
+          <SplitterResizeHandle class="group relative z-10 -my-1 h-2 cursor-row-resize">
+            <div
+              class="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border"
+            />
+          </SplitterResizeHandle>
+          <SplitterPanel
+            :default-size="28"
+            :min-size="14"
+            :max-size="50"
+            class="flex flex-col overflow-hidden"
+          >
+            <ReasoningInteractionPanel />
+          </SplitterPanel>
+        </SplitterGroup>
       </SplitterPanel>
       <SplitterResizeHandle class="group relative z-10 -mx-1 w-2 cursor-col-resize">
         <div class="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2" />

@@ -8,9 +8,18 @@ import {
   logJudgeRejected,
   logJudgeSkip,
   logJudgment,
+  logMarkInstructions,
   logMarkTool
 } from '@/app/ai/chat/agent-log'
-import { setMarkDismissedObserver, setMarkLockObserver, setMarks } from '@/app/ai/chat/mismatch'
+import {
+  beginSteeringRun,
+  resetSteeringSteps,
+  setMarkDismissedObserver,
+  resetMarkInteraction,
+  setFeedbackConfirmedObserver,
+  setMarkLockObserver,
+  setMarks
+} from '@/app/ai/chat/mismatch'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import {
@@ -32,8 +41,9 @@ import {
   setMetaAgentNodeReplacedObserver
 } from '@/app/meta-agent/events'
 import {
+  SPECTRUM,
   createMetaAgent,
-  signed,
+  isUnrelated,
   type AppliedMarkTool,
   type JudgeInput,
   type Mark,
@@ -75,14 +85,15 @@ function describeMark(mark: Mark): string {
         `"${note.evidence.fromReasoning}"`
     )
     .join(' | ')
-  return `  ${mark.id}  ${mark.relation}  ${where}  ${signed(mark.rating)}  ${notes}`
+  const seat = isUnrelated(mark) ? 'unrelated' : (mark.position ?? '')
+  return `  ${mark.id}  ${seat}  ${where}  ${notes}`
 }
 
 function describeTool(event: AppliedMarkTool): string {
   const revived = event.toolName === 'update_mark' && event.revived ? ' revived' : ''
   return (
     `${event.toolName} ${event.id}${revived} → ${event.nodeId ?? 'whole design'} ` +
-    `${event.relation} ${signed(event.rating)}`
+    (event.position ?? 'unrelated')
   )
 }
 
@@ -113,12 +124,21 @@ function ensureAgent(store: EditorStore): MetaAgent {
       setMarks(store, marks, retired)
     },
     onTools: (tools, input) => {
-      for (const event of tools) logMarkTool(input.reasoning.length, describeTool(event))
+      for (const event of tools) {
+        logMarkTool(input.reasoning.length, describeTool(event))
+        const contents = event.feedbackContents
+        if (contents) {
+          logMarkInstructions(
+            event.id,
+            SPECTRUM.map((step) => [step, contents[step]])
+          )
+        }
+      }
     },
     onRejectedTools: (tools, input) => {
       logJudgeRejected(
         input.reasoning.length,
-        tools.map((call) => call.toolName)
+        tools.map(({ call, reason }) => `${call.toolName}: ${reason}`)
       )
     },
     onLifecycle: (event) => {
@@ -150,9 +170,14 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   if (userText !== request) {
     settled = []
     forgetReportedMarks()
+    resetSteeringSteps()
   }
+  beginSteeringRun()
   request = userText
   noteAgentPlan(null)
+  const turnAgent = ensureAgent(store)
+  turnAgent.beginTurn()
+  resetMarkInteraction(store)
   // A restart after a marker answer has a revision in flight; reading early
   // would judge the redone step against the belief just corrected.
   await awaitUserModelSettled()
@@ -161,7 +186,6 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   runPropositions = propositionsForRun(await loadSavedUserModel())
   const withheld = runPropositions.filter((p) => !p.shownToAgent).length
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
-  ensureAgent(store).beginTurn()
 }
 
 // Hung off the preview rather than the tool call: the preview is the window
@@ -183,16 +207,21 @@ setMarkLockObserver((id, locked) => {
   else agent?.unlockMark(id)
 })
 
+setFeedbackConfirmedObserver(() => {
+  agent?.suspend()
+})
+
 // Registered here because the tap must not import anything that builds a model.
 setReasoningObserver({
-  start: () => {
-    agent?.beginStep()
-  },
   chunk: (reasoning) => {
     considerReasoning(reasoning)
   },
   settled: () => agent?.settled() ?? Promise.resolve()
 })
+
+export function startMetaAgentStep(step: number): void {
+  agent?.beginStep(step)
+}
 
 /** Standing marks plus retired ones. Not the marks the meta-agent withdrew,
  * which were never the person's to accept. */

@@ -139,31 +139,39 @@ export const FEEDBACK_SYSTEM = `TASK
 
 Update a user model from the feedback a person just gave. A user model is a set of propositions about one person, built up from watching them work on a design canvas with an AI agent. Each proposition says something they prefer, and carries a confidence.
 
-The evidence this time is not a screenshot. While the agent was working, notes appeared beside the canvas. Each note said what the agent was about to do next. A note either rested on one of our propositions — we thought the agent was about to go against something we believe about this person — or rested on nothing, because no proposition covered what the agent was doing. The person typed an answer to some notes and left the rest alone.
+The evidence this time is not a screenshot. While the agent was working, notes appeared beside the canvas. Each note said what the agent was about to do next, and quoted the agent's own sentence it was drawn from. A note either rested on one of our propositions, or rested on nothing because no proposition covered what the agent was doing.
 
-You are given, for each note: the words they read on screen, the agent's own sentence those words came from, which proposition it rested on (or none), and their answer (or that they left it alone).
+Each note that rested on a proposition carried a marker on a scale running from doing what the agent reasoned to doing what that proposition says:
+
+  as_reasoned  ·  mostly_reasoned  ·  halfway  ·  mostly_user_model  ·  as_user_model
+
+Every marker opened at \`halfway\`. The person could drag it and approve or rewrite the instruction waiting at that step, or leave it and let the agent carry on.
+
+You are given, for each note: the words they read on screen, the agent's own sentence those words came from, which proposition it rested on (or none), where they moved the marker (or that they did not), and their reply (or that they left it alone).
 
 You change confidences and write new propositions. You do not need to work out which proposition a note was about — the note says so.
 
 WHAT EACH NOTE TELLS YOU
 
-Each note says which way it pointed, and that decides what happened to the proposition it rested on. The same silence means opposite things on the two kinds.
+Nothing has labelled these notes for you. Whether the agent was about to break the cited proposition or was already doing what it predicts is something you read off the two sentences you are given: the proposition, and the agent's quoted words beside it. Do that first, because the same silence means opposite things on the two.
 
-A note that said the agent was going AGAINST a proposition:
+They left the marker alone and said nothing. The agent carried out what it reasoned and they were content with the result. So:
 
-- They answered it. Their words are the strongest evidence this system ever gets, because they said it rather than you reading it off a picture. Read which side they took, because both happen and they move the proposition opposite ways:
-    - They told the agent to do the thing the proposition says. They have just defended it in their own words, against a case where the agent was about to do otherwise. RAISE its confidence, and by more than silence would have.
-    - They told the agent to carry on, or asked for something different again. The proposition did not survive their own words. LOWER it, and write down what they asked for instead.
-- They left it alone. The agent went ahead and they were content with the result. The proposition the note rested on is the thing that just turned out to be wrong. Do not raise its confidence: it is the sentence they watched the agent break and did not object to.
+- If the agent's words went AGAINST the cited proposition, that proposition is the sentence they watched the agent break and did not object to. LOWER it, and write down what they turned out to accept instead.
+- If the agent's words were already DOING what the proposition predicts, the proposition just held up. RAISE it.
 
-A note that said the agent was FOLLOWING a proposition:
+They moved the marker and approved or rewrote the instruction there. The movement itself is evidence: moving toward \`as_user_model\` supports the cited proposition; moving toward \`as_reasoned\` weighs against it. Do not lower confidence merely because the marker moved farther from where it opened.
 
-- They left it alone. The agent did the thing that proposition predicts, and they were content with the result. That is the proposition holding up, so raise its confidence.
-- They answered it. Read what they said. Someone who bothers to reply to a note telling them the agent is doing what they want is usually correcting it — they are saying this is not actually what they want, or not here. That lowers the proposition, and it is much stronger evidence than the silence would have been.
+The approved instruction is stronger evidence than the position. Read what it actually says before revising anything. If it explicitly repeats or strengthens the proposition, raise confidence. If it supports the proposition only in a narrower case, reconsider both confidence and whether a narrower new proposition is warranted. If it contradicts the proposition, decide whether to lower it, add what the person accepted instead, or both. Do not delete an old proposition merely because one reply conflicts with it.
 
-A note that rested on nothing was raised where the model had nothing to say. Whatever they did with it is the first thing we know about that subject.
+- The instruction they approved does what the proposition says. They chose it in their own words, in a case where they could have chosen otherwise. RAISE it, and by more than silence would have.
+- The instruction they approved goes against it. That is their own words against the belief, which is the strongest evidence there is. LOWER it, and write down what they asked for instead.
 
-When the person moved a marker, the destination and their approved reply are one piece of explicit feedback. Read the reply for what it actually says. It may defend or weaken an existing proposition, narrow its scope, reveal a new preference, or support several changes at once. The marker movement says how strongly this build should follow the current reasoning versus the cited proposition; it does not by itself say that the proposition is universally true or false.
+Whichever way it moved, the destination and their approved reply are one piece of explicit feedback — the strongest evidence this system ever gets, because they said it rather than you reading it off a picture. Read the reply for what it actually says. It may defend or weaken an existing proposition, narrow its scope, reveal a new preference, or support several changes at once.
+
+Most of these replies are an instruction for this build and say nothing about the person. A reply that tells the agent what to do here without disputing the cited proposition has not broken it: leave its confidence where it is, and write the narrower sentence saying where the belief did not decide the case. A reply that disputes the proposition itself is their own words against it, and lowers it.
+
+A note that rested on nothing was raised where the model had nothing to say. It carried a single suggested instruction rather than a scale. Whatever they did with it is the first thing we know about that subject.
 
 The person reviews every mark before continuing. Leaving one alone is deliberate agreement, not a sign that they may have missed it. Two separate rules follow, and they are about different propositions:
 
@@ -270,18 +278,30 @@ export interface FeedbackNoteView {
   note: string
   quote: string
   citedId: string | null
-  relation: 'conflict' | 'alignment' | 'unknown'
   reply: string | null
-  fromRating?: number | null
-  toRating?: number | null
+  fromPosition?: string | null
+  toPosition?: string | null
 }
 
-/** Spelled out, not labelled: which way the note pointed decides what silence
- * about it means. */
-const WHAT_THE_NOTE_SAID: Record<FeedbackNoteView['relation'], string> = {
-  conflict: 'the note said the agent was about to go AGAINST that proposition',
-  alignment: 'the note said the agent was FOLLOWING that proposition',
-  unknown: 'the note said no proposition covered what the agent was deciding'
+function renderMove(note: FeedbackNoteView): string {
+  if (note.fromPosition == null || note.toPosition == null) return ''
+  if (note.fromPosition === note.toPosition) return `\n  they left the marker at ${note.toPosition}`
+  const positions = [
+    'as_reasoned',
+    'mostly_reasoned',
+    'halfway',
+    'mostly_user_model',
+    'as_user_model'
+  ]
+  const from = positions.indexOf(note.fromPosition)
+  const to = positions.indexOf(note.toPosition)
+  const direction =
+    from < 0 || to < 0 || from === to
+      ? ''
+      : to > from
+        ? '\n  movement meaning: toward the cited proposition'
+        : '\n  movement meaning: toward the agent reasoning'
+  return `\n  they moved the marker from ${note.fromPosition} to ${note.toPosition}${direction}`
 }
 
 function renderNote(note: FeedbackNoteView, index: number): string {
@@ -291,14 +311,12 @@ function renderNote(note: FeedbackNoteView, index: number): string {
       : `  rested on: ${note.citedId}`
   const answer =
     note.reply === null ? '  they said nothing and let it stand' : `  they replied: "${note.reply}"`
-  const moved =
-    note.fromRating == null || note.toRating == null
-      ? ''
-      : `\n  they moved the marker from ${note.fromRating} to ${note.toRating}`
+  // Both ends printed, since staying at `halfway` is itself one of the readings.
+  const moved = renderMove(note)
   return (
     `${index + 1}. shown to them: "${note.note}"\n` +
     `  read off the agent's words: "${note.quote}"\n` +
-    `${rests}\n  ${WHAT_THE_NOTE_SAID[note.relation]}${moved}\n${answer}`
+    `${rests}${moved}\n${answer}`
   )
 }
 
@@ -358,6 +376,15 @@ The test: ask "why?" of the proposition, and see whether the rationale answers i
                     "Why near-monochrome?" — because colour has to be saved to carry
                     meaning. That is not in the proposition, and it says what this
                     person is trying to achieve.
+
+The plainest failure is the proposition sent back as its own rationale. It answers nothing, and it costs the pair the one field that was going to explain it.
+
+  proposition:  Adds nothing the request did not ask for — no badges, social proof, or marketing copy.
+  Not a rationale:  Adds nothing the request did not ask for — no badges, social proof, or marketing copy.
+  A rationale:      What was asked for is the whole brief, and anything beside it is
+                    something they now have to remove.
+
+Before you send one, read the proposition and the rationale as two sentences in a row. If the second repeats the first, or restates it with different words, you have not written a rationale yet.
 
 A proposition that already has a rationale can be rewritten. If this feedback shows the existing one was too broad, narrow it; if it shows it was wrong, replace it.
 

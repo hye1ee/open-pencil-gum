@@ -26,7 +26,8 @@ const STATUS_TEXT: Record<UserModelStatus, string> = {
 const STAGE_TEXT: Record<PipelineStage, string> = {
   idle: '',
   proposing: 'reading frames…',
-  revising: 'revising…'
+  revising: 'revising…',
+  reasoning: 'working out why…'
 }
 
 const status = computed(() => STAGE_TEXT[userModel.stage] || STATUS_TEXT[userModel.status])

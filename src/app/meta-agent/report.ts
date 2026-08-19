@@ -1,6 +1,6 @@
 import type { MarkAnswer } from '@/app/ai/chat/mismatch'
-import { signed } from '@/app/meta-agent/judge'
 import type { Mark, MarkNote } from '@/app/meta-agent/judge'
+import { isUnrelated } from '@/app/meta-agent/judge'
 import type { FeedbackNote } from '@/app/user-model/pipeline'
 
 /**
@@ -130,11 +130,9 @@ export function renderReportForAgent(
     lines.push('', 'What they replied to:')
     for (const answer of report.answered) {
       const where = answer.nodeId === null ? 'the design as a whole' : `node ${answer.nodeId}`
-      lines.push(`- about ${where}, they were shown: "${answer.note}"`)
-      if (answer.fromRating !== undefined && answer.toRating !== undefined) {
-        lines.push(
-          `  they moved the marker from ${signed(answer.fromRating)} to ${signed(answer.toRating)}`
-        )
+      lines.push(`- about ${answer.topic} (${where}), they were shown: "${answer.note}"`)
+      if (answer.fromPosition !== undefined && answer.toPosition !== undefined) {
+        lines.push(`  they moved the marker from ${answer.fromPosition} to ${answer.toPosition}`)
       }
       lines.push(`  they said: ${answer.text}`)
     }
@@ -163,20 +161,20 @@ export function feedbackNotes(report: MarkReport): FeedbackNote[] {
       note: answer.note,
       quote: answer.quote,
       citedId: answer.citedId,
-      relation: answer.relation,
       reply: answer.text,
-      fromRating: answer.fromRating ?? null,
-      toRating: answer.toRating ?? null
+      fromPosition: answer.fromPosition ?? null,
+      toPosition: answer.toPosition ?? null
     })),
-    ...report.agreed.map((mark) => ({
-      note: noteOf(mark),
-      quote: latestNote(mark)?.evidence.fromReasoning ?? '',
-      citedId: citedProposition(mark),
-      relation: mark.relation,
-      reply: null,
-      fromRating: null,
-      toRating: null
-    }))
+    ...report.agreed
+      .filter((mark) => !isUnrelated(mark))
+      .map((mark) => ({
+        note: noteOf(mark),
+        quote: latestNote(mark)?.evidence.fromReasoning ?? '',
+        citedId: citedProposition(mark),
+        reply: null,
+        fromPosition: null,
+        toPosition: null
+      }))
   ]
 }
 

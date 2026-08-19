@@ -34,13 +34,22 @@ import { viewportZoomToFit } from './vector'
  */
 function isRenderOnly(): boolean {
   const metaEnv = (import.meta as { env?: Record<string, string | undefined> }).env
-  const value = metaEnv?.VITE_RENDER ?? (typeof process !== 'undefined' ? process.env.RENDER : undefined)
+  const value =
+    metaEnv?.VITE_RENDER ?? (typeof process !== 'undefined' ? process.env.RENDER : undefined)
   return value !== 'false'
 }
 
 const CREATE_TOOLS: ToolDef[] = isRenderOnly()
   ? [render]
-  : [createRectangle, createFrame, createEllipse, createTextNode, createPolygon, createStar, createLine]
+  : [
+      createRectangle,
+      createFrame,
+      createEllipse,
+      createTextNode,
+      createPolygon,
+      createStar,
+      createLine
+    ]
 
 /**
  * Core tools registered by default in AI chat (~30 tools, ~3K schema tokens).

@@ -47,8 +47,6 @@ type StreamPart =
  * import here would close the loop model → model-trace → meta-agent → model.
  */
 interface ReasoningObserver {
-  /** A fresh block of thinking has begun; whatever came before is finished. */
-  start(): void
   /** Everything thought in this block so far. */
   chunk(reasoningSoFar: string): void
   /** Resolves once the watcher has finished answering everything it has been
@@ -179,7 +177,6 @@ const middleware: LanguageModelMiddleware = {
         seen(chunk.type)
         if (chunk.type === 'reasoning-start') {
           thinking = ''
-          observeReasoning?.start()
         } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
           // Everything so far, not the delta: a watcher judging where the

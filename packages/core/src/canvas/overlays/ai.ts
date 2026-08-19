@@ -7,15 +7,12 @@ import type { SkiaRenderer } from '#core/canvas/renderer'
 import {
   AI_ACTIVE_COLOR,
   AI_MISMATCH_BLUR_SIGMA,
-  AI_MISMATCH_COLOR,
   AI_MISMATCH_EDGE_WIDTH,
   AI_MISMATCH_GLOW_WIDTH,
-  AI_ALIGNMENT_COLOR,
-  AI_QUESTION_COLOR,
-  AI_MISMATCH_MAX_SEVERITY,
   AI_MISMATCH_PADDING,
   AI_MISMATCH_PULSE_DEPTH,
   AI_MISMATCH_PULSE_MS,
+  AI_STEERING_COLOR,
   AI_DONE_COLOR,
   AI_PULSE_PERIOD_MS,
   AI_DONE_DURATION_MS
@@ -24,50 +21,29 @@ import {
 /**
  * Where what the agent is about to do looks unlike what this user wants.
  *
- * Brightness comes from the meta-agent's severity, not from the pulse. How often
- * the agent has returned to the idea is a separate thing and is shown as a number
- * on the badge instead — a mild idea pursued four times and a serious one raised
- * once both want attention, but the user has to be able to tell which is which.
- * The pulse rides on top at a fixed depth, so it says "still waiting on you"
- * without ever making a one-hit node look like a four-hit one. Slower than the
- * agent's own flashes — this stands for as long as the marker does, and a fast
- * blink on something that is not going away is just nagging.
+ * Brightness comes from how far the person has moved the mark, not from the
+ * pulse. The pulse rides on top at a fixed depth, so it says "still waiting on
+ * you" without ever making an untouched mark look like a settled one. Slower
+ * than the agent's own flashes — this stands for as long as the marker does, and
+ * a fast blink on something that is not going away is just nagging.
  *
  * Two passes per node: a wide blurred stroke for the glow, then a thin crisp
  * one so the shape stays readable against busy artwork.
  */
-/** Where on the loudness range a question sits: visible without competing with a
- * warning beside it. */
-const QUESTION_STRENGTH = 0.45
-
 function drawMismatch(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: number): void {
   if (r._aiMismatch.size === 0) return
   const paint = ensureGlowPaint(r)
   const phase = (now % AI_MISMATCH_PULSE_MS) / AI_MISMATCH_PULSE_MS
   const pulse = 1 - AI_MISMATCH_PULSE_DEPTH * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2))
-  // The rating is signed: the sign says which way the mark points and only the
-  // magnitude sets how loud it is. 1 maps to nothing rather than a fifth, so the
-  // mildest reading is the faintest glow the scale allows rather than an
-  // already-visible one.
-  //
-  // Zero is a question, which is off the scale rather than at the bottom of it.
-  // It only reaches here while its answer is being written, and the whole job of
-  // the glow then is to keep saying which node that sentence is about — so it
-  // takes a fixed middle brightness rather than the faintest one the formula
-  // would give it.
-  const strength = (rating: number) =>
-    rating === 0
-      ? QUESTION_STRENGTH
-      : Math.min(1, Math.max(0, (Math.abs(rating) - 1) / (AI_MISMATCH_MAX_SEVERITY - 1)))
-  const hue = (rating: number) => {
-    if (rating === 0) return AI_QUESTION_COLOR
-    return rating < 0 ? AI_MISMATCH_COLOR : AI_ALIGNMENT_COLOR
-  }
+  // Already 0-1 when it arrives: how far the person has pushed the decision from
+  // where its mark opened. The glow says which node a mark is about and how much
+  // has been done to it, never whether the decision was any good.
+  const clamp = (value: number) => Math.min(1, Math.max(0, value))
 
   paint.setMaskFilter(r.getCachedMaskBlur(AI_MISMATCH_BLUR_SIGMA))
-  for (const [nodeId, rating] of r._aiMismatch) {
-    const opacity = (0.12 + 0.33 * strength(rating)) * pulse
-    drawNodeHighlightRect(r, canvas, graph, nodeId, hue(rating), opacity, 0, {
+  for (const [nodeId, moved] of r._aiMismatch) {
+    const opacity = (0.12 + 0.33 * clamp(moved)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_STEERING_COLOR, opacity, 0, {
       paint,
       strokeWidth: AI_MISMATCH_GLOW_WIDTH,
       padding: AI_MISMATCH_PADDING
@@ -77,9 +53,9 @@ function drawMismatch(r: SkiaRenderer, canvas: Canvas, graph: SceneGraph, now: n
   // Always reset — the paint is reused next frame and a stale filter would blur
   // the crisp edge too (same convention as the shadow renderer).
   paint.setMaskFilter(null)
-  for (const [nodeId, rating] of r._aiMismatch) {
-    const opacity = (0.25 + 0.45 * strength(rating)) * pulse
-    drawNodeHighlightRect(r, canvas, graph, nodeId, hue(rating), opacity, 0, {
+  for (const [nodeId, moved] of r._aiMismatch) {
+    const opacity = (0.25 + 0.45 * clamp(moved)) * pulse
+    drawNodeHighlightRect(r, canvas, graph, nodeId, AI_STEERING_COLOR, opacity, 0, {
       paint,
       strokeWidth: AI_MISMATCH_EDGE_WIDTH,
       padding: AI_MISMATCH_PADDING

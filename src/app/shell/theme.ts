@@ -9,8 +9,10 @@ import { getActiveEditorStoreOrNull } from '@/app/editor/active-store'
 
 export type AppTheme = 'dark' | 'light' | 'auto'
 
-const THEME_STORAGE_KEY = 'open-pencil:theme'
-const DEFAULT_THEME: AppTheme = 'dark'
+/** Bumped when the default changed to light, so a stored 'dark' from before does
+ * not keep overriding it. */
+const THEME_STORAGE_KEY = 'open-pencil:theme:2'
+const DEFAULT_THEME: AppTheme = 'light'
 
 const theme = useLocalStorage<AppTheme>(THEME_STORAGE_KEY, DEFAULT_THEME)
 const prefersDark = usePreferredDark()

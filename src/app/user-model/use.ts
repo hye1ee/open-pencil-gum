@@ -1,4 +1,5 @@
 import {
+  logFeedbackNote,
   logPropositionChange,
   logRationaleChange,
   logUserModelStage
@@ -51,6 +52,22 @@ export function frameNote(): string | undefined {
  * would undo the first's. Built on demand, since feedback outlives capture. */
 let current: UserModel | null = null
 
+/** Everything the model gets about one note, in the order it reads it. Nothing
+ * labels which way the note pointed any more, so the two quotes below are what
+ * it has to work that out from. */
+function describeMove(note: FeedbackNote): string {
+  if (note.fromPosition == null || note.toPosition == null) return 'no scale'
+  if (note.fromPosition === note.toPosition) return `left at ${note.toPosition}`
+  return `${note.fromPosition} → ${note.toPosition}`
+}
+
+function describeNote(note: FeedbackNote): string {
+  const rests = note.citedId ?? 'nothing covers it'
+  const moved = describeMove(note)
+  const said = note.reply === null ? 'said nothing' : `replied: "${note.reply}"`
+  return `[${rests}] ${moved}\n  shown: ${note.note}\n  quote: "${note.quote}"\n  ${said}`
+}
+
 /** Not gated on capture: this is the only place the person tells us anything in
  * words, and it is the best evidence the model gets. */
 export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
@@ -58,6 +75,7 @@ export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
   current ??= createPropositionSink('answers')
   const replied = notes.filter((note) => note.reply !== null).length
   logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
+  for (const note of notes) logFeedbackNote(describeNote(note))
   pending = current.observe(notes).finally(() => {
     pending = null
     logUserModelStage('observed', 'user model up to date')

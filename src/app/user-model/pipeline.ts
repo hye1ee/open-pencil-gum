@@ -95,25 +95,20 @@ export interface UserModelDeps {
   embed(texts: string[]): Promise<number[][]>
 }
 
-/** Carried through intact rather than flattened into prose: `citedId` is an
- * exact answer, and recovering it later by similarity is guessing at it. */
-export type FeedbackRelation = 'conflict' | 'alignment' | 'unknown'
-
 export interface FeedbackNote {
   /** What the person read, in the words they read it in. */
   note: string
-  /** The agent's own words the note was drawn from. */
+  /** The agent's own words the note was drawn from. Carried through intact
+   * rather than flattened into prose: what the silence meant is read off this
+   * and the proposition beside it, and nothing labels it in advance. */
   quote: string
   /** The proposition the note rested on, or null if none covered it. */
   citedId: string | null
-  /** Letting a conflict stand agrees the belief failed; letting an alignment
-   * stand agrees it held. Opposite readings of the same silence. */
-  relation: FeedbackRelation
   /** What they approved or typed, or null when they let it stand. */
   reply: string | null
-  /** Steering movement, absent for untouched and unknown marks. */
-  fromRating?: number | null
-  toRating?: number | null
+  /** Where they left the marker, absent on a mark no proposition covers. */
+  fromPosition?: string | null
+  toPosition?: string | null
 }
 
 export interface UserModelOptions {

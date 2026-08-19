@@ -1,6 +1,6 @@
 import { logTurnHeld } from '@/app/ai/chat/agent-log'
 import { isTurnPaused } from '@/app/ai/chat/agent-turn'
-import { hasWarnings } from '@/app/ai/chat/mismatch'
+import { hasMarks } from '@/app/ai/chat/mismatch'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 
@@ -100,7 +100,7 @@ export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promi
   // stop the change for — it is answered by looking at the result, which is
   // easier once the preview is out of the way.
   const previewIds = [...original.keys()]
-  const duration = hasWarnings(previewIds) ? HOLD_MS : BEAT_MS
+  const duration = hasMarks(previewIds) ? HOLD_MS : BEAT_MS
   const started = performance.now()
 
   function write(factor: number): void {

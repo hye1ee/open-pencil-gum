@@ -32,7 +32,8 @@ export function resolveLanguageModelID(
 }
 
 function desktopFetch(): typeof fetch | undefined {
-  return isTauri() ? tauriFetch : undefined
+  // Cast for `preconnect`, which the DOM type carries and no provider calls.
+  return isTauri() ? (tauriFetch as typeof fetch) : undefined
 }
 
 // Anthropic blocks direct browser calls unless this header is present.

@@ -5,17 +5,18 @@ import { UNKNOWN_COLOR } from '@/app/ai/chat/mark-colors'
 import { beginUnknownFeedback, mismatch, setHoveredMark } from '@/app/ai/chat/mismatch'
 import { useEditorStore } from '@/app/editor/active-store'
 
+import { isUnrelated } from '@/app/meta-agent/judge'
 import type { Mark } from '@/app/meta-agent/judge'
 
 /**
- * Questions the agent raised that no proposition covers. They have no rating,
- * so they have no ring — a strip of their own, standing ones first and the ones
- * that have gone after a divider.
+ * Questions the agent raised that no proposition covers. With one end of the
+ * scale missing they have nowhere to sit on it — a strip of their own, standing
+ * ones first and the ones that have gone after a divider.
  */
 
 const store = useEditorStore()
 
-const visible = (mark: Mark) => mark.relation === 'unknown' && !mismatch.hidden.includes(mark.id)
+const visible = (mark: Mark) => isUnrelated(mark) && !mismatch.hidden.includes(mark.id)
 const questions = computed(() => mismatch.marks.filter(visible))
 const gone = computed(() => mismatch.retired.filter(visible))
 
@@ -45,7 +46,7 @@ const hoveredNote = computed(() => {
         class="size-2.5 shrink-0 rounded-full border border-[#BBBBBB]"
         :style="{ background: UNKNOWN_COLOR }"
         :aria-label="noteOf(mark)"
-        @click="beginUnknownFeedback(store, mark.id)"
+        @click="beginUnknownFeedback(store, mark.id, 'canvas')"
         @pointerenter="setHoveredMark(store, mark.id)"
         @pointerleave="setHoveredMark(store, null)"
       />

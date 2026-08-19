@@ -66,8 +66,20 @@ ensureChat().then((c) => {
 const messagesEnd = ref<HTMLDivElement>()
 const debugCopied = refAutoReset(false, 1500)
 const acpLogCopied = refAutoReset(false, 1500)
+const restartingAfterFeedback = ref(false)
 
 const messages = computed(() => chat.value?.messages ?? [])
+const visibleMessages = computed(() =>
+  messages.value.filter(
+    (message) =>
+      !(
+        message.role === 'user' &&
+        message.parts.some(
+          (part) => part.type === 'text' && part.text.startsWith('[Interrupted at step ')
+        )
+      )
+  )
+)
 const status = computed(() => chat.value?.status ?? 'ready')
 const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
 
@@ -100,9 +112,11 @@ const isThinking = computed(() => {
 // restarted after marker feedback writes a second assistant message, so
 // counting `step-start` parts there would send the bar back to zero half way
 // through — the restart is an implementation detail and must not show.
-const currentStep = computed(() => currentRunSteps())
+const currentStep = computed(() =>
+  Math.min(MAX_AGENT_STEPS, currentRunSteps() + (isRunning.value ? 1 : 0))
+)
 
-const showStepBar = computed(() => isRunning.value)
+const showStepBar = computed(() => isRunning.value || restartingAfterFeedback.value)
 
 const showContinue = computed(() => {
   if (status.value !== 'ready') return false
@@ -209,6 +223,7 @@ async function handleMarkResume() {
 
   // A held tool call must be abandoned before the hold is released.
   if (wasRunning && hasContent(report)) {
+    restartingAfterFeedback.value = true
     abandonTurn()
     await chat.value?.stop()
   }
@@ -221,7 +236,6 @@ async function handleMarkResume() {
   void observeMarkNotes(feedbackNotes(report))
 
   if (!wasRunning) return
-
   // Prevent the replacement turn from raising the answered note again.
   noteSettledMarks(report.answered.map((a) => ({ note: a.note, reply: a.text })))
 
@@ -233,10 +247,15 @@ async function handleMarkResume() {
   forgetAbandonedTurn()
   const text = renderReportForAgent(report, step, request, interrupted)
   logUserMessage(text)
-  chat.value?.sendMessage({ text }).catch((e: unknown) => {
-    console.error('Chat error:', e)
-    toast.error(e instanceof Error ? e.message : String(e))
-  })
+  chat.value
+    ?.sendMessage({ text })
+    .catch((e: unknown) => {
+      console.error('Chat error:', e)
+      toast.error(e instanceof Error ? e.message : String(e))
+    })
+    .finally(() => {
+      restartingAfterFeedback.value = false
+    })
 }
 
 setMarkResumeHandler(() => {
@@ -300,7 +319,7 @@ function handleClearChat() {
 
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
-            <ChatMessage v-for="msg in messages" :key="msg.id" :message="msg" />
+            <ChatMessage v-for="msg in visibleMessages" :key="msg.id" :message="msg" />
 
             <!-- Mid-run messages the user queued while the agent is working -->
             <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />

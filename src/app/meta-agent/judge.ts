@@ -9,8 +9,8 @@ export interface Proposition {
   id: string
   text: string
   confidence: number
-  /** A conflict is easier to get right against the purpose than the wording,
-   * which breaks on cases the purpose covers fine. */
+  /** Whether a decision speaks to a belief is easier to see against its purpose
+   * than its wording, which breaks on cases the purpose covers fine. */
   rationale: string | null
   /** Handed it and following it is the agent reading its instructions. Reaching
    * for it unhanded is the only evidence the belief describes the person. */
@@ -31,57 +31,70 @@ export interface MarkNote {
   evidence: MarkEvidence
 }
 
-export type MarkRelation = 'conflict' | 'alignment' | 'unknown'
-
 /**
- * One signed scale: conflict and alignment are two halves of the same question,
- * how well a decision fits what we know. `unknown` sits at zero, meaning off the
- * scale rather than the middle of it. The model cannot take a mark back — one
- * leaves when its change lands and stands, or when the person dismisses it.
+ * Where a decision should land between the agent's own reasoning and what we
+ * believe about the person. Ordered, and the order is the only number there is:
+ * nothing stores an index, so the scale can be renamed or resized here alone.
+ *
+ * The model never picks a step. It writes one instruction for each, and the
+ * person chooses. A mark opens at `halfway`, and leaving it there is what
+ * happens anyway — the agent carries out what it reasoned.
  */
-export const MAX_RATING = 5
+export const SPECTRUM = [
+  'as_reasoned',
+  'mostly_reasoned',
+  'halfway',
+  'mostly_user_model',
+  'as_user_model'
+] as const
+export type SpectrumStep = (typeof SPECTRUM)[number]
+export type MarkFeedbackContents = Record<SpectrumStep, string>
 
-export const MARK_RATINGS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5] as const
-export type MarkRating = (typeof MARK_RATINGS)[number]
-export type MarkFeedbackContents = Record<`${MarkRating}`, string>
+export const OPENING_STEP: SpectrumStep = 'halfway'
+
+export function isSpectrumStep(value: unknown): value is SpectrumStep {
+  return typeof value === 'string' && SPECTRUM.includes(value as SpectrumStep)
+}
 
 export interface Mark {
   id: string
+  /** Stable when feedback restarts the same decision under a new mark id. */
+  lineageId: string
   nodeId: string | null
-  /** Against a proposition, with one, or about ground the model does not cover. */
-  relation: MarkRelation
+  /** Short, user-visible name for the decision this mark concerns. */
+  topic: string
   /** Oldest first. An update appends, so the model can see how it already put
    * this and the hover card can show that it moved. */
   notes: MarkNote[]
   /** Only a mark naming no node needs it: every other one retires when a change
    * lands on its node, and this gives that one the same window. */
   raisedInStep: number
-  /** −5…−1 conflict, +1…+5 alignment, 0 for unknown. Built from the strength and
-   * the relation, never asked for signed — see `readRating`. */
-  rating: number
+  /** Creation order inside the step. Updates keep the same timeline slot. */
+  raisedOrder: number
+  /** Latest generate/update event, used by the timeline without moving the original event. */
+  changedInStep: number
+  changedOrder: number
+  /** Where the person has put it, `null` on a mark no proposition covers: with
+   * one end of the scale missing there is nothing to slide between. */
+  position: SpectrumStep | null
   feedbackContents?: MarkFeedbackContents | null
   suggestedFeedback?: string | null
 }
 
-/** Only an actual conflict is a warning. Merely citing a proposition is not. */
-export function isWarning(mark: Mark): boolean {
-  return mark.relation === 'conflict'
-}
-
-/** `+4`, `-3`, and nothing for an unknown: a printed zero reads as the weakest
- * rating rather than as no rating. */
-export function signed(rating: number): string {
-  if (rating === 0) return ''
-  return rating > 0 ? `+${rating}` : String(rating)
+/** No proposition covers the decision, so the mark carries one suggestion rather
+ * than a scale. Having nowhere to sit on the scale is what says so — nothing
+ * labels it. Read off `position` and not `feedbackContents`, because the
+ * timeline keeps slimmed copies that drop the instructions but keep the seat. */
+export function isUnrelated(mark: Mark): boolean {
+  return mark.position === null
 }
 
 export type MarkAction =
   | {
       type: 'generate'
       nodeId: string | null
-      relation: MarkRelation
+      topic: string
       note: MarkNote
-      rating: number
       feedbackContents: MarkFeedbackContents | null
       suggestedFeedback: string | null
     }
@@ -89,34 +102,35 @@ export type MarkAction =
       type: 'update'
       id: string
       nodeId?: string | null
-      relation: MarkRelation
+      topic: string
       note: MarkNote
-      rating: number
       feedbackContents: MarkFeedbackContents | null
       suggestedFeedback: string | null
     }
 
+export type MarkToolName = 'generate_related_mark' | 'generate_unrelated_mark' | 'update_mark'
+
 export interface MarkToolCall {
-  toolName: 'generate_mark' | 'update_mark'
+  toolName: MarkToolName
   input: unknown
 }
 
-export type AppliedMarkTool =
-  | {
-      toolName: 'generate_mark'
-      id: string
-      nodeId: string | null
-      relation: MarkRelation
-      rating: number
-    }
-  | {
-      toolName: 'update_mark'
-      id: string
-      nodeId: string | null
-      relation: MarkRelation
-      rating: number
-      revived: boolean
-    }
+export interface RejectedMarkTool {
+  call: MarkToolCall
+  reason: string
+}
+
+export interface AppliedMarkTool {
+  toolName: MarkToolName
+  id: string
+  nodeId: string | null
+  position: SpectrumStep | null
+  /** Carried out for the run log: what the person is about to be offered is not
+   * recoverable from anything else, and an update overwrites it in place. */
+  feedbackContents: MarkFeedbackContents | null
+  /** Only ever true on an update that brought a retired mark back. */
+  revived?: boolean
+}
 
 /** A note the person answered, and what they said. */
 export interface SettledNote {
@@ -179,7 +193,7 @@ export interface MetaAgentOptions {
    * faintly, where it stood. */
   onChanged(marks: Mark[], retired: Mark[], from: JudgeInput | null): void
   onTools?(tools: AppliedMarkTool[], input: JudgeInput): void
-  onRejectedTools?(tools: MarkToolCall[], input: JudgeInput): void
+  onRejectedTools?(tools: RejectedMarkTool[], input: JudgeInput): void
   onLifecycle?(event: string, marks: Mark[]): void
   onError?(error: unknown): void
   onSkipped?(reason: 'busy' | 'no-model', input: ConsiderInput): void
@@ -190,9 +204,11 @@ export type ConsiderInput = Omit<JudgeInput, 'marks' | 'retired'>
 export interface MetaAgent {
   /** A new turn: nothing carries over, not even what was retired. */
   beginTurn(): void
+  /** Stop accepting judgments as soon as feedback is confirmed. */
+  suspend(): void
   /** Marks survive a new step; a queued chunk from the old block does not, since
    * judging it now would answer the new thinking with the old text. */
-  beginStep(): void
+  beginStep(step?: number): void
   /** `reasoning` is everything so far in this block, not the chunk: the answer
    * is about where the thought has got to. */
   consider(input: ConsiderInput): void
@@ -223,25 +239,31 @@ const MAX_OPEN_QUESTIONS = 3
 interface RawMarkInput {
   id?: unknown
   node_id?: unknown
-  relation?: unknown
+  topic?: unknown
   text?: unknown
   evidence_from_reasoning?: unknown
   evidence_from_user_model?: unknown
-  strength?: unknown
   feedback_contents?: unknown
   suggested_feedback?: unknown
 }
 
-function readFeedbackContents(value: unknown, relation: MarkRelation): MarkFeedbackContents | null {
-  if (relation === 'unknown') return null
+/** Which of the two a call is about. The generate tools say it by name; an
+ * update says it by which of the two payloads it carries, so a decision that
+ * grows a proposition can cross over without a second update tool. */
+type MarkKind = 'related' | 'unrelated'
+
+function readFeedbackContents(value: unknown): MarkFeedbackContents | null {
   if (typeof value !== 'object' || value === null) return null
   const result: Partial<MarkFeedbackContents> = {}
-  for (const rating of MARK_RATINGS) {
-    const key = String(rating) as `${MarkRating}`
-    const text = Reflect.get(value, key)
+  const distinct = new Set<string>()
+  for (const step of SPECTRUM) {
+    const text = Reflect.get(value, step)
     if (typeof text !== 'string' || text.trim() === '') return null
-    result[key] = text.trim()
+    const trimmed = text.trim()
+    result[step] = trimmed
+    distinct.add(flatten(trimmed))
   }
+  if (distinct.size !== SPECTRUM.length) return null
   return result as MarkFeedbackContents
 }
 
@@ -249,12 +271,10 @@ function asRawMarkInput(value: unknown): RawMarkInput | null {
   return typeof value === 'object' && value !== null ? (value as RawMarkInput) : null
 }
 
-function readRating(value: unknown, relation: MarkRelation): number | null {
-  if (relation === 'unknown') return 0
-  const raw = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(raw) || raw === 0) return null
-  const strength = Math.min(MAX_RATING, Math.max(1, Math.round(Math.abs(raw))))
-  return relation === 'conflict' ? -strength : strength
+function readKind(call: MarkToolCall, row: RawMarkInput): MarkKind {
+  if (call.toolName === 'generate_related_mark') return 'related'
+  if (call.toolName === 'generate_unrelated_mark') return 'unrelated'
+  return readFeedbackContents(row.feedback_contents) === null ? 'unrelated' : 'related'
 }
 
 function flatten(text: string): string {
@@ -275,25 +295,32 @@ function readQuote(row: RawMarkInput, haystack: string): string | null {
   return quote
 }
 
-/** A note naming a proposition we do not have is the model reaching for a reason
- * after the fact, and a note may legitimately name none, so it is checked here. */
-function readRelation(row: RawMarkInput, known: Set<string>): MarkRelation | null {
-  if (row.relation === 'unknown') {
-    const cited = row.evidence_from_user_model
-    return cited === null || cited === undefined || cited === '' ? 'unknown' : null
-  }
-  // Both are claims about a particular belief, and one that cannot name the
-  // belief is not a claim.
-  if (row.relation !== 'conflict' && row.relation !== 'alignment') return null
+function citedId(row: RawMarkInput, kind: MarkKind): string | null {
   const cited = row.evidence_from_user_model
-  return typeof cited === 'string' && cited !== '' && known.has(cited) ? row.relation : null
+  if (kind === 'unrelated' || typeof cited !== 'string' || cited === '') return null
+  return cited
 }
 
-function readNote(row: RawMarkInput, relation: MarkRelation, quote: string): MarkNote | null {
-  if (typeof row.text !== 'string' || row.text.trim() === '') return null
+/** A related mark naming a proposition we do not have is the model reaching for
+ * a reason after the fact; an unrelated one naming any is the wrong tool. */
+function citedIsValid(row: RawMarkInput, known: Set<string>, kind: MarkKind): boolean {
   const cited = row.evidence_from_user_model
-  const fromUserModel = relation !== 'unknown' && typeof cited === 'string' ? cited : null
-  return { text: row.text, evidence: { fromUserModel, fromReasoning: quote } }
+  if (kind === 'unrelated') return cited === null || cited === undefined || cited === ''
+  return typeof cited === 'string' && known.has(cited)
+}
+
+function readNote(row: RawMarkInput, kind: MarkKind, quote: string): MarkNote | null {
+  if (typeof row.text !== 'string' || row.text.trim() === '') return null
+  return {
+    text: row.text,
+    evidence: { fromUserModel: citedId(row, kind), fromReasoning: quote }
+  }
+}
+
+function readTopic(row: RawMarkInput): string | null {
+  if (typeof row.topic !== 'string') return null
+  const topic = row.topic.trim()
+  return topic !== '' && topic.length <= 48 ? topic : null
 }
 
 function readId(row: RawMarkInput, knownIds: Set<string>): string | null {
@@ -311,19 +338,22 @@ function readAction(
   const quote = readQuote(row, haystack)
   if (quote === null) return null
 
-  const relation = readRelation(row, known)
-  if (!relation) return null
-  const note = readNote(row, relation, quote)
+  const kind = readKind(call, row)
+  if (!citedIsValid(row, known, kind)) return null
+  const topic = readTopic(row)
+  if (!topic) return null
+  const note = readNote(row, kind, quote)
   if (!note) return null
-  const rating = readRating(row.strength, relation)
-  if (rating === null) return null
-  const feedbackContents = readFeedbackContents(row.feedback_contents, relation)
-  if (relation !== 'unknown' && feedbackContents === null) return null
+  const feedbackContents = kind === 'related' ? readFeedbackContents(row.feedback_contents) : null
+  if (kind === 'related' && feedbackContents === null) return null
+  // Not required: a mark with no draft opens an empty box, which is what it did
+  // before. Dropping it instead loses the question altogether.
   const suggestedFeedback =
-    typeof row.suggested_feedback === 'string' && row.suggested_feedback.trim() !== ''
+    kind === 'unrelated' &&
+    typeof row.suggested_feedback === 'string' &&
+    row.suggested_feedback.trim() !== ''
       ? row.suggested_feedback.trim()
       : null
-  if (relation === 'unknown' && suggestedFeedback === null) return null
 
   if (call.toolName === 'update_mark') {
     const id = readId(row, markIds)
@@ -332,19 +362,10 @@ function readAction(
     if (row.node_id !== undefined) {
       nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
     }
-    return {
-      type: 'update',
-      id,
-      nodeId,
-      relation,
-      note,
-      rating,
-      feedbackContents,
-      suggestedFeedback
-    }
+    return { type: 'update', id, nodeId, topic, note, feedbackContents, suggestedFeedback }
   }
   const nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
-  return { type: 'generate', nodeId, relation, note, rating, feedbackContents, suggestedFeedback }
+  return { type: 'generate', nodeId, topic, note, feedbackContents, suggestedFeedback }
 }
 
 function readActions(
@@ -352,16 +373,36 @@ function readActions(
   known: Set<string>,
   reasoning: string,
   markIds: Set<string>
-): { actions: MarkAction[]; rejected: MarkToolCall[] } {
+): { actions: MarkAction[]; rejected: RejectedMarkTool[] } {
   const haystack = flatten(reasoning)
   const actions: MarkAction[] = []
-  const rejected: MarkToolCall[] = []
+  const rejected: RejectedMarkTool[] = []
   for (const call of calls) {
     const action = readAction(call, known, haystack, markIds)
     if (action) actions.push(action)
-    else rejected.push(call)
+    else rejected.push({ call, reason: rejectionReason(call, known, haystack, markIds) })
   }
   return { actions, rejected }
+}
+
+function rejectionReason(
+  call: MarkToolCall,
+  known: Set<string>,
+  haystack: string,
+  markIds: Set<string>
+): string {
+  const row = asRawMarkInput(call.input)
+  if (!row) return 'invalid input'
+  if (readQuote(row, haystack) === null) return 'reasoning quote did not match'
+  const kind = readKind(call, row)
+  if (!citedIsValid(row, known, kind)) return 'invalid proposition id for the tool used'
+  if (readTopic(row) === null) return 'missing or invalid topic'
+  if (!readNote(row, kind, 'valid')) return 'missing note'
+  if (kind === 'related' && readFeedbackContents(row.feedback_contents) === null) {
+    return 'incomplete feedback contents'
+  }
+  if (call.toolName === 'update_mark' && readId(row, markIds) === null) return 'unknown mark id'
+  return 'invalid fields'
 }
 
 export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
@@ -369,12 +410,14 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   let marks: Mark[] = []
   let retired: Mark[] = []
   let nextId = 1
-  let step = 0
+  let step = 1
+  let nextOrder = 0
   let busy = false
   let pending: ConsiderInput | null = null
   let settlers: Array<() => void> = []
   let generation = 0
   let currentInput: JudgeInput | null = null
+  let suspended = false
   const locked = new Set<string>()
 
   function wakeSettlers(): void {
@@ -388,7 +431,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     return `m${nextId++}`
   }
   function capOpenQuestions(): void {
-    const questions = marks.filter((mark) => mark.relation === 'unknown')
+    const questions = marks.filter(isUnrelated)
     if (questions.length <= MAX_OPEN_QUESTIONS) return
     const dropped = new Set(
       questions.slice(0, questions.length - MAX_OPEN_QUESTIONS).map((mark) => mark.id)
@@ -400,24 +443,48 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     const applied: AppliedMarkTool[] = []
     for (const action of actions) {
       if (action.type === 'generate') {
+        const sameDecision = [...marks, ...retired].find((mark) => {
+          const latest = mark.notes.at(-1)
+          return (
+            mark.nodeId === action.nodeId &&
+            flatten(latest?.evidence.fromReasoning ?? '') ===
+              flatten(action.note.evidence.fromReasoning)
+          )
+        })
+        if (sameDecision) {
+          const updated = apply([
+            {
+              ...action,
+              type: 'update',
+              id: sameDecision.id
+            }
+          ])
+          applied.push(...updated)
+          continue
+        }
         const id = mint()
+        const position = action.feedbackContents ? OPENING_STEP : null
         const mark: Mark = {
           id,
+          lineageId: id,
           nodeId: action.nodeId,
-          relation: action.relation,
+          topic: action.topic,
           notes: [action.note],
           raisedInStep: step,
-          rating: action.rating,
+          raisedOrder: nextOrder++,
+          changedInStep: step,
+          changedOrder: nextOrder - 1,
+          position,
           feedbackContents: action.feedbackContents,
           suggestedFeedback: action.suggestedFeedback
         }
         marks.push(mark)
         applied.push({
-          toolName: 'generate_mark',
+          toolName: action.feedbackContents ? 'generate_related_mark' : 'generate_unrelated_mark',
           id,
           nodeId: action.nodeId,
-          relation: action.relation,
-          rating: action.rating
+          position,
+          feedbackContents: action.feedbackContents
         })
         continue
       }
@@ -430,20 +497,25 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       if (wasRetired) {
         retired = retired.filter((candidate) => candidate.id !== action.id)
         mark.raisedInStep = step
+        mark.raisedOrder = nextOrder++
         marks.push(mark)
       }
       if (action.nodeId !== undefined) mark.nodeId = action.nodeId
-      mark.relation = action.relation
+      mark.topic = action.topic
       if (mark.notes.at(-1)?.text !== action.note.text) mark.notes.push(action.note)
-      mark.rating = action.rating
       mark.feedbackContents = action.feedbackContents
       mark.suggestedFeedback = action.suggestedFeedback
+      // Where the person left it survives a reworded mark; losing the spectrum
+      // takes it with them, since there is nothing left to sit on.
+      mark.position = action.feedbackContents ? (mark.position ?? OPENING_STEP) : null
+      mark.changedInStep = step
+      mark.changedOrder = wasRetired ? mark.raisedOrder : nextOrder++
       applied.push({
         toolName: 'update_mark',
         id: action.id,
         nodeId: mark.nodeId,
-        relation: mark.relation,
-        rating: mark.rating,
+        position: mark.position,
+        feedbackContents: mark.feedbackContents ?? null,
         revived: wasRetired
       })
     }
@@ -498,9 +570,11 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
 
     beginTurn() {
       generation += 1
+      suspended = false
       const hadState = marks.length > 0 || retired.length > 0
       retired = []
-      step = 0
+      step = 1
+      nextOrder = 0
       pending = null
       marks = []
       locked.clear()
@@ -511,9 +585,18 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       }
     },
 
-    beginStep() {
+    suspend() {
       generation += 1
-      step += 1
+      suspended = true
+      pending = null
+      currentInput = null
+      wakeSettlers()
+    },
+
+    beginStep(nextStep) {
+      generation += 1
+      step = nextStep ?? step + 1
+      nextOrder = 0
       pending = null
       currentInput = null
       // Dropping the queued chunk can leave nothing in flight, and an unwoken
@@ -522,7 +605,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     },
 
     consider(input) {
-      if (input.propositions.length === 0) return
+      if (suspended || input.propositions.length === 0) return
 
       // One at a time, but queued rather than dropped: an answer takes about as
       // long as the gap between chunks, so the finished thought was never read.
@@ -537,9 +620,6 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     retireSettledMarks(nodeIds) {
       const targets = new Set(nodeIds)
       const settledMarks = marks.filter((mark) => {
-        // Both are claims about the change that just landed, and both have said
-        // what they had to once it stands.
-        if (mark.relation === 'unknown') return false
         // No node means no change can ever match it, so it would stay all build.
         // Its window is the step it was raised in plus the next change.
         if (mark.nodeId === null) return mark.raisedInStep < step
