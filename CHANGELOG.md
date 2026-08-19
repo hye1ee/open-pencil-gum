@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Add Steering Space marker feedback with draggable ratings, editable suggested instructions, batched confirmation, and interruption-aware agent restarts.
+- Add Steering Space marker feedback with draggable ratings, editable suggestions for rated and unknown decisions, batched confirmation, and interruption-aware agent restarts.
 - Add JSX authoring support for components, component sets, and instances.
 - Add design JSX variable helpers so color props can use `designVar()` / `defineVars()` references and emit graph variable bindings.
 - Add structured design JSX paint helpers for solid fills, multiple fills, and gradients.

@@ -39,6 +39,7 @@ export const MARK_TOOLS = {
         relation: relationSchema,
         text: v.string(),
         feedback_contents: v.optional(feedbackContentsSchema),
+        suggested_feedback: v.optional(v.string()),
         ...evidenceSchema,
         strength: strengthSchema
       })
@@ -54,6 +55,7 @@ export const MARK_TOOLS = {
         relation: relationSchema,
         text: v.string(),
         feedback_contents: v.optional(feedbackContentsSchema),
+        suggested_feedback: v.optional(v.string()),
         ...evidenceSchema,
         strength: strengthSchema
       })

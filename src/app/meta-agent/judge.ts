@@ -60,6 +60,7 @@ export interface Mark {
    * the relation, never asked for signed — see `readRating`. */
   rating: number
   feedbackContents?: MarkFeedbackContents | null
+  suggestedFeedback?: string | null
 }
 
 /** Only an actual conflict is a warning. Merely citing a proposition is not. */
@@ -82,6 +83,7 @@ export type MarkAction =
       note: MarkNote
       rating: number
       feedbackContents: MarkFeedbackContents | null
+      suggestedFeedback: string | null
     }
   | {
       type: 'update'
@@ -91,6 +93,7 @@ export type MarkAction =
       note: MarkNote
       rating: number
       feedbackContents: MarkFeedbackContents | null
+      suggestedFeedback: string | null
     }
 
 export interface MarkToolCall {
@@ -226,6 +229,7 @@ interface RawMarkInput {
   evidence_from_user_model?: unknown
   strength?: unknown
   feedback_contents?: unknown
+  suggested_feedback?: unknown
 }
 
 function readFeedbackContents(value: unknown, relation: MarkRelation): MarkFeedbackContents | null {
@@ -315,6 +319,11 @@ function readAction(
   if (rating === null) return null
   const feedbackContents = readFeedbackContents(row.feedback_contents, relation)
   if (relation !== 'unknown' && feedbackContents === null) return null
+  const suggestedFeedback =
+    typeof row.suggested_feedback === 'string' && row.suggested_feedback.trim() !== ''
+      ? row.suggested_feedback.trim()
+      : null
+  if (relation === 'unknown' && suggestedFeedback === null) return null
 
   if (call.toolName === 'update_mark') {
     const id = readId(row, markIds)
@@ -323,10 +332,19 @@ function readAction(
     if (row.node_id !== undefined) {
       nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
     }
-    return { type: 'update', id, nodeId, relation, note, rating, feedbackContents }
+    return {
+      type: 'update',
+      id,
+      nodeId,
+      relation,
+      note,
+      rating,
+      feedbackContents,
+      suggestedFeedback
+    }
   }
   const nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
-  return { type: 'generate', nodeId, relation, note, rating, feedbackContents }
+  return { type: 'generate', nodeId, relation, note, rating, feedbackContents, suggestedFeedback }
 }
 
 function readActions(
@@ -390,7 +408,8 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
           notes: [action.note],
           raisedInStep: step,
           rating: action.rating,
-          feedbackContents: action.feedbackContents
+          feedbackContents: action.feedbackContents,
+          suggestedFeedback: action.suggestedFeedback
         }
         marks.push(mark)
         applied.push({
@@ -418,6 +437,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       if (mark.notes.at(-1)?.text !== action.note.text) mark.notes.push(action.note)
       mark.rating = action.rating
       mark.feedbackContents = action.feedbackContents
+      mark.suggestedFeedback = action.suggestedFeedback
       applied.push({
         toolName: 'update_mark',
         id: action.id,

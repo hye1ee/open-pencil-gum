@@ -172,6 +172,8 @@ For every conflict or alignment mark, write \`feedback_contents\`: one short ins
 
 At \`-5\`, follow the cited proposition completely. At \`5\`, follow the current reasoning completely. The positions between them are useful compromises, changing gradually rather than repeating the same sentence. Do not invent why the person might choose one. An unknown has no position on this scale, so omit \`feedback_contents\` for it.
 
+For every unknown, write one short \`suggested_feedback\` instruction the person can approve or edit. Use the current request, reasoning, user-model propositions and rationales, and feedback already settled in this build. It is a tentative instruction for this build, not a claim about the person, and it must not invent their reason. Omit it for conflict and alignment marks.
+
 TOOLS
 
 You are not restating your marks each time. You are changing a list that stays: say nothing about a mark and it stands unchanged. This is what lets a mark outlive the sentence that caused it, which matters because the agent says a decision out loud once and then carries it out over several steps without mentioning it again.

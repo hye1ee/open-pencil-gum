@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed } from 'vue'
 
 import {
-  answerMark,
-  cancelMarkFeedback,
-  dismissMark,
+  acceptAndHideMark,
+  beginUnknownFeedback,
   mismatch,
-  openMarkFeedback,
   setHoveredMark
 } from '@/app/ai/chat/mismatch'
 import { markColor } from '@/app/ai/chat/mark-colors'
@@ -28,12 +26,7 @@ const CURSOR_STRIP_TOP = 24 + 10
 const CURSOR_STRIP_GAP = 20
 const NODE_MARKER_GAP = 20
 
-const draft = ref('')
-
-const boxes = useTemplateRef<HTMLInputElement[]>('box')
-
 function markerClass(id: string): string {
-  if (mismatch.composing === id) return 'scale-150 ring-2 ring-surface'
   if (mismatch.answers.some((answer) => answer.id === id)) {
     return 'scale-125 opacity-60 ring-2 ring-accent'
   }
@@ -44,25 +37,9 @@ function answerFor(id: string): string {
   return mismatch.answers.find((answer) => answer.id === id)?.text ?? ''
 }
 
-function send(id: string): void {
-  answerMark(store, id, draft.value)
-  draft.value = ''
-}
-
 function openCanvasFeedback(mark: Mark): void {
-  if (mark.relation === 'unknown') openMarkFeedback(store, mark.id)
+  if (mark.relation === 'unknown') beginUnknownFeedback(store, mark.id)
 }
-
-watch(
-  () => mismatch.composing,
-  (id) => {
-    draft.value = id === null ? '' : answerFor(id)
-    if (id === null) return
-    void nextTick(() => {
-      boxes.value?.[0]?.focus()
-    })
-  }
-)
 
 const markers = computed(() => {
   // The graph is not reactive, so name the versions that move it: pan and zoom
@@ -75,30 +52,32 @@ const markers = computed(() => {
   let slot = 0
   const nodeSlots = new Map<string, number>()
 
-  return mismatch.marks.flatMap((mark) => {
-    const place = (x: number, y: number) => [
-      { mark, x, y, flip: x > width - CARD_MAX_PX, color: markColor(mark) }
-    ]
+  return mismatch.marks
+    .filter((mark) => !mismatch.hidden.includes(mark.id))
+    .flatMap((mark) => {
+      const place = (x: number, y: number) => [
+        { mark, x, y, flip: x > width - CARD_MAX_PX, color: markColor(mark) }
+      ]
 
-    if (mark.nodeId === null) {
-      if (!cursor) return []
-      const offset = slot++ * CURSOR_STRIP_GAP
+      if (mark.nodeId === null) {
+        if (!cursor) return []
+        const offset = slot++ * CURSOR_STRIP_GAP
+        return place(
+          cursor.x * zoom + panX + CURSOR_STRIP_LEFT + offset,
+          cursor.y * zoom + panY + CURSOR_STRIP_TOP
+        )
+      }
+
+      const node = store.graph.getNode(mark.nodeId)
+      if (!node) return []
+      const abs = store.graph.getAbsolutePosition(mark.nodeId)
+      const nodeSlot = nodeSlots.get(mark.nodeId) ?? 0
+      nodeSlots.set(mark.nodeId, nodeSlot + 1)
       return place(
-        cursor.x * zoom + panX + CURSOR_STRIP_LEFT + offset,
-        cursor.y * zoom + panY + CURSOR_STRIP_TOP
+        (abs.x + node.width) * zoom + panX + BADGE_OFFSET + nodeSlot * NODE_MARKER_GAP,
+        abs.y * zoom + panY - BADGE_OFFSET
       )
-    }
-
-    const node = store.graph.getNode(mark.nodeId)
-    if (!node) return []
-    const abs = store.graph.getAbsolutePosition(mark.nodeId)
-    const nodeSlot = nodeSlots.get(mark.nodeId) ?? 0
-    nodeSlots.set(mark.nodeId, nodeSlot + 1)
-    return place(
-      (abs.x + node.width) * zoom + panX + BADGE_OFFSET + nodeSlot * NODE_MARKER_GAP,
-      abs.y * zoom + panY - BADGE_OFFSET
-    )
-  })
+    })
 })
 </script>
 
@@ -134,7 +113,7 @@ const markers = computed(() => {
         leave-to-class="translate-y-1 opacity-0"
       >
         <div
-          v-if="mismatch.hovered === marker.mark.id || mismatch.composing === marker.mark.id"
+          v-if="mismatch.hovered === marker.mark.id"
           class="pointer-events-auto absolute top-3 w-max cursor-pointer rounded-lg bg-panel py-1.5 pl-2.5 text-[11px] leading-snug text-surface shadow-lg ring-1 ring-border"
           :class="[
             marker.flip ? 'right-3' : 'left-3',
@@ -149,11 +128,12 @@ const markers = computed(() => {
             v-if="marker.mark.relation === 'unknown'"
             type="button"
             class="absolute top-1 right-1 rounded p-0.5 text-muted hover:text-surface"
-            aria-label="Dismiss this marker"
             data-test-id="mark-dismiss"
-            @click.stop="dismissMark(store, marker.mark.id)"
+            aria-label="Accept and hide"
+            title="Accept and hide"
+            @click.stop="acceptAndHideMark(store, marker.mark.id)"
           >
-            <icon-lucide-x class="size-2.5" />
+            <icon-lucide-eye-off class="size-2.5" />
           </button>
 
           <!-- Oldest first, faded: an updated mark should read as having moved
@@ -173,45 +153,9 @@ const markers = computed(() => {
             {{ answerFor(marker.mark.id) }}
           </p>
 
-          <p
-            v-if="marker.mark.relation === 'unknown' && mismatch.composing !== marker.mark.id"
-            class="mt-1.5 text-muted"
-          >
-            click to reply
+          <p v-if="marker.mark.relation === 'unknown'" class="mt-1.5 text-muted">
+            click to review feedback
           </p>
-
-          <form
-            v-if="mismatch.composing === marker.mark.id"
-            class="mt-1.5 flex gap-1"
-            @click.stop
-            @submit.prevent="send(marker.mark.id)"
-          >
-            <input
-              ref="box"
-              v-model="draft"
-              class="min-w-0 flex-1 rounded border border-border bg-canvas px-1.5 py-1 text-[11px] text-surface outline-none placeholder:text-muted focus:border-accent"
-              placeholder="What should it do instead?"
-              data-test-id="mark-answer-input"
-              @keydown.esc.stop="cancelMarkFeedback(store)"
-              @pointerdown.stop
-            />
-            <button
-              type="submit"
-              class="shrink-0 rounded px-1.5 text-muted hover:text-surface disabled:opacity-40"
-              :disabled="!draft.trim()"
-              aria-label="Send this answer"
-            >
-              <icon-lucide-send class="size-3" />
-            </button>
-            <button
-              type="button"
-              class="shrink-0 rounded px-1 text-muted hover:text-surface"
-              aria-label="Stop answering this marker"
-              @click="cancelMarkFeedback(store)"
-            >
-              <icon-lucide-x class="size-3" />
-            </button>
-          </form>
         </div>
       </Transition>
     </div>

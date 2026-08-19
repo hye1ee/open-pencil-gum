@@ -33,6 +33,10 @@ const TEXT_FOR: Record<'conflict' | 'alignment' | 'unknown', string> = {
   unknown: 'considers badges · we do not know badges'
 }
 
+const FEEDBACK = Object.fromEntries(
+  [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5].map((rating) => [String(rating), `Use option ${rating}`])
+)
+
 /**
  * The model gives a strength only; the sign comes from `relation`. It arrives as
  * a string because the tool schema asks for one — Gemini refuses a numeric enum.
@@ -54,7 +58,9 @@ function generate(
       text: TEXT_FOR[relation],
       evidence_from_reasoning: quote,
       evidence_from_user_model: relation === 'unknown' ? null : propositionId,
-      ...(relation === 'unknown' ? {} : { strength })
+      ...(relation === 'unknown'
+        ? { suggested_feedback: 'Use a subtle badge treatment' }
+        : { strength, feedback_contents: FEEDBACK })
     }
   }
 }
@@ -242,7 +248,8 @@ describe('meta-agent mark tools', () => {
           text: 'returns to filled stars · you use outlines',
           evidence_from_reasoning: again,
           evidence_from_user_model: 'outlined',
-          strength: '5'
+          strength: '5',
+          feedback_contents: FEEDBACK
         }
       }
     ])

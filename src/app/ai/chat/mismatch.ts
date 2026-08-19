@@ -14,8 +14,6 @@ const MAX_MARKS = 8
 const INTRO_MS = 2600
 const QUESTION_WINDOW_MS = 5000
 const WARNING_HOLD_CEILING_MS = 60_000
-const IDLE_MS = 3000
-
 export interface MarkAnswer {
   id: string
   nodeId: string | null
@@ -26,12 +24,13 @@ export interface MarkAnswer {
   text: string
   fromRating?: MarkRating
   toRating?: MarkRating
+  steering?: boolean
 }
 
 export interface SteeringDraft {
   id: string
-  fromRating: MarkRating
-  toRating: MarkRating
+  fromRating: MarkRating | null
+  toRating: MarkRating | null
   text: string
 }
 
@@ -40,19 +39,17 @@ const state = reactive<{
   retired: Mark[]
   hovered: string | null
   intro: string[]
-  composing: string | null
   answers: MarkAnswer[]
-  askingToResume: boolean
   steeringDraft: SteeringDraft | null
+  hidden: string[]
 }>({
   marks: [],
   retired: [],
   hovered: null,
   intro: [],
-  composing: null,
   answers: [],
-  askingToResume: false,
-  steeringDraft: null
+  steeringDraft: null,
+  hidden: []
 })
 
 export const mismatch = state
@@ -70,7 +67,6 @@ export function hasWarnings(nodeIds?: readonly string[]): boolean {
  * when raised and again on hover, and always while it is being answered, since
  * the canvas has to say which node the sentence is about. */
 function lit(mark: Mark): boolean {
-  if (state.composing === mark.id) return true
   if (state.answers.some((answer) => answer.id === mark.id)) return true
   if (state.hovered === mark.id) return true
   // Only on hover for a question: raising one is not worth a glow, but pointing
@@ -169,75 +165,6 @@ export function setHoveredMark(store: EditorStore, id: string | null): void {
   }, RESUME_DELAY_MS)
 }
 
-let idleTimer: ReturnType<typeof setTimeout> | null = null
-
-function cancelIdle(): void {
-  if (idleTimer === null) return
-  clearTimeout(idleTimer)
-  idleTimer = null
-}
-
-function waitForQuiet(store: EditorStore): void {
-  cancelIdle()
-  if (state.answers.length === 0) return
-  idleTimer = setTimeout(() => {
-    idleTimer = null
-    logMarkAnswer('quiet', `${state.answers.length} answered`)
-    if (agentTurn.running) state.askingToResume = true
-    else resumeAfterAnswers()
-    sync(store)
-  }, IDLE_MS)
-}
-
-function holdForAnswers(): void {
-  if (agentTurn.running) pauseTurn('feedback')
-}
-
-export function openMarkFeedback(store: EditorStore, id: string): void {
-  if (state.composing === id) return
-  if (!state.marks.some((mark) => mark.id === id)) return
-  cancelIdle()
-  state.askingToResume = false
-  state.composing = id
-  logMarkAnswer('opened', id)
-  nowRead(store, id)
-  holdForAnswers()
-  sync(store)
-}
-
-export function cancelMarkFeedback(store: EditorStore): void {
-  if (state.composing === null) return
-  logMarkAnswer('dismissed', state.composing)
-  state.composing = null
-  if (state.answers.length === 0) resumeTurn('feedback')
-  else waitForQuiet(store)
-  sync(store)
-}
-
-export function answerMark(store: EditorStore, id: string, text: string): void {
-  const body = text.trim()
-  if (body === '') return
-  const mark = state.marks.find((candidate) => candidate.id === id)
-  const latest = mark && mark.notes.length > 0 ? mark.notes[mark.notes.length - 1] : null
-  state.answers = [
-    ...state.answers.filter((answer) => answer.id !== id),
-    {
-      id,
-      nodeId: mark?.nodeId ?? null,
-      note: latest?.text ?? '',
-      quote: latest?.evidence.fromReasoning ?? '',
-      citedId: latest?.evidence.fromUserModel ?? null,
-      relation: mark?.relation ?? 'unknown',
-      text: body
-    }
-  ]
-  state.composing = null
-  logMarkAnswer('answered', id)
-  holdForAnswers()
-  waitForQuiet(store)
-  sync(store)
-}
-
 let onLock: ((id: string, locked: boolean) => void) | null = null
 
 export function setMarkLockObserver(handler: (id: string, locked: boolean) => void): void {
@@ -271,6 +198,21 @@ export function moveSteeringFeedback(rating: MarkRating): void {
   draft.text = text
 }
 
+export function beginUnknownFeedback(store: EditorStore, id: string): void {
+  const mark = state.marks.find((candidate) => candidate.id === id)
+  if (mark?.relation !== 'unknown' || !mark.suggestedFeedback) return
+  const previous = state.answers.find((answer) => answer.id === id)
+  state.steeringDraft = {
+    id,
+    fromRating: null,
+    toRating: null,
+    text: previous?.text ?? mark.suggestedFeedback
+  }
+  onLock?.(id, true)
+  nowRead(store, id)
+  pauseTurn('feedback')
+}
+
 export function editSteeringFeedback(text: string): void {
   if (state.steeringDraft) state.steeringDraft.text = text
 }
@@ -290,8 +232,10 @@ export function confirmSteeringFeedback(store: EditorStore): void {
       citedId: latest?.evidence.fromUserModel ?? null,
       relation: mark?.relation ?? 'unknown',
       text: draft.text.trim(),
-      fromRating: draft.fromRating,
-      toRating: draft.toRating
+      steering: true,
+      ...(draft.fromRating !== null && draft.toRating !== null
+        ? { fromRating: draft.fromRating, toRating: draft.toRating }
+        : {})
     }
   ]
   state.steeringDraft = null
@@ -310,7 +254,7 @@ export function cancelSteeringFeedback(store: EditorStore): void {
 
 export function steeringRating(mark: Mark): number {
   const draft = state.steeringDraft?.id === mark.id ? state.steeringDraft : null
-  if (draft) return draft.toRating
+  if (draft?.toRating !== null && draft?.toRating !== undefined) return draft.toRating
   return state.answers.find((answer) => answer.id === mark.id)?.toRating ?? mark.rating
 }
 
@@ -319,10 +263,7 @@ export function steeringRating(mark: Mark): number {
  * then calls `releaseAnswerHold`. */
 export function takeAnswers(store: EditorStore): MarkAnswer[] {
   const answers = state.answers
-  cancelIdle()
   state.answers = []
-  state.composing = null
-  state.askingToResume = false
   state.steeringDraft = null
   sync(store)
   return answers
@@ -330,10 +271,6 @@ export function takeAnswers(store: EditorStore): MarkAnswer[] {
 
 export function releaseAnswerHold(): void {
   resumeTurn('feedback')
-}
-
-export function isAnsweringMarks(): boolean {
-  return state.composing !== null || state.answers.length > 0
 }
 
 // Bridges the canvas overlay to the chat panel.
@@ -365,15 +302,13 @@ export function setMarkDismissedObserver(handler: (id: string) => void): void {
 }
 
 // Only unknown marks can be dismissed explicitly.
-export function dismissMark(store: EditorStore, id: string): void {
+export function acceptAndHideMark(store: EditorStore, id: string): void {
   const mark = state.marks.find((candidate) => candidate.id === id)
   if (mark?.relation !== 'unknown') return
+  state.hidden = [...state.hidden, id]
+  onLock?.(id, true)
   logMarkAnswer('removed', id)
   nowRead(store, id)
-  if (state.composing === id) {
-    state.composing = null
-    if (state.answers.length === 0) resumeTurn('feedback')
-  }
   if (state.hovered === id) letGo(store)
   onDismiss?.(id)
 }
@@ -415,6 +350,7 @@ export function clearMarks(store: EditorStore): void {
   state.retired = []
   state.intro = []
   state.steeringDraft = null
+  state.hidden = []
   forgetUnread()
   letGo(store)
   takeAnswers(store)

@@ -93,9 +93,7 @@ const markers = computed(() => {
   })
 })
 
-const confirmedCount = computed(
-  () => mismatch.answers.filter((answer) => answer.fromRating !== undefined).length
-)
+const confirmedCount = computed(() => mismatch.answers.filter((answer) => answer.steering).length)
 
 function ratingAt(event: PointerEvent): MarkRating {
   const bounds = frame.value?.getBoundingClientRect()
@@ -206,7 +204,10 @@ function onWheel(event: WheelEvent): void {
       class="absolute inset-x-2 bottom-2 rounded border border-border bg-panel p-2 shadow"
     >
       <div class="mb-1 text-[10px] font-semibold text-muted">
-        {{ mismatch.steeringDraft.fromRating }} → {{ mismatch.steeringDraft.toRating }}
+        <template v-if="mismatch.steeringDraft.fromRating !== null">
+          {{ mismatch.steeringDraft.fromRating }} → {{ mismatch.steeringDraft.toRating }}
+        </template>
+        <template v-else>Suggested feedback</template>
       </div>
       <textarea
         :value="mismatch.steeringDraft.text"

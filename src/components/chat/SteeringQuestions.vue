@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 import { UNKNOWN_COLOR } from '@/app/ai/chat/mark-colors'
-import { mismatch, setHoveredMark } from '@/app/ai/chat/mismatch'
+import { beginUnknownFeedback, mismatch, setHoveredMark } from '@/app/ai/chat/mismatch'
 import { useEditorStore } from '@/app/editor/active-store'
 
 import type { Mark } from '@/app/meta-agent/judge'
@@ -15,8 +15,9 @@ import type { Mark } from '@/app/meta-agent/judge'
 
 const store = useEditorStore()
 
-const questions = computed(() => mismatch.marks.filter((mark) => mark.relation === 'unknown'))
-const gone = computed(() => mismatch.retired.filter((mark) => mark.relation === 'unknown'))
+const visible = (mark: Mark) => mark.relation === 'unknown' && !mismatch.hidden.includes(mark.id)
+const questions = computed(() => mismatch.marks.filter(visible))
+const gone = computed(() => mismatch.retired.filter(visible))
 
 function noteOf(mark: Mark): string {
   return mark.notes[mark.notes.length - 1]?.text ?? ''
@@ -44,6 +45,7 @@ const hoveredNote = computed(() => {
         class="size-2.5 shrink-0 rounded-full border border-[#BBBBBB]"
         :style="{ background: UNKNOWN_COLOR }"
         :aria-label="noteOf(mark)"
+        @click="beginUnknownFeedback(store, mark.id)"
         @pointerenter="setHoveredMark(store, mark.id)"
         @pointerleave="setHoveredMark(store, null)"
       />
