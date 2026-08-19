@@ -21,7 +21,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 import { ensureGraphFonts } from '@/app/editor/fonts'
 import { notifyMetaAgentNodeReplaced } from '@/app/meta-agent/events'
 
-export const MAX_AGENT_STEPS = 50
+export const MAX_AGENT_STEPS = 10
 
 export interface StepUsage {
   inputTokens: number
@@ -109,8 +109,7 @@ export function recordAuxUsage(usage: StepUsage, store?: EditorStore): void {
  * Answering a marker stops the turn and starts a new one from the same request,
  * because there is no way to rewind a single step inside a run. That is an
  * implementation detail: to the person it is one build that paused, so the step
- * budget has to carry over. Otherwise every answer buys another fifty steps and
- * the ceiling means nothing.
+ * budget has to carry over. Otherwise every answer buys another full budget.
  */
 const continuing = new WeakSet<EditorStore>()
 

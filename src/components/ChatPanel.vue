@@ -22,11 +22,17 @@ import {
   currentRunSteps,
   didHitStepLimit
 } from '@/app/ai/tools'
-import { currentMetaRequest, marksAwaitingAnswer, noteSettledMarks } from '@/app/meta-agent/use'
+import {
+  currentMetaInput,
+  currentMetaRequest,
+  marksAwaitingAnswer,
+  noteSettledMarks
+} from '@/app/meta-agent/use'
 import {
   buildMarkReport,
   feedbackNotes,
   hasContent,
+  pendingActionsFromParts,
   renderReportForAgent,
   takeUnreportedMarks,
   withoutDanglingToolCalls
@@ -173,30 +179,14 @@ async function handleSubmit(text: string) {
   })
 }
 
-/**
- * Stop, from the button.
- *
- * `abandonTurn` first, for the same reason the marker resume needs it: aborting
- * the request does not reach a step parked at a hold point, and marks now hold
- * the run on their own, so pressing stop while one is up did nothing visible —
- * the held tool call went through as soon as the hold lifted. Also lets go of
- * every hold, so a run stopped mid-hold cannot leave the app paused forever.
- */
+// Abandon first so a tool call parked at a hold point cannot resume after stop.
 function handleStop() {
   abandonTurn()
   void chat.value?.stop()
   releaseAnswerHold()
 }
 
-/**
- * The run is over and nobody said anything about the marks still on screen.
- *
- * Leaving a mark alone is agreement, and agreement is evidence about this person
- * — the cheapest evidence there is, since it costs them no gesture. But until
- * the run stops there is no telling "they let it stand" apart from "they have
- * not got to it yet", so the silence is only final here. Answered marks have
- * already gone with the resume and do not come again.
- */
+// Study participants review every mark; untouched marks are deliberate agreement.
 function reportPassedMarks() {
   const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), [])
   if (!hasContent(report)) return
@@ -204,26 +194,20 @@ function reportPassedMarks() {
   void observeMarkNotes(feedbackNotes(report))
 }
 
-/**
- * They answered some markers, went quiet, and pressed continue.
- *
- * The step they interrupted is abandoned and done again. There is no way to
- * rewind one step inside a run — the steps live inside a single streaming call
- * — so this stops the turn and starts a new one whose first message says what
- * happened. To the person it is the same build carrying on, which is why the
- * step budget carries over and the original request is kept.
- */
+// Restart the interrupted step with its reasoning, pending actions, and feedback.
 async function handleMarkResume() {
   const store = getActiveEditorStore()
   const wasRunning = isRunning.value
   const request = currentMetaRequest()
   const step = currentRunSteps(store)
   const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), takeAnswers(store))
+  const metaInput = currentMetaInput()
+  const interrupted = {
+    reasoning: metaInput?.reasoning ?? '',
+    pendingActions: pendingActionsFromParts(messages.value.at(-1)?.parts ?? [])
+  }
 
-  // `abandonTurn` before the stop, not after. Aborting the request does not
-  // reach the held tool call — that is sitting in the stream transform waiting
-  // for the hold to lift, and lifting it is what sends it through. This says the
-  // turn is being thrown away, so the transform drops it instead.
+  // A held tool call must be abandoned before the hold is released.
   if (wasRunning && hasContent(report)) {
     abandonTurn()
     await chat.value?.stop()
@@ -233,36 +217,21 @@ async function handleMarkResume() {
   if (!hasContent(report)) return
   logMarkAnswer('resumed', `${report.answered.length} answered, ${report.agreed.length} passed`)
 
-  // First, and not awaited. This is the durable half — what they said is worth
-  // keeping whatever happens to the run — and the revision is two model calls,
-  // which is far too long to make them watch before the canvas moves again.
+  // User-model revision is durable but should not delay the canvas.
   void observeMarkNotes(feedbackNotes(report))
 
-  // Answered after the run had already finished: the user model still wants it,
-  // but there is no step to redo and nothing to restart.
   if (!wasRunning) return
 
-  // So the redone step is not marked all over again for the thing they just
-  // answered. Outlives the turn boundary the restart crosses.
+  // Prevent the replacement turn from raising the answered note again.
   noteSettledMarks(report.answered.map((a) => ({ note: a.note, reply: a.text })))
 
   await chat.value?.stop()
-  // Before anything is sent. The abort above cut a tool call in half, and the
-  // provider refuses a transcript that carries one.
+  // Providers reject transcripts containing an unfinished tool call.
   if (chat.value) chat.value.messages = withoutDanglingToolCalls(chat.value.messages)
   continueRunSteps(store)
-  // Kept, so the meta-agent judges the next steps against what they actually
-  // asked for rather than against the note about being interrupted.
   noteUserRequest(request)
-  // The replacement turn is about to go out, so the abandoned one is over.
-  // Explicitly, not via the running-state watch: `stop()` above returned on the
-  // abort signal, not on the run winding down, so `status` can still say
-  // 'streaming' here and the watch never fires between the two turns.
   forgetAbandonedTurn()
-  const text = renderReportForAgent(report, step, request)
-  // `prepareStep` only logs messages sent mid-run, and this one arrives as the
-  // opening message of the restarted turn — so without this the one thing the
-  // agent is told about the interruption never appears on the timeline.
+  const text = renderReportForAgent(report, step, request, interrupted)
   logUserMessage(text)
   chat.value?.sendMessage({ text }).catch((e: unknown) => {
     console.error('Chat error:', e)

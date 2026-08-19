@@ -41,6 +41,10 @@ export type MarkRelation = 'conflict' | 'alignment' | 'unknown'
  */
 export const MAX_RATING = 5
 
+export const MARK_RATINGS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5] as const
+export type MarkRating = (typeof MARK_RATINGS)[number]
+export type MarkFeedbackContents = Record<`${MarkRating}`, string>
+
 export interface Mark {
   id: string
   nodeId: string | null
@@ -55,6 +59,7 @@ export interface Mark {
   /** −5…−1 conflict, +1…+5 alignment, 0 for unknown. Built from the strength and
    * the relation, never asked for signed — see `readRating`. */
   rating: number
+  feedbackContents?: MarkFeedbackContents | null
 }
 
 /** Only an actual conflict is a warning. Merely citing a proposition is not. */
@@ -76,6 +81,7 @@ export type MarkAction =
       relation: MarkRelation
       note: MarkNote
       rating: number
+      feedbackContents: MarkFeedbackContents | null
     }
   | {
       type: 'update'
@@ -84,6 +90,7 @@ export type MarkAction =
       relation: MarkRelation
       note: MarkNote
       rating: number
+      feedbackContents: MarkFeedbackContents | null
     }
 
 export interface MarkToolCall {
@@ -194,6 +201,9 @@ export interface MetaAgent {
   dismissMark(id: string): void
   /** A replace tool preserved the design role but assigned the node a new id. */
   remapNode(oldId: string, newId: string): void
+  /** A dragged mark belongs to the person until they cancel or submit it. */
+  lockMark(id: string): void
+  unlockMark(id: string): void
   readonly marks: Mark[]
   /** The stream tap holds the tool call until the marks about it are on screen:
    * an answer takes ~4s and the beats before a call add up to less. */
@@ -201,14 +211,12 @@ export interface MetaAgent {
   /** Standing plus retired. Letting a mark alone is agreement only if it was
    * there to be left alone, so nothing this agent dropped is counted. */
   readonly answerable: Mark[]
+  /** The latest complete context sent to the judge for the current step. */
+  readonly currentInput: JudgeInput | null
 }
 
-/** Beyond a few, questions about the design stop being a prompt and become
- * wallpaper. The model has to drop one to raise another. */
 const MAX_OPEN_QUESTIONS = 3
 
-/** Invariants a schema cannot enforce: the quote must really be in this
- * reasoning, and every cited id must name state we own. */
 interface RawMarkInput {
   id?: unknown
   node_id?: unknown
@@ -217,14 +225,26 @@ interface RawMarkInput {
   evidence_from_reasoning?: unknown
   evidence_from_user_model?: unknown
   strength?: unknown
+  feedback_contents?: unknown
+}
+
+function readFeedbackContents(value: unknown, relation: MarkRelation): MarkFeedbackContents | null {
+  if (relation === 'unknown') return null
+  if (typeof value !== 'object' || value === null) return null
+  const result: Partial<MarkFeedbackContents> = {}
+  for (const rating of MARK_RATINGS) {
+    const key = String(rating) as `${MarkRating}`
+    const text = Reflect.get(value, key)
+    if (typeof text !== 'string' || text.trim() === '') return null
+    result[key] = text.trim()
+  }
+  return result as MarkFeedbackContents
 }
 
 function asRawMarkInput(value: unknown): RawMarkInput | null {
   return typeof value === 'object' && value !== null ? (value as RawMarkInput) : null
 }
 
-/** The sign follows from the relation, never asked for: a signed number let the
- * two disagree. Missing strength is rejected rather than guessed at. */
 function readRating(value: unknown, relation: MarkRelation): number | null {
   if (relation === 'unknown') return 0
   const raw = typeof value === 'number' ? value : Number(value)
@@ -233,8 +253,6 @@ function readRating(value: unknown, relation: MarkRelation): number | null {
   return relation === 'conflict' ? -strength : strength
 }
 
-/** Whitespace-insensitive, because the model retypes a quote rather than
- * slicing it and a line break lands wherever the summary happened to wrap. */
 function flatten(text: string): string {
   return text.replaceAll(/\s+/g, ' ').trim().toLowerCase()
 }
@@ -244,7 +262,6 @@ function flatten(text: string): string {
 const MAX_QUOTE_CHARS = 200
 const MAX_QUOTE_SHARE = 0.5
 
-/** In the thinking, and narrow enough to point at something in it. */
 function readQuote(row: RawMarkInput, haystack: string): string | null {
   const quote = typeof row.evidence_from_reasoning === 'string' ? row.evidence_from_reasoning : ''
   if (quote === '') return null
@@ -275,7 +292,6 @@ function readNote(row: RawMarkInput, relation: MarkRelation, quote: string): Mar
   return { text: row.text, evidence: { fromUserModel, fromReasoning: quote } }
 }
 
-/** An id only means anything if it names a live or retired mark we own. */
 function readId(row: RawMarkInput, knownIds: Set<string>): string | null {
   return typeof row.id === 'string' && knownIds.has(row.id) ? row.id : null
 }
@@ -297,6 +313,8 @@ function readAction(
   if (!note) return null
   const rating = readRating(row.strength, relation)
   if (rating === null) return null
+  const feedbackContents = readFeedbackContents(row.feedback_contents, relation)
+  if (relation !== 'unknown' && feedbackContents === null) return null
 
   if (call.toolName === 'update_mark') {
     const id = readId(row, markIds)
@@ -305,10 +323,10 @@ function readAction(
     if (row.node_id !== undefined) {
       nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
     }
-    return { type: 'update', id, nodeId, relation, note, rating }
+    return { type: 'update', id, nodeId, relation, note, rating, feedbackContents }
   }
   const nodeId = typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null
-  return { type: 'generate', nodeId, relation, note, rating }
+  return { type: 'generate', nodeId, relation, note, rating, feedbackContents }
 }
 
 function readActions(
@@ -330,19 +348,16 @@ function readActions(
 
 export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   const { deps } = options
-  /** On the canvas. */
   let marks: Mark[] = []
-  /** Warned, landed, stood. Available for update, revival, or deletion. */
   let retired: Mark[] = []
   let nextId = 1
-  /** Which step of the turn we are in, counted from `beginStep`. Only used to
-   * give a warning that names no node a window of its own. */
   let step = 0
   let busy = false
-  /** Arrived while an answer was in flight; run once that one lands. */
   let pending: ConsiderInput | null = null
-  /** Woken when `busy` clears with nothing queued behind it. */
   let settlers: Array<() => void> = []
+  let generation = 0
+  let currentInput: JudgeInput | null = null
+  const locked = new Set<string>()
 
   function wakeSettlers(): void {
     if (busy || pending) return
@@ -351,14 +366,9 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     for (const resolve of waiting) resolve()
   }
 
-  /** Ours, not the model's: an invented id collides or changes shape between
-   * calls, and every update is aimed by it. */
   function mint(): string {
     return `m${nextId++}`
   }
-
-  /** A backstop under the prompt rule, not a replacement. Newest wins: a question
-   * about the sentence being thought now beats one the thinking left behind. */
   function capOpenQuestions(): void {
     const questions = marks.filter((mark) => mark.relation === 'unknown')
     if (questions.length <= MAX_OPEN_QUESTIONS) return
@@ -379,7 +389,8 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
           relation: action.relation,
           notes: [action.note],
           raisedInStep: step,
-          rating: action.rating
+          rating: action.rating,
+          feedbackContents: action.feedbackContents
         }
         marks.push(mark)
         applied.push({
@@ -391,6 +402,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
         })
         continue
       }
+      if (locked.has(action.id)) continue
       let mark = marks.find((candidate) => candidate.id === action.id)
       const retiredIndex = retired.findIndex((candidate) => candidate.id === action.id)
       const wasRetired = !mark && retiredIndex !== -1
@@ -398,16 +410,14 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       if (!mark) continue
       if (wasRetired) {
         retired = retired.filter((candidate) => candidate.id !== action.id)
-        // Back on the canvas is back at the start, with the same reading window.
         mark.raisedInStep = step
         marks.push(mark)
       }
       if (action.nodeId !== undefined) mark.nodeId = action.nodeId
       mark.relation = action.relation
-      // Only when the wording moved. Appending on a node or rating change puts
-      // the same sentence in the card twice, once struck through.
       if (mark.notes.at(-1)?.text !== action.note.text) mark.notes.push(action.note)
       mark.rating = action.rating
+      mark.feedbackContents = action.feedbackContents
       applied.push({
         toolName: 'update_mark',
         id: action.id,
@@ -422,9 +432,15 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
   }
 
   async function run(input: ConsiderInput): Promise<void> {
+    const startedIn = generation
     const known = new Set(input.propositions.map((p) => p.id))
     const full: JudgeInput = { ...input, marks, retired }
+    currentInput = structuredClone(full)
     const calls = await deps.judge({ system: deps.system, prompt: deps.render(full) })
+    if (startedIn !== generation) {
+      options.onLifecycle?.('dropped stale judgment', marks)
+      return
+    }
     const markIds = new Set([...marks, ...retired].map((mark) => mark.id))
     const { actions, rejected } = readActions(calls, known, input.reasoning, markIds)
     if (rejected.length > 0) options.onRejectedTools?.(rejected, full)
@@ -441,7 +457,6 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       })
       .finally(() => {
         busy = false
-        // Whatever arrived while that ran, on the fullest text there is.
         const next = pending
         pending = null
         if (next) start(next)
@@ -462,11 +477,14 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     },
 
     beginTurn() {
+      generation += 1
       const hadState = marks.length > 0 || retired.length > 0
       retired = []
       step = 0
       pending = null
       marks = []
+      locked.clear()
+      currentInput = null
       if (hadState) {
         options.onLifecycle?.('turn reset', marks)
         options.onChanged(marks, retired, null)
@@ -474,15 +492,16 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     },
 
     beginStep() {
+      generation += 1
       step += 1
       pending = null
+      currentInput = null
       // Dropping the queued chunk can leave nothing in flight, and an unwoken
       // waiter holds the run for good.
       wakeSettlers()
     },
 
     consider(input) {
-      // Nothing to compare against: every call would be invented.
       if (input.propositions.length === 0) return
 
       // One at a time, but queued rather than dropped: an answer takes about as
@@ -535,8 +554,20 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       options.onChanged(marks, retired, null)
     },
 
+    lockMark(id) {
+      locked.add(id)
+    },
+
+    unlockMark(id) {
+      locked.delete(id)
+    },
+
     get marks() {
       return marks
+    },
+
+    get currentInput() {
+      return currentInput
     }
   }
 }

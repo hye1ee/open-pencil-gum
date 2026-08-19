@@ -10,7 +10,7 @@ import {
   logJudgment,
   logMarkTool
 } from '@/app/ai/chat/agent-log'
-import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
+import { setMarkDismissedObserver, setMarkLockObserver, setMarks } from '@/app/ai/chat/mismatch'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import {
@@ -35,6 +35,7 @@ import {
   createMetaAgent,
   signed,
   type AppliedMarkTool,
+  type JudgeInput,
   type Mark,
   type MarkToolCall,
   type MetaAgent,
@@ -51,7 +52,7 @@ import { awaitUserModelSettled } from '@/app/user-model/use'
  * is described to it, and where its judgment lands. `judge.ts` knows none of it. */
 
 /** Reasoning shares this budget on Gemini, and the answer is a short list. */
-const JUDGE_MAX_TOKENS = 2048
+const JUDGE_MAX_TOKENS = 4096
 
 /** Wants a cheap model, and more than that a different one: a judge on the same
  * model is blind to whatever that model is blind to. `VITE_MODEL_META_AGENT`. */
@@ -177,6 +178,11 @@ setMarkDismissedObserver((id) => {
   agent?.dismissMark(id)
 })
 
+setMarkLockObserver((id, locked) => {
+  if (locked) agent?.lockMark(id)
+  else agent?.unlockMark(id)
+})
+
 // Registered here because the tap must not import anything that builds a model.
 setReasoningObserver({
   start: () => {
@@ -192,6 +198,10 @@ setReasoningObserver({
  * which were never the person's to accept. */
 export function marksAwaitingAnswer(): Mark[] {
   return agent?.answerable ?? []
+}
+
+export function currentMetaInput(): JudgeInput | null {
+  return agent?.currentInput ?? null
 }
 
 /** So a turn restarted after feedback keeps the request rather than treating

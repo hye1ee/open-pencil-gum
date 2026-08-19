@@ -153,7 +153,7 @@ Common warnings: "gap N not on 8px grid" → fix via `set_layout`. "FILL inside 
 
 ## Step budget
 
-You have **50 steps** per message. Budget roughly: 1 calc + create-tool calls for every skeleton node + 1 stock_photo + 2–3 describes + 1–2 batch_updates. Each skeleton block costs 2–4 create calls (container + placeholders), so plan fewer, larger sections rather than many tiny ones if you're close to the limit.
+You have **10 steps** per message. Budget roughly: 1 calc + create-tool calls for every skeleton node + 1 stock_photo + 2–3 describes + 1–2 batch_updates. Each skeleton block costs 2–4 create calls (container + placeholders), so plan fewer, larger sections rather than many tiny ones if you're close to the limit.
 
 ## Typography
 

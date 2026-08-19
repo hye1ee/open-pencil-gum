@@ -109,8 +109,11 @@ export interface FeedbackNote {
   /** Letting a conflict stand agrees the belief failed; letting an alignment
    * stand agrees it held. Opposite readings of the same silence. */
   relation: FeedbackRelation
-  /** What they typed back, or null if they saw it and let it stand. */
+  /** What they approved or typed, or null when they let it stand. */
   reply: string | null
+  /** Steering movement, absent for untouched and unknown marks. */
+  fromRating?: number | null
+  toRating?: number | null
 }
 
 export interface UserModelOptions {

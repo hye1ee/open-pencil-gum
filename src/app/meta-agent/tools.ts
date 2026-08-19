@@ -16,6 +16,19 @@ const evidenceSchema = {
   evidence_from_user_model: v.nullable(v.string())
 }
 
+const feedbackContentsSchema = v.object({
+  '-5': v.string(),
+  '-4': v.string(),
+  '-3': v.string(),
+  '-2': v.string(),
+  '-1': v.string(),
+  '1': v.string(),
+  '2': v.string(),
+  '3': v.string(),
+  '4': v.string(),
+  '5': v.string()
+})
+
 export const MARK_TOOLS = {
   generate_mark: tool({
     description:
@@ -25,6 +38,7 @@ export const MARK_TOOLS = {
         node_id: v.nullable(v.string()),
         relation: relationSchema,
         text: v.string(),
+        feedback_contents: v.optional(feedbackContentsSchema),
         ...evidenceSchema,
         strength: strengthSchema
       })
@@ -39,6 +53,7 @@ export const MARK_TOOLS = {
         node_id: v.optional(v.nullable(v.string())),
         relation: relationSchema,
         text: v.string(),
+        feedback_contents: v.optional(feedbackContentsSchema),
         ...evidenceSchema,
         strength: strengthSchema
       })

@@ -6,63 +6,44 @@ import { agentTurn, pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { isWarning } from '@/app/meta-agent/judge'
-import type { Mark, MarkRelation } from '@/app/meta-agent/judge'
+import type { Mark, MarkRating, MarkRelation } from '@/app/meta-agent/judge'
 
-/**
- * A mirror of the marks the meta-agent has standing. The list is owned there, so
- * this file invents no identity of its own and only drops marks whose node has
- * gone. A warning holds the run and retires when its change stands; an alignment
- * never holds; a question waits until the turn ends. `rating` is −5 to +5, and
- * its sign picks the colour while its magnitude sets how loud the glow is.
- */
+// Reactive UI mirror of the marks owned by the meta-agent.
 
-/** Beyond a handful the canvas is a noticeboard. A backstop only: the meta-agent
- * caps its own questions and the rest retire when their change lands. */
 const MAX_MARKS = 8
-
-/** How long a new warning glows before it settles back to just a badge. */
 const INTRO_MS = 2600
-
-/** Measured: a warning went up nine seconds before its tool call, was read for
- * three, and the render landed one second after the pointer left. */
 const QUESTION_WINDOW_MS = 5000
-
-/** A warning holds until read, not on a timer. The ceiling is for the machine
- * nobody is sitting at. */
 const WARNING_HOLD_CEILING_MS = 60_000
-
-/** Three marks from one chunk are three parts of one decision, so the run waits
- * for a gap rather than restarting on the first answer. */
 const IDLE_MS = 3000
 
-/** Copied at the moment of answering, since the mark can be updated after and
- * the reply belongs to the wording they saw. `quote` and `citedId` travel all
- * the way to the user model, which is the point of collecting them. */
 export interface MarkAnswer {
   id: string
   nodeId: string | null
   note: string
   quote: string
   citedId: string | null
-  /** Tells a reply that disputed a warning from one that disputed us saying the
-   * agent had got it right. */
   relation: MarkRelation
+  text: string
+  fromRating?: MarkRating
+  toRating?: MarkRating
+}
+
+export interface SteeringDraft {
+  id: string
+  fromRating: MarkRating
+  toRating: MarkRating
   text: string
 }
 
 const state = reactive<{
   marks: Mark[]
-  /** Off the canvas but still shown, faintly, in the steering space: a mark
-   * whose change landed, or a question the person cleared. */
   retired: Mark[]
   hovered: string | null
   intro: string[]
-  /** The mark whose answer box is open, if any. */
   composing: string | null
-  /** Answers given since the run was last held, oldest first. */
   answers: MarkAnswer[]
-  /** They have gone quiet, and are being asked whether to carry on. */
   askingToResume: boolean
+  steeringDraft: SteeringDraft | null
 }>({
   marks: [],
   retired: [],
@@ -70,10 +51,10 @@ const state = reactive<{
   intro: [],
   composing: null,
   answers: [],
-  askingToResume: false
+  askingToResume: false,
+  steeringDraft: null
 })
 
-/** Read-only view for the overlay. */
 export const mismatch = state
 
 /** Whether the whole canvas, or a particular preview, carries a warning. */
@@ -97,15 +78,10 @@ function lit(mark: Mark): boolean {
   return mark.relation !== 'unknown' && state.intro.includes(mark.id)
 }
 
-/** Retired marks included: they are still pointed at from the steering space,
- * and hovering one there has to reach the canvas like any other. */
 function sync(store: EditorStore): void {
   const shown = [...state.marks, ...state.retired].filter(lit)
   const anchored = shown.filter((mark): mark is Mark & { nodeId: string } => mark.nodeId !== null)
-  // Signed: the renderer reads the sign for colour, the magnitude for loudness.
   store.aiSetMismatch(anchored.map((mark) => [mark.nodeId, mark.rating]))
-  // A mark naming no node is about the design as a whole, and rides with the
-  // agent cursor. There is nothing to glow, so the cursor itself blinks.
   setAgentCursorFlash(shown.some((mark) => mark.nodeId === null))
 }
 
@@ -114,10 +90,7 @@ function sync(store: EditorStore): void {
 const RESUME_DELAY_MS = 3000
 
 let releaseTimer: ReturnType<typeof setTimeout> | null = null
-/** When the pointer landed, so the log can say how long the run was held. */
 let hoverStarted = 0
-/** The mark the pointer has left, still holding the run through the delay. The
- * highlight comes down at once; only the hold waits. */
 let releasing: string | null = null
 
 function cancelRelease(): void {
@@ -137,13 +110,9 @@ function letGo(store: EditorStore): void {
   sync(store)
 }
 
-/** Leaving a mark alone is agreement, which is only honest if it was there to be
- * left alone. So it holds from the moment it appears until it is looked at. */
 const unread = new Set<string>()
 const unreadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-/** Only a conflict stops the run. Interrupting a build to say the agent is doing
- * the right thing is the reaction test this hold exists to avoid. */
 function worthHolding(mark: Mark): boolean {
   return mark.rating < 0
 }
@@ -154,7 +123,6 @@ function holdForNewMark(store: EditorStore, mark: Mark): void {
   pauseTurn('new-mark')
   unreadTimers.set(
     mark.id,
-    // A warning waits to be read; a question takes its window regardless.
     setTimeout(
       () => nowRead(store, mark.id),
       isWarning(mark) ? WARNING_HOLD_CEILING_MS : QUESTION_WINDOW_MS
@@ -178,8 +146,6 @@ function forgetUnread(): void {
   resumeTurn('new-mark')
 }
 
-/** Pointing at a mark stops the agent, or the step it warns about finishes while
- * it is being read. The glow comes down when the run actually restarts. */
 export function setHoveredMark(store: EditorStore, id: string | null): void {
   if (id !== null) {
     cancelRelease()
@@ -187,17 +153,13 @@ export function setHoveredMark(store: EditorStore, id: string | null): void {
     if (state.hovered === id) return
     state.hovered = id
     hoverStarted = Date.now()
-    // The `marker` hold takes over, lasting as long as the pointer plus grace.
     nowRead(store, id)
-    // A marker left over from a finished turn would pause with nothing paused.
     logMarkHover(id, agentTurn.running)
     if (agentTurn.running) pauseTurn('marker')
     sync(store)
     return
   }
   if (state.hovered === null || releaseTimer !== null) return
-  // The pointer has gone, so the glow and the note go with it. The hold stays on
-  // for the delay, which is about not restarting under a reader who looks back.
   releasing = state.hovered
   state.hovered = null
   sync(store)
@@ -207,9 +169,6 @@ export function setHoveredMark(store: EditorStore, id: string | null): void {
   }, RESUME_DELAY_MS)
 }
 
-/** Disagreement happens on the mark, not in the chat: three marks from one chunk
- * are one decision, and pulling one into a conversation breaks the group. The
- * run holds from the first click until a three-second gap says they are done. */
 let idleTimer: ReturnType<typeof setTimeout> | null = null
 
 function cancelIdle(): void {
@@ -218,22 +177,18 @@ function cancelIdle(): void {
   idleTimer = null
 }
 
-/** Restart the quiet-period clock. Once it runs out they get asked to resume. */
 function waitForQuiet(store: EditorStore): void {
   cancelIdle()
   if (state.answers.length === 0) return
   idleTimer = setTimeout(() => {
     idleTimer = null
     logMarkAnswer('quiet', `${state.answers.length} answered`)
-    // A mark answered after the run ended still reaches the user model through
-    // the same handler; there is just nothing to restart.
     if (agentTurn.running) state.askingToResume = true
     else resumeAfterAnswers()
     sync(store)
   }, IDLE_MS)
 }
 
-/** Hold the run from the first click, and only let go at the resume. */
 function holdForAnswers(): void {
   if (agentTurn.running) pauseTurn('feedback')
 }
@@ -250,7 +205,6 @@ export function openMarkFeedback(store: EditorStore, id: string): void {
   sync(store)
 }
 
-/** Closed the box without saying anything. Any earlier answers still stand. */
 export function cancelMarkFeedback(store: EditorStore): void {
   if (state.composing === null) return
   logMarkAnswer('dismissed', state.composing)
@@ -260,8 +214,6 @@ export function cancelMarkFeedback(store: EditorStore): void {
   sync(store)
 }
 
-/** Recorded, not sent: the whole set goes at the resume, because passing on one
- * mark is as much a statement as answering it. */
 export function answerMark(store: EditorStore, id: string, text: string): void {
   const body = text.trim()
   if (body === '') return
@@ -286,6 +238,82 @@ export function answerMark(store: EditorStore, id: string, text: string): void {
   sync(store)
 }
 
+let onLock: ((id: string, locked: boolean) => void) | null = null
+
+export function setMarkLockObserver(handler: (id: string, locked: boolean) => void): void {
+  onLock = handler
+}
+
+export function beginSteeringFeedback(store: EditorStore, id: string): void {
+  const mark = state.marks.find((candidate) => candidate.id === id)
+  if (!mark?.feedbackContents || mark.rating === 0) return
+  const previous = state.answers.find((answer) => answer.id === id)
+  const fromRating = previous?.fromRating ?? (mark.rating as MarkRating)
+  const toRating = previous?.toRating ?? fromRating
+  state.steeringDraft = {
+    id,
+    fromRating,
+    toRating,
+    text: previous?.text ?? mark.feedbackContents[String(toRating) as `${MarkRating}`]
+  }
+  onLock?.(id, true)
+  nowRead(store, id)
+  pauseTurn('feedback')
+}
+
+export function moveSteeringFeedback(rating: MarkRating): void {
+  const draft = state.steeringDraft
+  if (!draft) return
+  const mark = state.marks.find((candidate) => candidate.id === draft.id)
+  const text = mark?.feedbackContents?.[String(rating) as `${MarkRating}`]
+  if (!text) return
+  draft.toRating = rating
+  draft.text = text
+}
+
+export function editSteeringFeedback(text: string): void {
+  if (state.steeringDraft) state.steeringDraft.text = text
+}
+
+export function confirmSteeringFeedback(store: EditorStore): void {
+  const draft = state.steeringDraft
+  if (!draft || draft.text.trim() === '') return
+  const mark = state.marks.find((candidate) => candidate.id === draft.id)
+  const latest = mark?.notes.at(-1)
+  state.answers = [
+    ...state.answers.filter((answer) => answer.id !== draft.id),
+    {
+      id: draft.id,
+      nodeId: mark?.nodeId ?? null,
+      note: latest?.text ?? '',
+      quote: latest?.evidence.fromReasoning ?? '',
+      citedId: latest?.evidence.fromUserModel ?? null,
+      relation: mark?.relation ?? 'unknown',
+      text: draft.text.trim(),
+      fromRating: draft.fromRating,
+      toRating: draft.toRating
+    }
+  ]
+  state.steeringDraft = null
+  logMarkAnswer('answered', draft.id)
+  sync(store)
+}
+
+export function cancelSteeringFeedback(store: EditorStore): void {
+  const draft = state.steeringDraft
+  if (!draft) return
+  state.steeringDraft = null
+  if (!state.answers.some((answer) => answer.id === draft.id)) onLock?.(draft.id, false)
+  if (state.answers.length === 0) resumeTurn('feedback')
+  sync(store)
+}
+
+export function steeringRating(mark: Mark): number {
+  const draft = state.steeringDraft?.id === mark.id ? state.steeringDraft : null
+  if (draft) return draft.toRating
+  return state.answers.find((answer) => answer.id === mark.id)?.toRating ?? mark.rating
+}
+
 /** The hold stays on: the parked step already holds its tool call, so letting go
  * here runs the very call the answer was about. The caller ends the run first,
  * then calls `releaseAnswerHold`. */
@@ -295,6 +323,7 @@ export function takeAnswers(store: EditorStore): MarkAnswer[] {
   state.answers = []
   state.composing = null
   state.askingToResume = false
+  state.steeringDraft = null
   sync(store)
   return answers
 }
@@ -303,13 +332,11 @@ export function releaseAnswerHold(): void {
   resumeTurn('feedback')
 }
 
-/** True while the run is held for answers, whether or not a box is open. */
 export function isAnsweringMarks(): boolean {
   return state.composing !== null || state.answers.length > 0
 }
 
-/** The button is in the canvas and the work is the chat panel's: two component
- * trees, so an emit has nowhere to go. */
+// Bridges the canvas overlay to the chat panel.
 let onResume: (() => void) | null = null
 
 export function setMarkResumeHandler(handler: () => void): void {
@@ -337,24 +364,17 @@ export function setMarkDismissedObserver(handler: (id: string) => void): void {
   onDismiss = handler
 }
 
-/** The same as letting it stand, said out loud so the badge stops taking room.
- * Questions only: a one-click clear on a warning is a control for clearing
- * warnings without reading them. */
+// Only unknown marks can be dismissed explicitly.
 export function dismissMark(store: EditorStore, id: string): void {
   const mark = state.marks.find((candidate) => candidate.id === id)
   if (mark?.relation !== 'unknown') return
-  // Not 'dismissed', which already means the answer box was closed unused.
   logMarkAnswer('removed', id)
-  // Before the list shrinks: the hold is keyed on the id.
   nowRead(store, id)
-  // Closing the box from here has to let go of the same hold `cancelMarkFeedback`
-  // does, or the run stays paused on a mark that is gone.
   if (state.composing === id) {
     state.composing = null
     if (state.answers.length === 0) resumeTurn('feedback')
   }
   if (state.hovered === id) letGo(store)
-  // Comes back through `setMarks` with this mark gone from it.
   onDismiss?.(id)
 }
 
@@ -364,12 +384,9 @@ export function setMarks(store: EditorStore, marks: Mark[], retired: Mark[] = []
   const known = new Set(state.marks.map((mark) => mark.id))
   const valid = marks.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
   state.marks = valid.slice(Math.max(0, valid.length - MAX_MARKS))
-  // Not capped: these are faint and the whole point of them is that a turn's
-  // judgments accumulate somewhere.
   state.retired = retired.filter((mark) => mark.nodeId === null || store.graph.getNode(mark.nodeId))
   releaseIfHoveredGone(store)
 
-  // Taken back, or gone because its change landed: nothing left to read.
   const standing = new Map(state.marks.map((mark) => [mark.id, mark]))
   const gone: string[] = []
   for (const id of unread) {
@@ -384,8 +401,6 @@ export function setMarks(store: EditorStore, marks: Mark[], retired: Mark[] = []
     holdForNewMark(store, mark)
     if (!isWarning(mark)) continue
     state.intro = [...state.intro, mark.id]
-    // Module state with no component to scope to, and it has to keep running
-    // while the user is looking at another panel.
     setTimeout(() => {
       state.intro = state.intro.filter((id) => id !== mark.id)
       sync(store)
@@ -399,9 +414,9 @@ export function clearMarks(store: EditorStore): void {
   state.marks = []
   state.retired = []
   state.intro = []
+  state.steeringDraft = null
   forgetUnread()
   letGo(store)
-  // Leftover answers are about marks off screen, and nothing else lifts their hold.
   takeAnswers(store)
   releaseAnswerHold()
   store.aiClearMismatch()

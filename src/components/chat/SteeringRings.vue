@@ -3,9 +3,20 @@ import { useElementSize } from '@vueuse/core'
 import { computed, ref, useTemplateRef } from 'vue'
 
 import { RING_COLORS, markColor } from '@/app/ai/chat/mark-colors'
-import { mismatch, setHoveredMark } from '@/app/ai/chat/mismatch'
+import {
+  beginSteeringFeedback,
+  cancelSteeringFeedback,
+  confirmSteeringFeedback,
+  editSteeringFeedback,
+  mismatch,
+  moveSteeringFeedback,
+  resumeAfterAnswers,
+  setHoveredMark,
+  steeringRating
+} from '@/app/ai/chat/mismatch'
 import { offsetFor, placeMarks } from '@/app/ai/chat/steering-layout'
 import { useEditorStore } from '@/app/editor/active-store'
+import type { MarkRating } from '@/app/meta-agent/judge'
 
 /**
  * The space a mark's position means something in: the centre is what the agent
@@ -40,6 +51,7 @@ const frame = useTemplateRef<HTMLElement>('frame')
 const { width, height } = useElementSize(frame)
 
 const userZoom = ref(1)
+const dragging = ref<string | null>(null)
 
 /** The outermost ring just fits the panel at userZoom 1, so a splitter drag
  * refits the drawing rather than cropping it. */
@@ -66,9 +78,9 @@ function ringRadius(index: number): number {
  * something rather than blink out one by one as their changes land. */
 const markers = computed(() => {
   const retired = new Set(mismatch.retired.map((mark) => mark.id))
-  const rated = [...mismatch.marks, ...mismatch.retired].filter(
-    (mark) => mark.relation !== 'unknown'
-  )
+  const rated = [...mismatch.marks, ...mismatch.retired]
+    .filter((mark) => mark.relation !== 'unknown')
+    .map((mark) => ({ ...mark, rating: steeringRating(mark) }))
   return placeMarks(rated).map((placed) => {
     const offset = offsetFor(placed, ringRadius(placed.ring))
     return {
@@ -80,6 +92,53 @@ const markers = computed(() => {
     }
   })
 })
+
+const confirmedCount = computed(
+  () => mismatch.answers.filter((answer) => answer.fromRating !== undefined).length
+)
+
+function ratingAt(event: PointerEvent): MarkRating {
+  const bounds = frame.value?.getBoundingClientRect()
+  const x = bounds ? event.clientX - bounds.left : event.offsetX
+  const y = bounds ? event.clientY - bounds.top : event.offsetY
+  const distance = Math.hypot(x - cx.value, y - cy.value)
+  let nearest = 0
+  let difference = Number.POSITIVE_INFINITY
+  for (let ring = 0; ring < RING_COLORS.length; ring++) {
+    const next = Math.abs(distance - ringRadius(ring))
+    if (next < difference) {
+      nearest = ring
+      difference = next
+    }
+  }
+  return (nearest < 5 ? 5 - nearest : 4 - nearest) as MarkRating
+}
+
+function startDrag(event: PointerEvent, id: string): void {
+  const mark = mismatch.marks.find((candidate) => candidate.id === id)
+  if (!mark?.feedbackContents) return
+  dragging.value = id
+  if (event.currentTarget instanceof Element) event.currentTarget.setPointerCapture(event.pointerId)
+  beginSteeringFeedback(store, id)
+}
+
+function drag(event: PointerEvent): void {
+  if (!dragging.value) return
+  moveSteeringFeedback(ratingAt(event))
+}
+
+function finishDrag(): void {
+  dragging.value = null
+}
+
+function cancelDrag(): void {
+  dragging.value = null
+  cancelSteeringFeedback(store)
+}
+
+function editDraft(event: Event): void {
+  if (event.target instanceof HTMLTextAreaElement) editSteeringFeedback(event.target.value)
+}
 
 const hoveredNote = computed(() => {
   const found = markers.value.find((marker) => marker.placed.mark.id === mismatch.hovered)
@@ -133,10 +192,58 @@ function onWheel(event: WheelEvent): void {
         :opacity="marker.opacity"
         stroke="#BBBBBB"
         class="cursor-pointer"
+        @pointerdown.prevent="startDrag($event, marker.placed.mark.id)"
+        @pointermove.prevent="drag"
+        @pointerup.prevent="finishDrag"
+        @pointercancel="cancelDrag"
         @pointerenter="setHoveredMark(store, marker.placed.mark.id)"
         @pointerleave="setHoveredMark(store, null)"
       />
     </svg>
+
+    <div
+      v-if="mismatch.steeringDraft && !dragging"
+      class="absolute inset-x-2 bottom-2 rounded border border-border bg-panel p-2 shadow"
+    >
+      <div class="mb-1 text-[10px] font-semibold text-muted">
+        {{ mismatch.steeringDraft.fromRating }} → {{ mismatch.steeringDraft.toRating }}
+      </div>
+      <textarea
+        :value="mismatch.steeringDraft.text"
+        rows="3"
+        class="w-full resize-none rounded border border-border bg-transparent p-1.5 text-xs text-surface outline-none focus:border-accent"
+        @input="editDraft"
+      />
+      <div class="mt-2 flex justify-end gap-1.5">
+        <button
+          class="rounded px-2 py-1 text-xs text-muted hover:bg-hover"
+          @click="cancelSteeringFeedback(store)"
+        >
+          Cancel
+        </button>
+        <button
+          class="rounded bg-accent px-2 py-1 text-xs text-white"
+          @click="confirmSteeringFeedback(store)"
+        >
+          Confirm
+        </button>
+      </div>
+    </div>
+
+    <div
+      v-if="confirmedCount > 0 && !mismatch.steeringDraft"
+      class="absolute inset-x-2 bottom-2 rounded border border-border bg-panel p-2 shadow"
+    >
+      <p class="mb-2 text-[10px] text-muted">
+        Feedback saved. Add feedback to another marker, or continue when you’re ready.
+      </p>
+      <button
+        class="w-full rounded bg-accent px-2 py-1.5 text-xs text-white"
+        @click="resumeAfterAnswers"
+      >
+        Apply feedback and continue
+      </button>
+    </div>
 
     <div
       v-if="hoveredNote"

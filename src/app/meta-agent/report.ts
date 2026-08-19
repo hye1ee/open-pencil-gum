@@ -1,4 +1,5 @@
 import type { MarkAnswer } from '@/app/ai/chat/mismatch'
+import { signed } from '@/app/meta-agent/judge'
 import type { Mark, MarkNote } from '@/app/meta-agent/judge'
 import type { FeedbackNote } from '@/app/user-model/pipeline'
 
@@ -13,6 +14,35 @@ export interface MarkReport {
   answered: MarkAnswer[]
   /** Raised this turn and never answered. */
   agreed: Mark[]
+}
+
+export interface InterruptedStep {
+  reasoning: string
+  pendingActions: Array<{ toolName: string; input: unknown }>
+}
+
+interface PendingToolPart {
+  toolCallId: unknown
+  state?: unknown
+  toolName?: unknown
+  type?: unknown
+  input?: unknown
+}
+
+export function pendingActionsFromParts(
+  parts: readonly unknown[]
+): InterruptedStep['pendingActions'] {
+  return parts.flatMap((part) => {
+    if (typeof part !== 'object' || part === null || !('toolCallId' in part)) return []
+    const row = part as PendingToolPart
+    if (row.state === 'output-available' || row.state === 'output-error') return []
+    let toolName = 'unknown tool'
+    if (typeof row.toolName === 'string') toolName = row.toolName
+    else if (typeof row.type === 'string' && row.type.startsWith('tool-')) {
+      toolName = row.type.slice(5)
+    }
+    return [{ toolName, input: row.input }]
+  })
 }
 
 function latestNote(mark: Mark): MarkNote | null {
@@ -65,7 +95,8 @@ export function hasContent(report: MarkReport): boolean {
 export function renderReportForAgent(
   report: MarkReport,
   stepNumber: number,
-  request: string
+  request: string,
+  interrupted?: InterruptedStep
 ): string {
   const lines: string[] = [
     `[Interrupted at step ${stepNumber}]`,
@@ -82,11 +113,29 @@ export function renderReportForAgent(
     `The request has not changed. They asked for: ${request}`
   ]
 
+  if (interrupted?.reasoning) {
+    lines.push('', 'Reasoning from the interrupted step:', interrupted.reasoning)
+  }
+  const actions = (interrupted?.pendingActions ?? []).map(({ toolName, input }) => {
+    const detail = JSON.stringify(input) ?? ''
+    return `${toolName}(${detail.length > 800 ? `${detail.slice(0, 800)}…` : detail})`
+  })
+  if (actions.length > 0) {
+    lines.push('', 'Actions being prepared in that step:')
+    for (const action of actions) lines.push(`- ${action}`)
+    lines.push('Pending actions above were not applied to the canvas.')
+  }
+
   if (report.answered.length > 0) {
     lines.push('', 'What they replied to:')
     for (const answer of report.answered) {
       const where = answer.nodeId === null ? 'the design as a whole' : `node ${answer.nodeId}`
       lines.push(`- about ${where}, they were shown: "${answer.note}"`)
+      if (answer.fromRating !== undefined && answer.toRating !== undefined) {
+        lines.push(
+          `  they moved the marker from ${signed(answer.fromRating)} to ${signed(answer.toRating)}`
+        )
+      }
       lines.push(`  they said: ${answer.text}`)
     }
   }
@@ -115,14 +164,18 @@ export function feedbackNotes(report: MarkReport): FeedbackNote[] {
       quote: answer.quote,
       citedId: answer.citedId,
       relation: answer.relation,
-      reply: answer.text
+      reply: answer.text,
+      fromRating: answer.fromRating ?? null,
+      toRating: answer.toRating ?? null
     })),
     ...report.agreed.map((mark) => ({
       note: noteOf(mark),
       quote: latestNote(mark)?.evidence.fromReasoning ?? '',
       citedId: citedProposition(mark),
       relation: mark.relation,
-      reply: null
+      reply: null,
+      fromRating: null,
+      toRating: null
     }))
   ]
 }

@@ -163,7 +163,9 @@ A note that said the agent was FOLLOWING a proposition:
 
 A note that rested on nothing was raised where the model had nothing to say. Whatever they did with it is the first thing we know about that subject.
 
-An answer is stronger evidence than silence, because someone who says nothing may have agreed or may not have looked. Two separate rules follow, and they are about different propositions:
+When the person moved a marker, the destination and their approved reply are one piece of explicit feedback. Read the reply for what it actually says. It may defend or weaken an existing proposition, narrow its scope, reveal a new preference, or support several changes at once. The marker movement says how strongly this build should follow the current reasoning versus the cited proposition; it does not by itself say that the proposition is universally true or false.
+
+The person reviews every mark before continuing. Leaving one alone is deliberate agreement, not a sign that they may have missed it. Two separate rules follow, and they are about different propositions:
 
 - A proposition you are writing for the first time on silence alone STARTS at 5 or below. This is a starting value for a sentence that has never been in the model.
 - A proposition already in the model MOVES ONE STEP from the confidence it currently has. Up on silence that confirmed it, down on silence that broke it. Five is not a ceiling, a floor, or a resting place: a proposition at 9 that just held up goes to 10, not to 5.
@@ -233,8 +235,8 @@ Do not check whether the sentences look alike. Ask what would have to happen for
 
 So before writing a new proposition, look through the model for one that already makes the same claim. If it is there:
   - the claim agrees with it → raise its confidence and write nothing new.
-  - the claim goes against it → lower its confidence, and write the new one. This pair is the record: here is what we believed, and here is what we then watched them accept. Only a contradiction earns a second sentence.
-  - the claim is the same but more specific → still nothing new. A sharper wording is not available to you, and a second sentence is not a substitute for one.
+  - the claim goes against it → lower its confidence, and write the new one. This pair is the record: here is what we believed, and here is what we then watched them accept.
+  - the claim is the same but narrower — it names a case where the belief holds, or one where it does not → write the new one, and leave the existing confidence where the note put it. The wording of what is already there cannot be sharpened, so a second sentence is the only place the case can go. What is not allowed is the same claim at the same width in different words.
 
 Two more requirements:
 
@@ -270,6 +272,8 @@ export interface FeedbackNoteView {
   citedId: string | null
   relation: 'conflict' | 'alignment' | 'unknown'
   reply: string | null
+  fromRating?: number | null
+  toRating?: number | null
 }
 
 /** Spelled out, not labelled: which way the note pointed decides what silence
@@ -287,10 +291,14 @@ function renderNote(note: FeedbackNoteView, index: number): string {
       : `  rested on: ${note.citedId}`
   const answer =
     note.reply === null ? '  they said nothing and let it stand' : `  they replied: "${note.reply}"`
+  const moved =
+    note.fromRating == null || note.toRating == null
+      ? ''
+      : `\n  they moved the marker from ${note.fromRating} to ${note.toRating}`
   return (
     `${index + 1}. shown to them: "${note.note}"\n` +
     `  read off the agent's words: "${note.quote}"\n` +
-    `${rests}\n  ${WHAT_THE_NOTE_SAID[note.relation]}\n${answer}`
+    `${rests}\n  ${WHAT_THE_NOTE_SAID[note.relation]}${moved}\n${answer}`
   )
 }
 
