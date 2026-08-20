@@ -241,6 +241,12 @@ Two propositions are the same claim when they would be confirmed and broken by t
 
 Do not check whether the sentences look alike. Ask what would have to happen for each to be wrong, and if the answer is the same thing, it is the same claim.
 
+Before using \`id: null\`, perform that test against every proposition you were given. First write the event that would confirm the proposed sentence and the event that would break it. If an existing proposition would move on those same events, return that existing id and adjust its confidence instead. Changing the subject from "the layout" to "what they see", or adding "collective", "structural", "before details", or another contextual phrase does not make a new preference.
+
+  Existing:  "Prefers establishing the structural layout of card rows before filling them with components."
+  Proposed:  "Prefers to see the collective structural layout of a row before individual card details are rendered."
+             Same confirming event, same breaking event. Update the existing proposition; never create the proposed one.
+
 So before writing a new proposition, look through the model for one that already makes the same claim. If it is there:
   - the claim agrees with it → raise its confidence and write nothing new.
   - the claim goes against it → lower its confidence, and write the new one. This pair is the record: here is what we believed, and here is what we then watched them accept.
@@ -268,6 +274,7 @@ For each proposition you change, return:
 
 Rules:
 - Work through every note, answered and left-alone alike. The answered notes are easy to notice and easy to handle on their own; the rest are the other half of the same feedback.
+- Before returning any \`id: null\`, verify that no existing proposition would be confirmed and broken by the same events. When in doubt, update the existing proposition or return no new proposition.
 - Leave a proposition out of your response entirely if it needs no change.
 - Nothing is ever deleted. Confidence 1 is how a proposition retires.
 

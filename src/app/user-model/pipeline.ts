@@ -46,6 +46,20 @@ export interface Proposition {
   revisions: number
 }
 
+export function restoreSavedPropositions(saved: SavedProposition[]): Proposition[] {
+  return saved.map((proposition) => ({
+    ...proposition,
+    originalText: proposition.originalText || proposition.text,
+    originalEmbedding: proposition.originalEmbedding?.length
+      ? proposition.originalEmbedding
+      : proposition.embedding,
+    revisions: proposition.revisions ?? 0,
+    rationale: proposition.rationale ?? null,
+    rationaleGrounds: proposition.rationaleGrounds ?? null,
+    rationaleFrom: proposition.rationaleFrom ?? []
+  }))
+}
+
 /** Drift tracking arrived after the first files were written, so those fields
  * may be absent rather than `load` pretending otherwise. */
 export type SavedProposition = Omit<
@@ -648,18 +662,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     observe,
 
     load(saved) {
-      // A file predating drift tracking has no original, so take where it is
-      // now as where it started.
-      propositions = saved.map((p) => ({
-        ...p,
-        originalText: p.originalText || p.text,
-        originalEmbedding: p.originalEmbedding?.length ? p.originalEmbedding : p.embedding,
-        revisions: p.revisions ?? 0,
-        // Written before rationales existed, or never given one.
-        rationale: p.rationale ?? null,
-        rationaleGrounds: p.rationaleGrounds ?? null,
-        rationaleFrom: p.rationaleFrom ?? []
-      }))
+      propositions = restoreSavedPropositions(saved)
     },
 
     clear() {

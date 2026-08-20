@@ -14,7 +14,8 @@ import {
   canBuildUserModel,
   clearSaved,
   createPropositionSink,
-  frameNote
+  frameNote,
+  loadSavedUserModel
 } from '@/app/user-model/use'
 
 const INTERVAL_MS = 5000
@@ -30,6 +31,8 @@ const INTERVAL_MS = 5000
  */
 export function usePageCapture(): void {
   if (!import.meta.env.DEV) return
+
+  void loadSavedUserModel()
 
   let capture: PageCapture | null = null
   let userModel: UserModel | null = null

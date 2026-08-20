@@ -291,7 +291,7 @@ function revisionPath(from: TimelinePoint, to: TimelinePoint): string {
         >
           <icon-lucide-route class="size-3" />
         </span>
-        <span class="text-xs font-semibold">Steering Space</span>
+        <span class="text-xs font-semibold">Decision Trace</span>
       </div>
       <template v-if="timelineDraft">
         <span class="max-w-28 truncate text-[10px] font-medium text-muted">

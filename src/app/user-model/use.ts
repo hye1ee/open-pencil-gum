@@ -8,7 +8,12 @@ import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
 import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
-import { createUserModel, type FeedbackNote, type UserModel } from '@/app/user-model/pipeline'
+import {
+  createUserModel,
+  restoreSavedPropositions,
+  type FeedbackNote,
+  type UserModel
+} from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 
@@ -16,6 +21,11 @@ import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user
  * and where the propositions are kept. `pipeline.ts` knows none of it. */
 
 export { canBuildUserModel }
+
+export async function loadSavedUserModel(): Promise<void> {
+  const saved = await load()
+  if (saved.length > 0) setPropositions(restoreSavedPropositions(saved))
+}
 
 /** A frame's worth of tool history; the capture cadence is five seconds. */
 const NOTE_WINDOW_MS = 6000

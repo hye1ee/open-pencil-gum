@@ -25,7 +25,7 @@ const feedbackContentsSchema = v.object({
 export const MARK_TOOLS = {
   generate_related_mark: tool({
     description:
-      'Create one genuinely new mark only when a proposition covers the decision and a meaningful steering range exists between it and the reasoning. Never when they say the same thing or when the decision is already listed.',
+      'Create one genuinely new mark only when following the reasoning and following the proposition would produce meaningfully different actions or visible results. If both ends produce substantially the same result, adjective changes do not create a valid range: call no tool. Never repeat a listed decision.',
     inputSchema: valibotSchema(
       v.object({
         ...shared,
@@ -47,7 +47,7 @@ export const MARK_TOOLS = {
   }),
   update_mark: tool({
     description:
-      'Update a standing mark, or revive a retired mark with the same id when the decision returns. Send whichever of the two payloads the decision now has. Preserve whether the reasoning is only considering or actually intending a choice.',
+      'Update or revive a mark only when the old and new reasoning ask the same user decision and could be answered by the same feedback instruction. A shared node, nearby timing, or available retired id is not enough; generate a new mark for a different question. Preserve whether reasoning is considering or intending.',
     inputSchema: valibotSchema(
       v.object({
         id: v.string(),
