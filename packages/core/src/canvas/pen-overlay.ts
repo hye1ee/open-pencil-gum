@@ -249,20 +249,14 @@ export function drawRemoteCursors(
       }
     }
 
-    // Swells the arrow and lifts a soft halo behind it. The agent cursor beats
-    // this while it is working; the swell is why the label offsets below track
-    // `S` rather than `CURSOR_SIZE`, or the arrow would grow into its nameplate.
+    // Keep the arrow still and pulse only its halo. Scaling the cursor made both
+    // the pointer and its nameplate look restless while the agent was working.
     const emphasis = cursor.emphasis ?? 0
-    const S = CURSOR_SIZE * (1 + 0.3 * emphasis)
+    const S = CURSOR_SIZE
 
     if (emphasis > 0.01) {
-      r.auxFill.setColor(r.ck.Color4f(cr, g, b, 0.2 * emphasis))
-      canvas.drawCircle(
-        screenX + S * 0.45,
-        screenY + S * 0.6,
-        S * (1.3 + 0.5 * emphasis),
-        r.auxFill
-      )
+      r.auxFill.setColor(r.ck.Color4f(cr, g, b, 0.16 * emphasis))
+      canvas.drawCircle(screenX + S * 0.45, screenY + S * 0.6, S * 1.55, r.auxFill)
     }
 
     const path = new r.ck.Path()
@@ -288,9 +282,8 @@ export function drawRemoteCursors(
       const font = r.labelFont
       if (font) {
         font.setSize(LABEL_FONT_SIZE)
-        // Shift with the swell so a hovered arrow doesn't grow into its own label.
-        const labelX = screenX + LABEL_OFFSET_X + (S - CURSOR_SIZE)
-        const labelY = screenY + LABEL_OFFSET_Y + (S - CURSOR_SIZE)
+        const labelX = screenX + LABEL_OFFSET_X
+        const labelY = screenY + LABEL_OFFSET_Y
 
         // The attention count lives inside the nameplate rather than in a chip of
         // its own: the cursor, its name and what it is watching are one presence,

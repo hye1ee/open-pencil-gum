@@ -51,7 +51,7 @@ const PULSE_MS = 1600
  */
 const TICK_MS = 40
 const REVEAL_MS = 700
-const REVEAL_START = 0.18
+const REVEAL_START = 0
 
 /**
  * Every change gets this, so nothing ever just appears.
@@ -144,12 +144,18 @@ export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promi
   if (shouldReveal) {
     const started = performance.now()
     return new Promise((resolve) => {
+      let lastFrame = started
+      let held = 0
+
       function frame(now: number): void {
-        const progress = Math.min(1, (now - started) / REVEAL_MS)
+        if (isTurnPaused()) held += now - lastFrame
+        lastFrame = now
+        const progress = Math.min(1, (now - started - held) / REVEAL_MS)
         const eased = 1 - (1 - progress) ** 3
         write(REVEAL_START + (1 - REVEAL_START) * eased)
         if (progress < 1) requestAnimationFrame(frame)
         else {
+          if (held > 0) logTurnHeld('preview', held)
           onSettled?.(previewIds)
           resolve()
         }

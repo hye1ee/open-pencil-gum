@@ -1,4 +1,4 @@
-import { AI_ACTIVE_COLOR, AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
+import { AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
@@ -17,10 +17,9 @@ import type { EditorStore } from '@/app/editor/active-store'
  * orbit to feel alive, but a cursor circling on its own — including between
  * actions, which is most of a step — reads as a loading spinner.
  *
- * So the sign that it is working is carried by colour and a halo rather than by
- * motion: while a turn is advancing the arrow beats between its resting violet
- * and the blue the agent already uses on the node it is touching. Position stays
- * honest — it points where the work is, and stands still when there is none.
+ * So the sign that it is working is a soft halo rather than motion. The arrow
+ * keeps its resting violet and its position stays honest — it points where the
+ * work is, and stands still when there is none.
  *
  * Nothing here answers the pointer. The cursor used to be draggable, and
  * grabbing it paused the turn; pointing at a mismatch marker does that now, and
@@ -46,9 +45,8 @@ const FOLLOW = 0.08 // easing toward the goal per frame
 const ENERGY_FOLLOW = 0.06
 
 /**
- * Peak halo at full pulse. Kept low because the arrow is nine pixels and the
- * renderer scales it with the same number — a bigger swell drags the nameplate
- * around with it, which reads as jitter rather than breathing.
+ * Peak halo at full pulse. The renderer keeps the arrow and nameplate fixed;
+ * this value changes only the glow intensity.
  */
 const WORKING_EMPHASIS = 0.5
 
@@ -59,15 +57,6 @@ interface AgentCursorState {
   energy: number
   rafId: number
   active: boolean
-}
-
-function mixColor(from: Color, to: { r: number; g: number; b: number }, t: number): Color {
-  return {
-    r: from.r + (to.r - from.r) * t,
-    g: from.g + (to.g - from.g) * t,
-    b: from.b + (to.b - from.b) * t,
-    a: 1
-  }
 }
 
 const states = new WeakMap<EditorStore, AgentCursorState>()
@@ -131,9 +120,7 @@ function frame(store: EditorStore, state: AgentCursorState): void {
 
   store.state.agentCursor = {
     name: 'Agent',
-    // Toward the blue the agent already uses to mark what it is touching, so
-    // "this is the agent working" is one colour across the canvas.
-    color: mixColor(RESTING_COLOR, AI_ACTIVE_COLOR, beat),
+    color: RESTING_COLOR,
     x: state.cur.x,
     y: state.cur.y,
     emphasis: beat * WORKING_EMPHASIS
