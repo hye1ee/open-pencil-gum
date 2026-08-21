@@ -1,5 +1,6 @@
 import { reactive, shallowRef } from 'vue'
 
+import { USER_MODEL_FIXTURE, userModelFixtureEnabled } from '@/app/user-model/fixture'
 import type { PipelineStage, Proposition } from '@/app/user-model/pipeline'
 
 /** The in-memory mirror of `captures/user-model.json` plus the status the panel
@@ -28,7 +29,9 @@ export const userModel = reactive({
 })
 
 /** Most recently revised first — that is where the activity is. */
-export const propositions = shallowRef<Proposition[]>([])
+export const propositions = shallowRef<Proposition[]>(
+  userModelFixtureEnabled ? structuredClone(USER_MODEL_FIXTURE) : []
+)
 
 /** Set once capture starts, so the panel's reset button has something to call. */
 let resetHandler: (() => void) | null = null

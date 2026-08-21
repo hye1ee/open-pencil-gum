@@ -88,6 +88,10 @@ export function embeddingApiKey(): string {
   return readEnv(import.meta.env.VITE_OPENAI_API_KEY)
 }
 
+export function feedbackImageApiKey(): string {
+  return API_KEY_BY_PROVIDER.openai || settingsKeyFor('openai') || embeddingApiKey()
+}
+
 const KNOWN_PROVIDERS = new Set<string>(AI_PROVIDERS.map((provider) => provider.id))
 
 /** Providers whose model ID travels in `customModelID` — see `resolveLanguageModelID`. */

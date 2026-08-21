@@ -9,7 +9,7 @@ import { CORE_TOOLS, toolsToAI } from '@open-pencil/core/tools'
 import type { StepBudget, ToolDef, ToolLogEntry } from '@open-pencil/core/tools'
 import type { SceneNode } from '@open-pencil/scene-graph'
 
-import { previewAgentChange } from '@/app/ai/chat/action-preview'
+import { previewAgentChange, stageAgentChange } from '@/app/ai/chat/action-preview'
 import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logBlocked, logToolCall, logToolError, logToolResult } from '@/app/ai/chat/agent-log'
 import { guardMutation } from '@/app/ai/chat/guard'
@@ -234,7 +234,7 @@ export function createAITools(store: EditorStore) {
           // The result names what was actually created or changed; prefer it
           // over the guess made from the arguments.
           touched = nodeIds
-          store.aiFlashDone(nodeIds)
+          if (!stageAgentChange(store, nodeIds)) store.aiFlashDone(nodeIds)
           setAgentCursorTarget(store, nodeIds[0])
         }
       },
@@ -242,8 +242,10 @@ export function createAITools(store: EditorStore) {
         runState.toolLog.push(entry)
         logToolCall(entry.tool, entry.args)
         if (entry.error) logToolError(entry.tool, entry.error, entry.durationMs)
-        else if (isSkipped(entry.result)) logBlocked(entry.tool, String(entry.result.reason ?? ''))
-        else logToolResult(entry.tool, entry.result, entry.durationMs)
+        else if (isSkipped(entry.result)) {
+          const reason = entry.result.reason
+          logBlocked(entry.tool, typeof reason === 'string' ? reason : 'blocked')
+        } else logToolResult(entry.tool, entry.result, entry.durationMs)
       },
       getStepBudget: (): StepBudget => ({
         current: runState.currentSteps,

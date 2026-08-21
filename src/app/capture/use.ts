@@ -2,6 +2,7 @@ import { useEventListener, useIntervalFn } from '@vueuse/core'
 import { onScopeDispose } from 'vue'
 
 import { startPageCapture, type PageCapture } from '@/app/capture/page-capture'
+import { userModelFixtureEnabled } from '@/app/user-model/fixture'
 import type { UserModel } from '@/app/user-model/pipeline'
 import {
   beginSession,
@@ -29,7 +30,7 @@ const INTERVAL_MS = 5000
  * the first thing anyone does here.
  */
 export function usePageCapture(): void {
-  if (!import.meta.env.DEV) return
+  if (!import.meta.env.DEV || userModelFixtureEnabled) return
 
   let capture: PageCapture | null = null
   let userModel: UserModel | null = null

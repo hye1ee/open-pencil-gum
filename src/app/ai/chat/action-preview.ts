@@ -50,6 +50,8 @@ const PULSE_MS = 1600
  * 25 is smooth enough for a slow breath at a fraction of that.
  */
 const TICK_MS = 40
+const REVEAL_MS = 700
+const REVEAL_START = 0.18
 
 /**
  * Every change gets this, so nothing ever just appears.
@@ -83,25 +85,52 @@ function breath(elapsedMs: number): number {
  * ring `tools → meta-agent → tools`. Same reason as `setReasoningObserver`.
  */
 let onSettled: ((nodeIds: readonly string[]) => void) | null = null
+let revealNextPreview = false
+const stagedOriginals = new WeakMap<EditorStore, Map<string, number>>()
 
 export function setPreviewSettledObserver(observer: (nodeIds: readonly string[]) => void): void {
   onSettled = observer
 }
 
+export function revealNextAgentChange(): void {
+  revealNextPreview = true
+}
+
+export function resetAgentChangeReveal(): void {
+  revealNextPreview = false
+}
+
+/** Hide a just-created result before its first paint. The tool only learns a
+ * created node's id after execution, so this is called as soon as that result
+ * is decoded and hands the original opacity to `previewAgentChange`. */
+export function stageAgentChange(store: EditorStore, nodeIds: string[]): boolean {
+  if (!revealNextPreview) return false
+  const originals = stagedOriginals.get(store) ?? new Map<string, number>()
+  for (const id of nodeIds) {
+    const node = store.graph.getNode(id)
+    if (!node || originals.has(id)) continue
+    originals.set(id, node.opacity)
+    store.graph.updateNodePreview(id, { opacity: node.opacity * REVEAL_START })
+  }
+  if (originals.size === 0) return false
+  stagedOriginals.set(store, originals)
+  store.requestRepaint()
+  return true
+}
+
 export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promise<void> {
+  const shouldReveal = revealNextPreview
+  revealNextPreview = false
+  const staged = stagedOriginals.get(store)
   const original = new Map<string, number>()
   for (const id of nodeIds) {
     const node = store.graph.getNode(id)
-    if (node) original.set(id, node.opacity)
+    const opacity = staged?.get(id) ?? node?.opacity
+    if (opacity !== undefined) original.set(id, opacity)
+    staged?.delete(id)
   }
+  if (staged?.size === 0) stagedOriginals.delete(store)
   if (original.size === 0) return Promise.resolve()
-
-  // Only a warning lengthens it. A question about the design is not something to
-  // stop the change for — it is answered by looking at the result, which is
-  // easier once the preview is out of the way.
-  const previewIds = [...original.keys()]
-  const duration = hasWarnings(previewIds) ? HOLD_MS : BEAT_MS
-  const started = performance.now()
 
   function write(factor: number): void {
     for (const [id, opacity] of original) {
@@ -110,6 +139,31 @@ export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promi
     }
     store.requestRepaint()
   }
+
+  const previewIds = [...original.keys()]
+  if (shouldReveal) {
+    const started = performance.now()
+    return new Promise((resolve) => {
+      function frame(now: number): void {
+        const progress = Math.min(1, (now - started) / REVEAL_MS)
+        const eased = 1 - (1 - progress) ** 3
+        write(REVEAL_START + (1 - REVEAL_START) * eased)
+        if (progress < 1) requestAnimationFrame(frame)
+        else {
+          onSettled?.(previewIds)
+          resolve()
+        }
+      }
+      write(REVEAL_START)
+      requestAnimationFrame(frame)
+    })
+  }
+
+  // Only a warning lengthens it. A question about the design is not something to
+  // stop the change for — it is answered by looking at the result, which is
+  // easier once the preview is out of the way.
+  const duration = hasWarnings(previewIds) ? HOLD_MS : BEAT_MS
+  const started = performance.now()
 
   return new Promise((resolve) => {
     let lastWrite = -Infinity

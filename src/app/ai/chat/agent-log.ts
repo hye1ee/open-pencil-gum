@@ -188,6 +188,24 @@ export function logJudgment(chars: number, marks: string[]): void {
   writeBlock('META', `${chars} chars →\n${marks.join('\n')}`)
 }
 
+export function logFeedbackNote(
+  step: number,
+  position: number,
+  relationship: 'alignment' | 'conflict' | 'uncovered' | null,
+  mode: 'text' | 'visual' | null,
+  nodeId: string | null,
+  detail?: string
+): void {
+  write(
+    'NOTE',
+    `step ${step}${position > 0 ? ` note ${position}` : ''} → ${relationship ? `${relationship}/${mode}` : 'skip'}${relationship ? `  ${nodeId ?? 'agent cursor'}` : ''}${detail ? `  ${detail}` : ''}`
+  )
+}
+
+export function logFeedbackNoteImage(id: string, status: 'ready' | 'failed'): void {
+  write('NOTE-IMG', `${id} → ${status}`)
+}
+
 export function logJudgeSkip(chars: number): void {
   write('META', `${chars} chars → skipped, a judgment was already running`)
 }

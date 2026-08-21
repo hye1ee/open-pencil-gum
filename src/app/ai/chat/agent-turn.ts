@@ -41,7 +41,7 @@ let resolvers: Array<() => void> = []
  * - `feedback` — the chat input is open against a mark. Released when that
  *   feedback is sent or dismissed, which can be a minute later.
  */
-export type TurnHold = 'new-mark' | 'marker' | 'feedback'
+export type TurnHold = 'new-mark' | 'marker' | 'feedback' | 'feedback-note'
 
 const holds = new Set<TurnHold>()
 
@@ -59,9 +59,9 @@ const holds = new Set<TurnHold>()
  */
 let abandoned = false
 
-export function abandonTurn(): void {
+export function abandonTurn(reason = 'unknown source'): void {
   abandoned = true
-  logTurnAbandoned('turn abandoned — the stream drops whatever it was holding')
+  logTurnAbandoned(`turn abandoned by ${reason} — the stream drops whatever it was holding`)
   resumeTurn()
 }
 

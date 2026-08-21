@@ -183,7 +183,7 @@ async function handleSubmit(text: string) {
  * every hold, so a run stopped mid-hold cannot leave the app paused forever.
  */
 function handleStop() {
-  abandonTurn()
+  abandonTurn('stop button')
   void chat.value?.stop()
   releaseAnswerHold()
 }
@@ -225,7 +225,7 @@ async function handleMarkResume() {
   // for the hold to lift, and lifting it is what sends it through. This says the
   // turn is being thrown away, so the transform drops it instead.
   if (wasRunning && hasContent(report)) {
-    abandonTurn()
+    abandonTurn('marker feedback restart')
     await chat.value?.stop()
   }
   releaseAnswerHold()

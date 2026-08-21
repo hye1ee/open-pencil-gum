@@ -17,8 +17,7 @@ import {
   logStep,
   logTurnAbandoned,
   logUsage,
-  logUserMessage,
-  logUserModelPropositions
+  logUserMessage
 } from '@/app/ai/chat/agent-log'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
@@ -34,7 +33,6 @@ import {
   clearUserMessages,
   drainUserMessages
 } from '@/app/ai/chat/user-messages'
-import { renderUserModelPropositions } from '@/app/ai/chat/user-model-propositions'
 import { describeModelRouting, modelConfigForSlot } from '@/app/ai/model-routing'
 import {
   MAX_AGENT_STEPS,
@@ -46,7 +44,7 @@ import {
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { noteAgentPlan } from '@/app/meta-agent/events'
-import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
+import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -213,12 +211,6 @@ export function createToolLoopTransport({
   // into its own transcript, so it can be re-injected every step.
   let plan: string | null = null
 
-  // The user model's propositions as the building side is told them, rebuilt at
-  // each call so a restart after feedback carries the revised ones. Held rather
-  // than recomputed per step: the planning calls want the same text the system
-  // prompt got.
-  let userModelPropositions: string | null = null
-
   const agent = new ToolLoopAgent({
     model,
     instructions: SYSTEM_PROMPT,
@@ -254,22 +246,9 @@ export function createToolLoopTransport({
       clearAgentSpeech()
       await startMetaAgentTurn(store, submittedRequest)
       showAgentCursor(store)
-      // After `startMetaAgentTurn`, which waits for any revision still in flight
-      // and then reads the model once for the whole turn. Rebuilt here on every
-      // call rather than once at construction, so the turn restarted after
-      // someone answers a marker is instructed with the model their answer just
-      // changed — which is the whole reason the answer was worth taking.
-      userModelPropositions = renderUserModelPropositions(runUserModel())
-      if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       return {
         ...options,
-        // Built from the constant rather than from `options.instructions`,
-        // which is typed wide enough to be a message array. Nothing accumulates
-        // either way — what arrives here is the configured value, not what the
-        // last call returned.
-        instructions: userModelPropositions
-          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
-          : SYSTEM_PROMPT,
+        instructions: SYSTEM_PROMPT,
         maxOutputTokens,
         providerOptions: callProviderOptions
       }
@@ -292,13 +271,7 @@ export function createToolLoopTransport({
       for (const text of userMessages) logUserMessage(text)
 
       if (stepNumber === 0) {
-        plan = await runPlan(
-          planningModel,
-          store,
-          lastUserText(messages),
-          image,
-          userModelPropositions
-        )
+        plan = await runPlan(planningModel, store, lastUserText(messages), image, null)
         // The meta-agent needs it to tell a decision the agent made from one the
         // planning call made for it.
         noteAgentPlan(plan)
@@ -311,7 +284,7 @@ export function createToolLoopTransport({
           store,
           plan,
           { edits: diff, messages: userMessages },
-          userModelPropositions
+          null
         )
         noteAgentPlan(plan)
         logPlan(plan, true)

@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import type { LanguageModel } from 'ai'
 
-import { setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
+import { resetAgentChangeReveal, setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
 import {
   logJudgeError,
   logJudgeLifecycle,
@@ -20,6 +20,8 @@ import {
 } from '@/app/ai/model-routing'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
+import { considerFeedbackNotesForStep } from '@/app/feedback-note/meta'
+import { resetFeedbackNoteHistory, resetFeedbackNotes } from '@/app/feedback-note/use'
 import {
   actionsSoFar,
   propositionsForRun,
@@ -62,6 +64,9 @@ function judgeModel(): LanguageModel {
 let agent: MetaAgent | null = null
 let request = ''
 let runPropositions: Proposition[] = []
+let runStore: EditorStore | null = null
+const feedbackNotesEnabled = import.meta.env.VITE_FEEDBACK_NOTE_EXPERIMENT === 'true'
+let feedbackNoteTask: Promise<void> = Promise.resolve()
 
 /** One line per mark. The quoted words are the only way to tell a mark that
  * answers the reasoning from one the model reached for. */
@@ -144,11 +149,13 @@ export function noteSettledMarks(notes: SettledNote[]): void {
 
 /** A new turn: what the user asked for, and a clean slate. */
 export async function startMetaAgentTurn(store: EditorStore, userText: string): Promise<void> {
+  runStore = store
   // A restart keeps the same request, so a changed one is what says the last
   // build's answers no longer describe what is being built.
   if (userText !== request) {
     settled = []
     forgetReportedMarks()
+    resetFeedbackNoteHistory()
   }
   request = userText
   noteAgentPlan(null)
@@ -160,7 +167,10 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   runPropositions = propositionsForRun(await loadSavedUserModel())
   const withheld = runPropositions.filter((p) => !p.shownToAgent).length
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
-  ensureAgent(store).beginTurn()
+  resetFeedbackNotes()
+  feedbackNoteTask = Promise.resolve()
+  if (feedbackNotesEnabled) setMarks(store, [])
+  else ensureAgent(store).beginTurn()
 }
 
 // Hung off the preview rather than the tool call: the preview is the window
@@ -180,18 +190,32 @@ setMarkDismissedObserver((id) => {
 // Registered here because the tap must not import anything that builds a model.
 setReasoningObserver({
   start: () => {
-    agent?.beginStep()
+    if (feedbackNotesEnabled) resetAgentChangeReveal()
+    if (!feedbackNotesEnabled) agent?.beginStep()
   },
-  chunk: (reasoning) => {
-    considerReasoning(reasoning)
+  chunk: (_reasoningChunk, reasoningSoFar) => {
+    if (!feedbackNotesEnabled) considerReasoning(reasoningSoFar)
   },
-  settled: () => agent?.settled() ?? Promise.resolve()
+  end: (reasoning) => {
+    const store = runStore
+    if (!feedbackNotesEnabled || !store) return
+    feedbackNoteTask = feedbackNoteTask.then(() =>
+      considerFeedbackNotesForStep({
+        store,
+        request,
+        plan: currentPlan(),
+        reasoning,
+        propositions: runPropositions
+      })
+    )
+  },
+  settled: () => (feedbackNotesEnabled ? feedbackNoteTask : (agent?.settled() ?? Promise.resolve()))
 })
 
 /** Standing marks plus retired ones. Not the marks the meta-agent withdrew,
  * which were never the person's to accept. */
 export function marksAwaitingAnswer(): Mark[] {
-  return agent?.answerable ?? []
+  return feedbackNotesEnabled ? [] : (agent?.answerable ?? [])
 }
 
 /** So a turn restarted after feedback keeps the request rather than treating

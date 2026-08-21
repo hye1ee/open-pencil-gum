@@ -1,3 +1,4 @@
+import { USER_MODEL_FIXTURE, userModelFixtureEnabled } from '@/app/user-model/fixture'
 import type { Proposition, SavedProposition } from '@/app/user-model/pipeline'
 
 /** Two files: `captures/user-model.json` is the state, rewritten whole on every
@@ -7,6 +8,7 @@ const MODEL_ENDPOINT = '/__user-model'
 const AUDIT_ENDPOINT = '/__propositions'
 
 export function save(propositions: Proposition[]): Promise<void> {
+  if (userModelFixtureEnabled) return Promise.resolve()
   return fetch(MODEL_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -27,6 +29,7 @@ function isSaved(value: unknown): value is SavedModel {
 }
 
 export function load(): Promise<SavedProposition[]> {
+  if (userModelFixtureEnabled) return Promise.resolve(structuredClone(USER_MODEL_FIXTURE))
   return fetch(MODEL_ENDPOINT)
     .then((response) => (response.ok ? response.json() : null))
     .then((data: unknown) =>

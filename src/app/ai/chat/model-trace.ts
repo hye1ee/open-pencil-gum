@@ -49,8 +49,10 @@ type StreamPart =
 interface ReasoningObserver {
   /** A fresh block of thinking has begun; whatever came before is finished. */
   start(): void
-  /** Everything thought in this block so far. */
-  chunk(reasoningSoFar: string): void
+  /** One provider chunk and everything thought in this block so far. */
+  chunk(reasoningChunk: string, reasoningSoFar: string): void
+  /** The completed block, before the agent's action is released. */
+  end(reasoning: string): void
   /** Resolves once the watcher has finished answering everything it has been
    * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
   settled(): Promise<void>
@@ -157,6 +159,7 @@ const middleware: LanguageModelMiddleware = {
     // into the canvas speech bubble; the meta-agent still needs the stream, but
     // exposing the model's private work there adds visual noise.
     let thinking = ''
+    let reasoningClosed = false
     let text = ''
     // Repeats collapsed to a count — a step is mostly deltas, and the question
     // this answers is which part types arrive and in what order.
@@ -179,6 +182,7 @@ const middleware: LanguageModelMiddleware = {
         seen(chunk.type)
         if (chunk.type === 'reasoning-start') {
           thinking = ''
+          reasoningClosed = false
           observeReasoning?.start()
         } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
@@ -186,7 +190,7 @@ const middleware: LanguageModelMiddleware = {
           // thought has arrived cannot do it from half a sentence. Not awaited
           // — it answers on its own clock, and the beat below is what gives it
           // room, not this call.
-          observeReasoning?.chunk(thinking)
+          observeReasoning?.chunk(chunk.delta, thinking)
           await beat(BETWEEN_THOUGHTS_MS)
           // The step boundary is the other place the turn can be held, and it
           // can be twenty seconds away. Someone who points at a marker while the
@@ -198,6 +202,8 @@ const middleware: LanguageModelMiddleware = {
             return
           }
         } else if (chunk.type === 'reasoning-end') {
+          if (!reasoningClosed) observeReasoning?.end(thinking)
+          reasoningClosed = true
           logThinking(thinking)
           thinking = ''
           // Keep a short beat before the agent switches from thinking to
@@ -212,6 +218,10 @@ const middleware: LanguageModelMiddleware = {
           sayAgent(text)
           text = ''
         } else if (chunk.type === 'tool-input-start') {
+          if (!reasoningClosed && thinking.trim() !== '') {
+            observeReasoning?.end(thinking)
+            reasoningClosed = true
+          }
           // Nothing downstream has run yet — holding the chunk here holds the
           // tool call itself, so the canvas doesn't change until the line
           // announcing it has been up long enough to read.
