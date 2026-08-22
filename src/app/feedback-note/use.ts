@@ -258,7 +258,6 @@ async function fillImage(note: FeedbackNote): Promise<void> {
 
 export function openFeedbackNote(id: string): void {
   feedbackNoteState.activeId = id
-  pauseTurn('feedback-note')
 }
 
 export function dismissFeedbackNote(id: string): void {

@@ -289,10 +289,18 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
         type="button"
         class="pointer-events-auto flex size-7 -translate-y-1/2 items-center justify-center rounded-full bg-panel shadow-md ring-2 transition hover:scale-105"
         :class="[tone(note.relationship), { 'animate-pulse': introducedIds.includes(note.id) }]"
-        aria-label="Open feedback note"
+        :aria-label="`Open ${note.relationship} feedback note`"
         @click="openFeedbackNote(note.id)"
       >
-        <icon-lucide-message-square-text class="size-4" />
+        <icon-lucide-circle-check-big
+          v-if="note.relationship === 'alignment'"
+          class="size-4"
+        />
+        <icon-lucide-triangle-alert
+          v-else-if="note.relationship === 'conflict'"
+          class="size-4"
+        />
+        <icon-lucide-circle-help v-else class="size-4" />
       </button>
 
       <Transition
