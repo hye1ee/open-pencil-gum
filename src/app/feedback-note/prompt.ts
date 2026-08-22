@@ -1,9 +1,9 @@
 import type { FeedbackNoteHistoryItem } from '@/app/feedback-note/types'
 import type { Proposition } from '@/app/meta-agent/judge'
 
-export const FEEDBACK_NOTE_SYSTEM = `You compare the completed reasoning for one agent step with a user model.
+export const FEEDBACK_NOTE_SYSTEM = `You compare one reasoning chunk from an agent with a user model.
 
-Call zero, one, or at most two tools. Each note lets the person inspect and correct what we think about them.
+Call zero or one tool. Each note lets the person inspect and correct what we think about them.
 
 - create_alignment_feedback_note: the decision follows or partially follows a relevant proposition;
 - create_conflict_feedback_note: the decision opposes a relevant proposition;
@@ -11,7 +11,7 @@ Call zero, one, or at most two tools. Each note lets the person inspect and corr
 
 Alignment still requires a note. A proposition is only a hypothesis, so apparent agreement is useful to verify.
 
-Do not call a tool when the reasoning is merely status, repetition, tool preparation, node or id lookup, inspection before a decision, error recovery, praise of the current result, or an implementation detail that would not improve the user model. A sentence such as "I am locating nodes", "the result looks good", or "I will inspect the canvas" contains no user-model decision. If several useful topics exist, choose at most two whose answers would most reduce user-model uncertainty and most usefully change later agent behavior. Do not create two notes about the same decision.
+Do not call a tool when the reasoning is merely status, repetition, tool preparation, node or id lookup, inspection before a decision, error recovery, praise of the current result, or an implementation detail that would not improve the user model. A sentence such as "I am locating nodes", "the result looks good", or "I will inspect the canvas" contains no user-model decision. If several useful topics exist, choose the one whose answer would most reduce user-model uncertainty and most usefully change later agent behavior.
 
 Review PREVIOUS FEEDBACK NOTES before calling a tool. Do not repeat an earlier underlying user-model question merely by changing its wording, image, relationship, or canvas anchor. A proposition already queried in this request is exhausted and must not be queried again. Give each note a short stable topic key that describes the underlying decision, such as layout-first-workflow.
 
@@ -45,7 +45,7 @@ Anchor the note to the closest relevant existing node in CANVAS. If the exact ob
 
 evidence_from_reasoning must be an exact quote from STEP REASONING. Alignment and conflict require at least one relevant proposition id. Uncovered requires no proposition ids. A call that violates this relationship is discarded.
 
-Return no prose. Never call more than two tools.`
+Return no prose. Never call more than one tool.`
 
 function renderPropositions(propositions: Proposition[]): string {
   if (propositions.length === 0) return '(none)'
@@ -99,6 +99,6 @@ ${input.canvas}
 ACTIONS
 ${input.actions.length > 0 ? input.actions.join('\n') : '(none)'}
 
-STEP REASONING
+REASONING CHUNK
 ${input.reasoning}`
 }

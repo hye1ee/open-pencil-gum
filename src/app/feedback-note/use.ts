@@ -82,7 +82,9 @@ function readNote(
   input: unknown,
   relation: FeedbackNoteRelationship,
   reasoning: string,
-  propositions: Proposition[]
+  propositions: Proposition[],
+  originStep: number,
+  originChunk: number
 ): FeedbackNote | null {
   if (typeof input !== 'object' || input === null) return null
   const row = input as RawFeedbackNote
@@ -103,6 +105,8 @@ function readNote(
     return null
   return {
     id: `n${nextId++}`,
+    originStep,
+    originChunk,
     topic,
     relationship: relation,
     mode,
@@ -122,6 +126,8 @@ function readNote(
 function rememberNote(note: FeedbackNote): void {
   feedbackNoteHistory.push({
     id: note.id,
+    originStep: note.originStep,
+    originChunk: note.originChunk,
     topic: note.topic,
     relationship: note.relationship,
     mode: note.mode,
@@ -154,10 +160,25 @@ export function resetFeedbackNotes(): void {
   resumeTurn('feedback-note')
 }
 
+export async function settleFeedbackNoteStep(
+  originStep: number,
+  generation: Promise<void>
+): Promise<void> {
+  pauseTurn('feedback-note')
+  try {
+    await generation
+  } finally {
+    const hasStepNote = feedbackNoteState.notes.some((note) => note.originStep === originStep)
+    if (!hasStepNote && feedbackNoteState.notes.length === 0) resumeTurn('feedback-note')
+  }
+}
+
 export async function createFeedbackNotes(input: {
   request: string
   plan: string | null
   reasoning: string
+  originStep: number
+  originChunk: number
   propositions: Proposition[]
   canvas: string
   actions: string[]
@@ -176,10 +197,17 @@ export async function createFeedbackNotes(input: {
     })
     const knownTopics = new Set(feedbackNoteHistory.map((note) => note.topic.toLowerCase()))
     const queriedPropositions = new Set(feedbackNoteHistory.flatMap((note) => note.propositionIds))
-    const notes = result.staticToolCalls.slice(0, 2).flatMap((call) => {
+    const notes = result.staticToolCalls.slice(0, 1).flatMap((call) => {
       const relation = relationship(call.toolName)
       if (!relation) return []
-      const note = readNote(call.input, relation, input.reasoning, input.propositions)
+      const note = readNote(
+        call.input,
+        relation,
+        input.reasoning,
+        input.propositions,
+        input.originStep,
+        input.originChunk
+      )
       if (
         !note ||
         knownTopics.has(note.topic.toLowerCase()) ||
@@ -199,7 +227,6 @@ export async function createFeedbackNotes(input: {
       return [storedNote]
     })
     if (storedNotes.length > 0) {
-      pauseTurn('feedback-note')
       feedbackNoteState.activeId ??= storedNotes[0]?.id ?? null
     }
     return storedNotes

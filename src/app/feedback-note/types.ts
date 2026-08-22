@@ -6,6 +6,8 @@ export type FeedbackNoteHistoryStatus = 'active' | 'continued' | 'answered'
 
 export interface FeedbackNote {
   id: string
+  originStep: number
+  originChunk: number
   topic: string
   relationship: FeedbackNoteRelationship
   mode: FeedbackNoteMode
@@ -23,6 +25,8 @@ export interface FeedbackNote {
 
 export interface FeedbackNoteHistoryItem {
   id: string
+  originStep: number
+  originChunk: number
   topic: string
   relationship: FeedbackNoteRelationship
   mode: FeedbackNoteMode

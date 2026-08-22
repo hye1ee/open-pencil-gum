@@ -1,6 +1,4 @@
-import { revealNextAgentChange } from '@/app/ai/chat/action-preview'
 import { logFeedbackNote } from '@/app/ai/chat/agent-log'
-import { currentRunSteps } from '@/app/ai/tools'
 import type { EditorStore } from '@/app/editor/active-store'
 import { createFeedbackNotes } from '@/app/feedback-note/use'
 import { actionsSoFar, summariseCanvas } from '@/app/meta-agent/context'
@@ -11,6 +9,8 @@ interface FeedbackNoteJudgmentInput {
   request: string
   plan: string | null
   reasoning: string
+  originStep: number
+  originChunk: number
   propositions: Proposition[]
 }
 
@@ -24,25 +24,26 @@ export async function considerFeedbackNotesForStep(
     request: input.request,
     plan: input.plan,
     reasoning: input.reasoning,
+    originStep: input.originStep,
+    originChunk: input.originChunk,
     propositions: input.propositions,
     canvas: summariseCanvas(store),
     actions: actionsSoFar(store)
   })
 
   if (notes.length === 0) {
-    logFeedbackNote(currentRunSteps(store), 0, null, null, null)
+    logFeedbackNote(input.originStep, 0, null, null, null, `chunk=${input.originChunk}`)
     return
   }
 
-  revealNextAgentChange()
   for (const [index, note] of notes.entries()) {
     logFeedbackNote(
-      currentRunSteps(store),
+      note.originStep,
       index + 1,
       note.relationship,
       note.mode,
       note.nodeId,
-      `topic=${note.topic}  representation=${note.mode}${note.visualType ? `/${note.visualType}` : ''}  goal=${JSON.stringify(note.representationGoal)}  text=${JSON.stringify(note.text)}  guide=${JSON.stringify(note.annotationAffordance)}  propositions=${note.propositionIds.join(',') || 'none'}`
+      `chunk=${note.originChunk}  topic=${note.topic}  representation=${note.mode}${note.visualType ? `/${note.visualType}` : ''}  goal=${JSON.stringify(note.representationGoal)}  text=${JSON.stringify(note.text)}  guide=${JSON.stringify(note.annotationAffordance)}  propositions=${note.propositionIds.join(',') || 'none'}`
     )
   }
 }

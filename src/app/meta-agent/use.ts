@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import type { LanguageModel } from 'ai'
 
-import { resetAgentChangeReveal, setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
+import { setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
 import {
   logJudgeError,
   logJudgeLifecycle,
@@ -18,10 +18,15 @@ import {
   isSlotConfigured,
   modelConfigForSlot
 } from '@/app/ai/model-routing'
+import { currentRunSteps } from '@/app/ai/tools'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { considerFeedbackNotesForStep } from '@/app/feedback-note/meta'
-import { resetFeedbackNoteHistory, resetFeedbackNotes } from '@/app/feedback-note/use'
+import {
+  resetFeedbackNoteHistory,
+  resetFeedbackNotes,
+  settleFeedbackNoteStep
+} from '@/app/feedback-note/use'
 import {
   actionsSoFar,
   propositionsForRun,
@@ -62,6 +67,9 @@ function judgeModel(): LanguageModel {
 }
 
 let agent: MetaAgent | null = null
+let feedbackNoteChunk = 0
+let feedbackNoteStep: number | null = null
+let feedbackNoteStepSettled = false
 let request = ''
 let runPropositions: Proposition[] = []
 let runStore: EditorStore | null = null
@@ -169,6 +177,8 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
   resetFeedbackNotes()
   feedbackNoteTask = Promise.resolve()
+  feedbackNoteStep = null
+  feedbackNoteStepSettled = false
   if (feedbackNotesEnabled) setMarks(store, [])
   else ensureAgent(store).beginTurn()
 }
@@ -190,24 +200,47 @@ setMarkDismissedObserver((id) => {
 // Registered here because the tap must not import anything that builds a model.
 setReasoningObserver({
   start: () => {
-    if (feedbackNotesEnabled) resetAgentChangeReveal()
+    if (feedbackNotesEnabled) {
+      feedbackNoteChunk = 0
+      feedbackNoteStep = runStore ? currentRunSteps(runStore) + 1 : null
+      feedbackNoteStepSettled = false
+    }
     if (!feedbackNotesEnabled) agent?.beginStep()
   },
-  chunk: (_reasoningChunk, reasoningSoFar) => {
-    if (!feedbackNotesEnabled) considerReasoning(reasoningSoFar)
-  },
-  end: (reasoning) => {
+  chunk: (reasoningChunk, reasoningSoFar) => {
+    if (!feedbackNotesEnabled) {
+      considerReasoning(reasoningSoFar)
+      return
+    }
     const store = runStore
-    if (!feedbackNotesEnabled || !store) return
+    if (!store || reasoningChunk.trim() === '') return
+    feedbackNoteChunk++
+    const originStep = feedbackNoteStep ?? currentRunSteps(store) + 1
+    const originChunk = feedbackNoteChunk
     feedbackNoteTask = feedbackNoteTask.then(() =>
       considerFeedbackNotesForStep({
         store,
         request,
         plan: currentPlan(),
-        reasoning,
+        reasoning: reasoningChunk,
+        originStep,
+        originChunk,
         propositions: runPropositions
       })
     )
+  },
+  end: () => {
+    if (
+      !feedbackNotesEnabled ||
+      feedbackNoteChunk === 0 ||
+      feedbackNoteStep === null ||
+      feedbackNoteStepSettled
+    ) {
+      return
+    }
+    feedbackNoteStepSettled = true
+    const generation = feedbackNoteTask
+    feedbackNoteTask = settleFeedbackNoteStep(feedbackNoteStep, generation)
   },
   settled: () => (feedbackNotesEnabled ? feedbackNoteTask : (agent?.settled() ?? Promise.resolve()))
 })
