@@ -72,7 +72,7 @@ export function inspectCodeVisualHtml(
       return { content: null, rejection: `forbidden-tag:${name}` }
     }
   }
-  const base = `*{box-sizing:border-box}html,body{width:100%;min-height:100%;margin:0;background:transparent}html{overflow:hidden}body{overflow:visible;color:#2f2b33;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.code-visual-viewport{width:720px;min-height:440px;overflow:visible;zoom:calc(100vw / 720px)}.code-visual-root{width:720px;min-height:440px;height:auto;padding:0;overflow:visible}`
+  const base = `*{box-sizing:border-box}html,body{width:100%;height:auto;margin:0;background:transparent}html{overflow:hidden}body{overflow:visible;color:#2f2b33;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.code-visual-viewport{width:720px;height:auto;overflow:visible;zoom:calc(100vw / 720px)}.code-visual-root{display:flow-root;width:720px;height:auto;min-height:0;padding:0;overflow:visible}`
   return {
     content: `<!doctype html><html><head><meta charset="utf-8"><style>${css}${base}</style></head><body><div class="code-visual-viewport"><main class="code-visual-root">${html}</main></div></body></html>`,
     rejection: null

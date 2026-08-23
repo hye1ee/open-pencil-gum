@@ -4,7 +4,7 @@ const SIZE_BRIDGE_SOURCE = 'feedback-note-code-visual-size'
 
 function sizingScript(noteId: string, format: CodeVisualArtifact['format']): string {
   const config = JSON.stringify({ noteId, format }).replaceAll('<', '\\u003c')
-  return `<script>(()=>{const config=${config};const report=()=>{const target=config.format==='html'?document.querySelector('.code-visual-root'):document.querySelector('svg');if(!target)return;const width=config.format==='svg'?(target.viewBox?.baseVal?.width||720):720;const height=config.format==='svg'?(target.viewBox?.baseVal?.height||440):Math.max(440,target.scrollHeight);window.parent.postMessage({source:'${SIZE_BRIDGE_SOURCE}',noteId:config.noteId,width,height},'*')};new ResizeObserver(report).observe(document.body);requestAnimationFrame(report)})();</script>`
+  return `<script>(()=>{const config=${config};const report=()=>{const target=config.format==='html'?document.querySelector('.code-visual-root'):document.querySelector('svg');if(!target)return;const width=config.format==='svg'?(target.viewBox?.baseVal?.width||720):720;const height=config.format==='svg'?(target.viewBox?.baseVal?.height||1):Math.max(1,Math.ceil(target.getBoundingClientRect().height),target.scrollHeight);window.parent.postMessage({source:'${SIZE_BRIDGE_SOURCE}',noteId:config.noteId,width,height},'*')};const target=config.format==='html'?document.querySelector('.code-visual-root'):document.querySelector('svg');if(target)new ResizeObserver(report).observe(target);[0,50,200,500,1000,2000].forEach(delay=>setTimeout(report,delay))})();</script>`
 }
 
 export function buildInteractiveCodeVisualDocument(input: {

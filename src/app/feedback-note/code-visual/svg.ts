@@ -51,6 +51,7 @@ export type CodeVisualSvgRejection =
   | 'empty-svg'
   | 'svg-too-long'
   | 'invalid-root'
+  | 'invalid-viewbox'
   | 'event-handler'
   | 'external-reference'
   | 'executable-content'
@@ -61,6 +62,18 @@ export type CodeVisualSvgRejection =
 export type CodeVisualSvgInspection =
   | { content: string; rejection: null }
   | { content: null; rejection: CodeVisualSvgRejection }
+
+function readViewBox(source: string): { width: number; height: number } | null {
+  const match = source.match(
+    /\bviewBox\s*=\s*["']\s*0(?:\.0+)?\s+0(?:\.0+)?\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*["']/i
+  )
+  if (!match) return null
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+  if (width < 1 || width > 1440 || height < 1 || height > 720) return null
+  return { width, height }
+}
 
 export function inspectCodeVisualSvg(value: unknown): CodeVisualSvgInspection {
   if (typeof value !== 'string') return { content: null, rejection: 'invalid-input' }
@@ -103,9 +116,11 @@ export function inspectCodeVisualSvg(value: unknown): CodeVisualSvgInspection {
   if (openingEnd === -1 || closingStart <= openingEnd) {
     return { content: null, rejection: 'invalid-root' }
   }
+  const viewBox = readViewBox(source.slice(0, openingEnd + 1))
+  if (!viewBox) return { content: null, rejection: 'invalid-viewbox' }
   const content = source.slice(openingEnd + 1, closingStart)
   return {
-    content: `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" viewBox="0 0 720 440" preserveAspectRatio="xMidYMid meet" role="img">${content}</svg>`,
+    content: `<svg xmlns="http://www.w3.org/2000/svg" width="${viewBox.width}" height="${viewBox.height}" viewBox="0 0 ${viewBox.width} ${viewBox.height}" preserveAspectRatio="xMidYMid meet" role="img">${content}</svg>`,
     rejection: null
   }
 }

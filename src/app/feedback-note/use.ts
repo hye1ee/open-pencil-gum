@@ -6,6 +6,7 @@ import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
 import { composeCodeVisual } from '@/app/feedback-note/code-visual/use'
+import { resetConfirmedFeedbackHistory } from '@/app/feedback-note/draft/history'
 import { generateFeedbackNoteImage } from '@/app/feedback-note/image'
 import { feedbackNoteRelationship, readFeedbackNote } from '@/app/feedback-note/parse'
 import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
@@ -56,6 +57,7 @@ function setHistoryStatus(id: string, status: FeedbackNoteHistoryItem['status'])
 
 export function resetFeedbackNoteHistory(): void {
   feedbackNoteHistory = []
+  resetConfirmedFeedbackHistory()
 }
 
 export function resetFeedbackNotes(): void {
@@ -168,7 +170,11 @@ async function fillImage(note: FeedbackNote): Promise<void> {
   } catch (error) {
     console.warn('[feedback-note] image generation failed:', error)
     representation.status = 'failed'
-    logFeedbackNoteImage(note.id, 'failed', error instanceof Error ? error.message : 'unknown error')
+    logFeedbackNoteImage(
+      note.id,
+      'failed',
+      error instanceof Error ? error.message : 'unknown error'
+    )
   }
 }
 

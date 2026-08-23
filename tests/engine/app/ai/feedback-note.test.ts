@@ -1,10 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { buildInteractiveCodeVisualDocument } from '@/app/feedback-note/code-visual/document'
-import {
-  inspectCodeVisualHtml,
-  sanitizeCodeVisualHtml
-} from '@/app/feedback-note/code-visual/html'
+import { inspectCodeVisualHtml, sanitizeCodeVisualHtml } from '@/app/feedback-note/code-visual/html'
 import {
   CODE_VISUAL_SYSTEM,
   renderCodeVisualComposerPrompt
@@ -16,6 +13,12 @@ import {
 } from '@/app/feedback-note/code-visual/svg'
 import { CODE_VISUAL_TOOLS } from '@/app/feedback-note/code-visual/tools'
 import { codeVisualToolName } from '@/app/feedback-note/code-visual/use'
+import {
+  relevantConfirmedFeedback,
+  rememberConfirmedFeedback,
+  resetConfirmedFeedbackHistory
+} from '@/app/feedback-note/draft/history'
+import { FEEDBACK_DRAFT_SYSTEM, renderFeedbackDraftPrompt } from '@/app/feedback-note/draft/prompt'
 import { buildFeedbackNoteImagePrompt } from '@/app/feedback-note/image'
 import { readFeedbackNote } from '@/app/feedback-note/parse'
 import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
@@ -29,6 +32,48 @@ const COMPARISON_SVG = `<svg viewBox="0 0 720 440">
 </svg>`
 
 describe('interactive feedback note', () => {
+  test('drafts editable feedback without treating selection as approval', () => {
+    expect(FEEDBACK_DRAFT_SYSTEM).toContain('Selection signals attention, not approval')
+    expect(FEEDBACK_DRAFT_SYSTEM).toContain('at most 25 words')
+  })
+
+  test('retrieves confirmed feedback with its note context', () => {
+    resetConfirmedFeedbackHistory()
+    const note = {
+      id: 'draft-note',
+      originStep: 1,
+      originChunk: 1,
+      topic: 'card-density',
+      relationship: 'alignment' as const,
+      representation: { type: 'text' as const },
+      representationGoal: 'Learn the intended card density.',
+      text: 'The cards are becoming compact.',
+      cueSegments: [],
+      nodeId: null,
+      evidenceFromReasoning: 'I will reduce the gaps.',
+      propositionIds: ['compact-layout']
+    }
+    rememberConfirmedFeedback(
+      note,
+      { type: 'text', text: 'compact', source: 'cue', start: 23, end: 30 },
+      'Keep the groups distinguishable.'
+    )
+    const previous = relevantConfirmedFeedback(note)
+    expect(previous).toHaveLength(1)
+    expect(previous[0]?.noteContext.reasoningEvidence).toBe('I will reduce the gaps.')
+    expect(previous[0]?.feedback).toBe('Keep the groups distinguishable.')
+    const prompt = renderFeedbackDraftPrompt({
+      note,
+      selection: { type: 'text', text: 'compact', source: 'cue', start: 23, end: 30 },
+      propositions: [],
+      previousFeedback: previous,
+      hasOverviewImage: false,
+      hasSelectionImage: false
+    })
+    expect(prompt).toContain('Note context: The cards are becoming compact.')
+    expect(prompt).toContain('Confirmed feedback: Keep the groups distinguishable.')
+  })
+
   test('offers one tool for each relationship', () => {
     expect(Object.keys(FEEDBACK_NOTE_TOOLS)).toEqual([
       'create_alignment_feedback_note',
@@ -288,6 +333,11 @@ describe('interactive feedback note', () => {
     expect(svg).toContain('Solid')
     expect(svg).toContain('width="720" height="440"')
     expect(svg).not.toContain('fill="#FCFAF5"')
+    const compact = sanitizeCodeVisualSvg(
+      '<svg viewBox="0 0 720 180"><rect x="48" y="24" width="624" height="132" /></svg>'
+    )
+    expect(compact).toContain('width="720" height="180"')
+    expect(compact).toContain('viewBox="0 0 720 180"')
   })
 
   test('rejects executable or externally loaded SVG', () => {
@@ -301,7 +351,7 @@ describe('interactive feedback note', () => {
     )
     expect(
       sanitizeCodeVisualSvg(
-        '<svg><foreignObject x="20" y="20" width="200" height="80"><div xmlns="http://www.w3.org/1999/xhtml">Wrapped label</div></foreignObject></svg>'
+        '<svg viewBox="0 0 720 160"><foreignObject x="20" y="20" width="200" height="80"><div xmlns="http://www.w3.org/1999/xhtml">Wrapped label</div></foreignObject></svg>'
       )
     ).not.toBeNull()
     const svg = sanitizeCodeVisualSvg(COMPARISON_SVG)
@@ -320,11 +370,10 @@ describe('interactive feedback note', () => {
     expect(srcdoc).toContain('class="code-visual-root"')
     expect(srcdoc).toContain('display:flex')
     expect(srcdoc).toContain('background:transparent')
+    expect(srcdoc).not.toContain('min-height:440px')
     expect(sanitizeCodeVisualHtml('<article><small>Label</small></article>', '')).not.toBeNull()
     expect(sanitizeCodeVisualHtml('<script>alert(1)</script>', '')).toBeNull()
-    expect(inspectCodeVisualHtml('<input type="color">', '').rejection).toBe(
-      'forbidden-tag:input'
-    )
+    expect(inspectCodeVisualHtml('<input type="color">', '').rejection).toBe('forbidden-tag:input')
     expect(CODE_VISUAL_SYSTEM).toContain('Use CSS layout rather than manual absolute coordinates')
     expect(CODE_VISUAL_SYSTEM).toContain('data-feedback-id')
     const interactive = buildInteractiveCodeVisualDocument({
@@ -336,6 +385,7 @@ describe('interactive feedback note', () => {
     expect(interactive).toContain('ResizeObserver')
     expect(interactive).toContain('feedback-note-code-visual-size')
     expect(interactive).toContain('"noteId":"n1"')
+    expect(interactive).not.toContain('Math.max(440')
     expect(
       renderCodeVisualComposerPrompt({
         visualType: 'comparison',
