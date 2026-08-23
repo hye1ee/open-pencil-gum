@@ -31,47 +31,27 @@ function buildRemoteCursorPath(
   agentAppearance: boolean
 ): InstanceType<typeof r.ck.Path> {
   const path = new r.ck.Path()
-  path.moveTo(screenX, screenY)
   if (agentAppearance) {
-    // Browser-agent cursor: a broad asymmetric triangle with heavily rounded
-    // corners, a right-facing shoulder, and a thick lower-left tail.
-    path.cubicTo(
-      screenX - size * 0.08,
-      screenY - size * 0.03,
-      screenX - size * 0.14,
-      screenY + size * 0.08,
-      screenX - size * 0.08,
-      screenY + size * 0.22
-    )
-    path.lineTo(screenX + size * 0.4, screenY + size * 1.42)
-    path.cubicTo(
-      screenX + size * 0.46,
-      screenY + size * 1.58,
-      screenX + size * 0.65,
-      screenY + size * 1.59,
-      screenX + size * 0.72,
-      screenY + size * 1.42
-    )
-    path.lineTo(screenX + size * 0.88, screenY + size * 0.93)
-    path.cubicTo(
-      screenX + size * 0.91,
-      screenY + size * 0.84,
-      screenX + size * 0.96,
-      screenY + size * 0.8,
-      screenX + size * 1.06,
-      screenY + size * 0.77
-    )
-    path.lineTo(screenX + size * 1.48, screenY + size * 0.66)
-    path.cubicTo(
-      screenX + size * 1.68,
-      screenY + size * 0.61,
-      screenX + size * 1.7,
-      screenY + size * 0.4,
-      screenX + size * 1.51,
-      screenY + size * 0.31
-    )
-    path.lineTo(screenX + size * 0.12, screenY - size * 0.01)
+    // Exact geometry from Cursor-Pointer--Streamline-Iconoir.svg. The source
+    // uses a 16 × 16 viewBox; scale it around the cursor's upper-left bound.
+    const unit = size / 10
+    const x = (value: number) => screenX + (value - 0.5) * unit
+    const y = (value: number) => screenY + (value - 0.5) * unit
+
+    path.moveTo(x(2.88), y(0.96))
+    path.lineTo(x(12.68), y(4.94))
+    path.cubicTo(x(13.9), y(5.43), x(14.02), y(6.78), x(13.128_062_5), y(7.286_562_5))
+    path.lineTo(x(9.05), y(8.46))
+    // Round the concave inner shoulder too, not only the three outer corners.
+    path.cubicTo(x(8.48), y(8.62), x(8.2), y(8.94), x(7.93), y(9.52))
+    path.lineTo(x(6.05), y(13.37))
+    path.cubicTo(x(5.82), y(13.84), x(5.58), y(14.16), x(5.24), y(14.34))
+    path.cubicTo(x(4.45), y(14.76), x(3.45), y(14.26), x(3.28), y(13.45))
+    path.lineTo(x(1.3), y(3.02))
+    path.cubicTo(x(1.12), y(2.22), x(1.12), y(1.76), x(1.48), y(1.35))
+    path.cubicTo(x(1.82), y(0.96), x(2.3), y(0.72), x(2.88), y(0.96))
   } else {
+    path.moveTo(screenX, screenY)
     path.lineTo(screenX, screenY + size * 1.35)
     path.lineTo(screenX + size * 0.38, screenY + size * 1.0)
     path.lineTo(screenX + size * 0.72, screenY + size * 1.5)
