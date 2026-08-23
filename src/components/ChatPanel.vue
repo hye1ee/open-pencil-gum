@@ -5,8 +5,14 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
+import { agentActivity } from '@/app/ai/chat/agent-activity'
 import { logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
-import { abandonTurn, forgetAbandonedTurn, setTurnRunning } from '@/app/ai/chat/agent-turn'
+import {
+  abandonTurn,
+  agentTurn,
+  forgetAbandonedTurn,
+  setTurnRunning
+} from '@/app/ai/chat/agent-turn'
 import {
   clearMarks,
   releaseAnswerHold,
@@ -45,7 +51,6 @@ import { useI18n } from '@open-pencil/vue'
 
 import type { Chat } from '@ai-sdk/vue'
 import type { UIMessage } from 'ai'
-import type { JsonObject } from '@open-pencil/scene-graph/primitives'
 
 const IS_DEV = import.meta.env.DEV
 
@@ -75,26 +80,23 @@ const queuedMessages = computed<UIMessage[]>(() =>
     parts: [{ type: 'text', text }]
   }))
 )
-const isThinking = computed(() => {
-  const s = status.value
-  if (s !== 'submitted' && s !== 'streaming') return false
-  if (messages.value.length === 0) return true
-  const last = messages.value[messages.value.length - 1]
-  if (last.role !== 'assistant') return true
-  const parts = last.parts
-  if (parts.length === 0) return true
-  const lastPart = parts[parts.length - 1] as JsonObject
-  if (lastPart.type === 'step-start') return true
-  if ('toolCallId' in lastPart && lastPart.state === 'output-available') return true
-  if ('toolCallId' in lastPart && lastPart.state === 'output-error') return true
-  return s === 'submitted'
-})
-
 // Counted off the run rather than off the last assistant message. A build
 // restarted after marker feedback writes a second assistant message, so
 // counting `step-start` parts there would send the bar back to zero half way
 // through — the restart is an implementation detail and must not show.
 const currentStep = computed(() => currentRunSteps())
+
+const activityText = computed(() => {
+  if (agentActivity.metaAgentTasks > 0) return 'Reviewing the current decision…'
+  if (!isRunning.value) return null
+  if (agentTurn.paused) return 'Waiting for your feedback…'
+  if (currentStep.value === 0) return 'Starting the task…'
+  return `Working on step ${currentStep.value}…`
+})
+
+const activityIsProcessing = computed(
+  () => agentActivity.metaAgentTasks > 0 || (isRunning.value && !agentTurn.paused)
+)
 
 const showStepBar = computed(() => isRunning.value)
 
@@ -112,6 +114,7 @@ function scrollToBottom() {
 }
 
 watch(messages, scrollToBottom, { deep: true })
+watch(activityText, scrollToBottom)
 watch(
   () => chat.value?.error,
   (error) => {
@@ -336,26 +339,24 @@ function handleClearChat() {
             <!-- Mid-run messages the user queued while the agent is working -->
             <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />
 
-            <!-- Thinking indicator: shown when AI is working but no visible activity -->
-            <div v-if="isThinking" data-test-id="chat-typing-indicator" class="flex gap-2">
+            <!-- Persistent run activity, including background Meta Agent review. -->
+            <div
+              v-if="activityText"
+              data-test-id="chat-activity-indicator"
+              class="flex items-center gap-2 py-1"
+            >
               <div
-                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted/20 text-[10px] font-bold text-muted"
+                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent"
               >
-                AI
+                <icon-lucide-sparkles class="size-3.5" />
               </div>
-              <div class="flex items-center gap-1 py-2">
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 0ms"
+              <div class="flex items-center gap-1.5 text-xs text-muted">
+                <icon-lucide-loader-circle
+                  v-if="activityIsProcessing"
+                  class="size-3.5 animate-spin text-accent"
                 />
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 150ms"
-                />
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 300ms"
-                />
+                <icon-lucide-pause v-else class="size-3.5" />
+                <span>{{ activityText }}</span>
               </div>
             </div>
 

@@ -28,24 +28,57 @@ export async function cropFeedbackImage(
   image.src = source
   await image.decode()
 
-  const overviewSize = fittedSize(image.naturalWidth, image.naturalHeight, OVERVIEW_MAX_SIZE)
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = image.naturalWidth
+  sourceCanvas.height = image.naturalHeight
+  sourceCanvas.getContext('2d')?.drawImage(image, 0, 0)
+  return cropFeedbackCanvas(sourceCanvas, selection)
+}
+
+export async function cropFeedbackCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  selection: FeedbackSelection
+): Promise<{ overviewImage: Uint8Array; selectionImage?: Uint8Array }> {
+  const overviewSize = fittedSize(sourceCanvas.width, sourceCanvas.height, OVERVIEW_MAX_SIZE)
   const overview = document.createElement('canvas')
   overview.width = overviewSize.width
   overview.height = overviewSize.height
-  overview.getContext('2d')?.drawImage(image, 0, 0, overview.width, overview.height)
+  overview
+    .getContext('2d')
+    ?.drawImage(
+      sourceCanvas,
+      0,
+      0,
+      sourceCanvas.width,
+      sourceCanvas.height,
+      0,
+      0,
+      overview.width,
+      overview.height
+    )
   const overviewImage = await canvasBytes(overview)
   if (selection.type !== 'region') return { overviewImage }
 
-  const sourceX = Math.round(selection.x * image.naturalWidth)
-  const sourceY = Math.round(selection.y * image.naturalHeight)
-  const sourceWidth = Math.max(1, Math.round(selection.width * image.naturalWidth))
-  const sourceHeight = Math.max(1, Math.round(selection.height * image.naturalHeight))
+  const sourceX = Math.round(selection.x * sourceCanvas.width)
+  const sourceY = Math.round(selection.y * sourceCanvas.height)
+  const sourceWidth = Math.max(1, Math.round(selection.width * sourceCanvas.width))
+  const sourceHeight = Math.max(1, Math.round(selection.height * sourceCanvas.height))
   const cropSize = fittedSize(sourceWidth, sourceHeight, CROP_MAX_SIZE)
   const crop = document.createElement('canvas')
   crop.width = cropSize.width
   crop.height = cropSize.height
   crop
     .getContext('2d')
-    ?.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, crop.width, crop.height)
+    ?.drawImage(
+      sourceCanvas,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      crop.width,
+      crop.height
+    )
   return { overviewImage, selectionImage: await canvasBytes(crop) }
 }

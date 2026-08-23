@@ -1,6 +1,3 @@
-import { generateText } from 'ai'
-import type { LanguageModel } from 'ai'
-
 import { setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
 import {
   logJudgeError,
@@ -11,13 +8,8 @@ import {
   logMarkTool
 } from '@/app/ai/chat/agent-log'
 import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
-import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
-import {
-  backgroundProviderOptions,
-  isSlotConfigured,
-  modelConfigForSlot
-} from '@/app/ai/model-routing'
+import { isSlotConfigured } from '@/app/ai/model-routing'
 import { currentRunSteps } from '@/app/ai/tools'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -27,6 +19,7 @@ import {
   resetFeedbackNotes,
   settleFeedbackNoteStep
 } from '@/app/feedback-note/use'
+import { callMetaAgent } from '@/app/meta-agent/call'
 import { compareReasoningWithUserModel } from '@/app/meta-agent/comparison/use'
 import {
   actionsSoFar,
@@ -44,28 +37,17 @@ import {
   signed,
   type AppliedMarkTool,
   type Mark,
-  type MarkToolCall,
   type MetaAgent,
   type Proposition,
   type SettledNote
 } from '@/app/meta-agent/judge'
 import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
 import { forgetReportedMarks } from '@/app/meta-agent/report'
-import { MARK_TOOLS } from '@/app/meta-agent/tools'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { awaitUserModelSettled } from '@/app/user-model/use'
 
 /** The app-specific half of the meta-agent: which model it calls, how the canvas
  * is described to it, and where its judgment lands. `judge.ts` knows none of it. */
-
-/** Reasoning shares this budget on Gemini, and the answer is a short list. */
-const JUDGE_MAX_TOKENS = 2048
-
-/** Wants a cheap model, and more than that a different one: a judge on the same
- * model is blind to whatever that model is blind to. `VITE_MODEL_META_AGENT`. */
-function judgeModel(): LanguageModel {
-  return createUntracedLanguageModel(modelConfigForSlot('meta-agent'))
-}
 
 let agent: MetaAgent | null = null
 let feedbackNoteChunk = 0
@@ -107,20 +89,7 @@ function ensureAgent(store: EditorStore): MetaAgent {
     deps: {
       system: JUDGE_SYSTEM,
       render: renderJudgePrompt,
-      judge: async ({ system, prompt }) => {
-        const result = await generateText({
-          model: judgeModel(),
-          system,
-          maxOutputTokens: JUDGE_MAX_TOKENS,
-          providerOptions: backgroundProviderOptions('meta-agent'),
-          prompt,
-          tools: MARK_TOOLS,
-          toolChoice: 'auto'
-        })
-        return result.staticToolCalls.map(
-          (call): MarkToolCall => ({ toolName: call.toolName, input: call.input })
-        )
-      }
+      judge: ({ system, prompt }) => callMetaAgent(system, prompt)
     },
     onChanged: (marks, from) => {
       // Length off the input this answer was made from: answers land out of

@@ -1,6 +1,7 @@
 import { generateText } from 'ai'
 import { reactive } from 'vue'
 
+import { beginMetaAgentActivity } from '@/app/ai/chat/agent-activity'
 import { logFeedbackNoteCode, logFeedbackNoteImage } from '@/app/ai/chat/agent-log'
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
@@ -92,6 +93,7 @@ export async function createFeedbackNotes(input: {
   actions: string[]
 }): Promise<FeedbackNote[]> {
   if (input.reasoning.trim() === '') return []
+  const finishActivity = beginMetaAgentActivity()
   feedbackNoteState.pending = true
   try {
     const result = await generateText({
@@ -139,6 +141,7 @@ export async function createFeedbackNotes(input: {
     return []
   } finally {
     feedbackNoteState.pending = false
+    finishActivity()
   }
 }
 

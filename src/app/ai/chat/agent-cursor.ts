@@ -1,6 +1,7 @@
 import { AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
+import { metaAgentIsWorking } from '@/app/ai/chat/agent-activity'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -105,7 +106,7 @@ function frame(store: EditorStore, state: AgentCursorState): void {
   // Working means a turn is actually advancing, not merely open. A held turn has
   // stopped for the person to read a marker, and a cursor still pulsing through
   // that would contradict the frozen position right above.
-  const working = agentTurn.running && !agentTurn.paused
+  const working = (agentTurn.running && !agentTurn.paused) || metaAgentIsWorking()
   state.energy += ((working ? 1 : 0) - state.energy) * ENERGY_FOLLOW
 
   if (!state.cur) {
@@ -123,7 +124,9 @@ function frame(store: EditorStore, state: AgentCursorState): void {
     color: RESTING_COLOR,
     x: state.cur.x,
     y: state.cur.y,
-    emphasis: beat * WORKING_EMPHASIS
+    emphasis: beat * WORKING_EMPHASIS,
+    working: state.energy,
+    appearance: 'agent'
   }
   store.requestRepaint()
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useEventListener } from '@vueuse/core'
-import { onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, useTemplateRef, watch } from 'vue'
 
 import { CODE_VISUAL_SIZE_BRIDGE_SOURCE } from '@/app/feedback-note/code-visual/document'
+import { captureCodeVisualSelection } from '@/app/feedback-note/draft/code-visual'
 import {
   forgetConfirmedFeedback,
   rememberConfirmedFeedback
@@ -53,8 +54,8 @@ const collectedFeedback = reactive<Record<string, CollectedFeedback[] | undefine
 const hoveredFeedback = ref<{ noteId: string; index: number } | null>(null)
 const provenanceIndices = reactive<Record<string, number | undefined>>({})
 const codeVisualAspectRatios = reactive<Record<string, string | undefined>>({})
+const codeVisualFrames = useTemplateRef<HTMLIFrameElement[]>('codeVisualFrames')
 const regionDrag = ref<RegionDrag | null>(null)
-const recordingId = ref<string | null>(null)
 let ownsHighlight = false
 let noteQueueOrigin: NoteQueueOrigin | null = null
 const suggestionVersions = new Map<string, number>()
@@ -158,6 +159,15 @@ async function requestFeedbackSuggestion(noteId: string, selection: NoteSelectio
       } catch (error) {
         console.warn('[feedback-note] could not crop draft context:', error)
       }
+    } else if (note.representation.type === 'code-visual') {
+      const frame = codeVisualFrames.value?.find((candidate) => candidate.dataset.noteId === noteId)
+      if (frame) {
+        try {
+          images = await captureCodeVisualSelection(frame, selection)
+        } catch (error) {
+          console.warn('[feedback-note] could not capture code visual draft context:', error)
+        }
+      }
     }
     const suggestion = await generateFeedbackDraft({
       note,
@@ -243,15 +253,10 @@ function clearSelection(noteId: string) {
   beginSuggestionRequest(noteId)
   selections[noteId] = undefined
   feedbackDrafts[noteId] = ''
-  if (recordingId.value === noteId) recordingId.value = null
 }
 
 function hasAnnotation(noteId: string) {
   return Boolean(selections[noteId])
-}
-
-function toggleRecording(noteId: string) {
-  recordingId.value = recordingId.value === noteId ? null : noteId
 }
 
 function hasFeedbackDraft(noteId: string): boolean {
@@ -312,7 +317,6 @@ function addFeedback(noteId: string): boolean {
 }
 
 function continueFeedbackNote(noteId: string) {
-  if (recordingId.value === noteId) recordingId.value = null
   if (hasFeedbackDraft(noteId)) addFeedback(noteId)
   dismissFeedbackNote(noteId)
 }
@@ -614,9 +618,11 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
             >
               <iframe
                 v-if="visualHtml(note)"
+                ref="codeVisualFrames"
                 :srcdoc="visualHtml(note) ?? undefined"
+                :data-note-id="note.id"
                 title="Interactive feedback representation"
-                sandbox="allow-scripts"
+                sandbox="allow-scripts allow-same-origin"
                 class="pointer-events-none block w-full border-0 bg-transparent"
                 :style="codeVisualStyle(note.id)"
               />
@@ -874,20 +880,6 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
                   @keydown.ctrl.enter.prevent="continueFeedbackNote(note.id)"
                 />
                 <div class="mt-1.5 flex items-center justify-end gap-1.5">
-                  <button
-                    type="button"
-                    class="flex size-8 items-center justify-center rounded-lg bg-panel text-muted ring-1 ring-border hover:bg-hover hover:text-surface"
-                    :class="{ 'bg-violet-100': recordingId === note.id }"
-                    :aria-pressed="recordingId === note.id"
-                    aria-label="Record feedback about selection"
-                    @click="toggleRecording(note.id)"
-                  >
-                    <icon-lucide-square v-if="recordingId === note.id" class="size-3" />
-                    <span v-else class="relative size-4" aria-hidden="true">
-                      <icon-lucide-user-round class="absolute bottom-0 left-0 size-3" />
-                      <icon-lucide-audio-lines class="absolute -top-0.5 -right-1 size-2.5" />
-                    </span>
-                  </button>
                   <button
                     type="button"
                     class="flex size-8 items-center justify-center rounded-lg bg-violet-600 text-white shadow-sm hover:bg-violet-500 disabled:cursor-default disabled:opacity-40"
