@@ -13,33 +13,61 @@ Alignment still requires a note. A proposition is only a hypothesis, so apparent
 
 Do not call a tool when the reasoning is merely status, repetition, tool preparation, node or id lookup, inspection before a decision, error recovery, praise of the current result, or an implementation detail that would not improve the user model. A sentence such as "I am locating nodes", "the result looks good", or "I will inspect the canvas" contains no user-model decision. If several useful topics exist, choose the one whose answer would most reduce user-model uncertainty and most usefully change later agent behavior.
 
-Review PREVIOUS FEEDBACK NOTES before calling a tool. Do not repeat an earlier underlying user-model question merely by changing its wording, image, relationship, or canvas anchor. A proposition already queried in this request is exhausted and must not be queried again. Give each note a short stable topic key that describes the underlying decision, such as layout-first-workflow.
+Review PREVIOUS FEEDBACK NOTES before calling a tool. Do not repeat an earlier underlying user-model question merely by changing its wording, representation, relationship, or canvas anchor. The same proposition may be queried again only when the new reasoning introduces a materially different condition, object, consequence, or trade-off that could change the answer. State that new context in representation_goal and use a topic key specific to it. Otherwise treat the question as exhausted. Give each note a short stable topic key that describes the underlying decision, such as layout-first-workflow.
 
-Choose the note representation in two stages. First choose visual only when seeing or marking a representation would help the person express feedback more easily than a short textual note. A design topic does not automatically require a visual. Otherwise choose text.
+Choose exactly one representation_type:
+- text: the decision concerns workflow, intent, meaning, content, priority, or another non-visual judgment that loses nothing when expressed only in language;
+- code-visual: the decision concerns a visually observable difference in structure, alternatives, values, colors, spacing, typography, hierarchy, layout, or relationships;
+- image: illustration, a scene, metaphor, texture, photographic realism, or expressive style is itself the information.
 
-When mode is visual, choose visual_type from the structure of the decision, not the task domain:
-- diagram: sequence, workflow, causality, grouping, dependency, relationship, or comparison;
-- artifact: the person must inspect an actual visual result such as color, spacing, proportion, placement, or emphasis;
-- illustration: a situation or abstract concept is clearer through concrete symbols, but neither a diagram nor an artifact fragment fits.
+When a decision is visually observable, prefer code-visual even if it could also be described or asked in words. Exact numeric values are not required: code-visual may show a grounded qualitative contrast as long as the reasoning provides genuinely different alternatives. Do not use text merely because it is easier to generate.
 
-Artifact takes precedence over diagram when the answer depends on seeing the actual appearance. A comparison between two typefaces, colors, spacing systems, or rendered layouts is artifact, even though it compares alternatives. Diagram is for semantic relationships and process structure rather than visual appearance.
+Do not choose image for a diagram, palette, simple comparison, or wireframe. Those belong to code-visual. A design topic does not automatically need either visual representation.
 
-For a visual, represent the structure of the decision rather than copying nouns from the interface:
-- comparison: two minimal alternatives or diverging paths;
-- sequence: steps, arrows, or reorderable blocks;
-- relationship or grouping: objects and only the connections or boundaries needed;
-- spatial judgment: simplified position, size, proportion, or emphasis;
-- artifact view: a reduced interface fragment, only when inspecting the visual result itself is necessary.
+Treat a newly proposed illustration subject, scene, symbolism, atmosphere, texture, photographic direction, or expressive art style as a meaningful image-content decision when it could affect later work. If that content itself is the feedback target, choose image even when the same reasoning also discusses its placement or scale. Choose code-visual only when the feedback target is the image's layout, size, prominence, cropping, or relationship to other UI—not its depicted content or expressive character. Do not silently replace an image-content decision with a nearby layout decision merely because the layout connects to a known proposition.
 
-Do not depict an interface merely because the reasoning concerns an interface. A workflow, order, or alternative usually needs a diagram, not a UI mockup. Use artifact only when the person must see the actual rendered result to answer.
+For code-visual choose code_visual_type:
+- artifact: one concrete UI or composition whose regions the person should inspect and annotate; do not manufacture a second version;
+- spectrum: a continuous degree such as density, scale, contrast, warmth, or prominence, shown as a range rather than a forced either/or choice;
+- flow: sequence, causality, dependency, or relationship;
+- comparison: two to four genuinely distinct alternatives that already exist in the evidence;
+- palette: two to six exact colors; each item color must be a six-digit hex value;
+- wireframe: simplified regions, placement, hierarchy, or layout.
+
+Do not default to comparison. Use artifact when feedback can be given by marking part of one proposed design. Use spectrum when the decision is about degree. Use comparison only when the evidence contains discrete alternatives and choosing among them is genuinely the question.
+
+For code-visual, create code_visual_brief rather than final code. The dedicated Code Visual Composer will turn this brief into HTML/CSS or SVG. The brief must contain:
+- subject: the concrete artifact or relationship to render;
+- decision: the exact uncertainty the visual must expose;
+- alternatives: the actual alternatives or spectrum anchors with exact known values or visible differences; use an empty array for a single artifact, flow, or wireframe when no alternatives exist;
+- must_show: the observable facts needed to answer without guessing;
+- format_hint: html for UI, layout, spacing, typography, controls, and rendered artifacts; svg for flows, paths, spatial relationships, and diagrams; null only when either fits.
+
+Ground every brief only in STEP REASONING, CANVAS, ACTIONS, and USER MODEL. Do not invent before/after values. If the reasoning does not provide exact values, describe the qualitative contrast without fabricating numbers. Never turn one proposed artifact into a binary choice by inventing an opposing version. A comparison needs at least two genuinely different alternatives. The Composer owns geometry and styling; the brief owns meaning and factual constraints.
+
+For image choose image_type from illustration, scene, metaphor, texture, photographic-reference, or expressive-style. image_prompt is the content instruction sent to the image generation model, not a completed image and not a question. It must name the single situation or visual quality to generate.
 
 Be visually simple but semantically specific. The person should recognize what each element means without guessing what anonymous boxes represent. Use simplified sketches of the actual concepts and up to four short labels when labels make the representation understandable.
 
-Every note must support a meaningful response. For visual mode, set annotation_affordance to a direct 2–6 word pen gesture such as "Circle one", "Connect in your order", "Cross out what feels wrong", or "Add what is missing", and build visible anchors for that gesture. For text mode there are no visual choices: use an open cue such as "Mark or say what you would change" or "Underline what matters". Never use circle, connect, choose, select, rate, or rank for text mode. This is an invitation, not an answer format: the person may instead draw anything elsewhere or explain a different idea by voice. Do not add the anticipated mark, fake handwriting, circles, checkmarks, corrections, selection marks, or answer-like arrows yourself.
-
 An image is a small visual cue, not a questionnaire or presentation. Show one decision with 2–6 essential shapes. Use alternatives only when the contrast itself is the question. Never add paragraphs, headings, repeated questions, decorative labels, or explanatory callouts. Image text is optional and limited to four labels of at most 3 words each.
 
-representation_goal must state what user-model uncertainty this note should resolve, without prescribing the answer. text is always required as a fallback and must contain at most 8 words. Do not restate the reasoning or proposition. For visual mode, image_prompt must name the single decision and the few visual elements needed to represent it. Do not ask the image model to explain the context or write the question. For text mode, visual_type and image_prompt must be null.
+representation_goal must state what user-model uncertainty this note should resolve, without prescribing the answer. cue_segments together form the concise, grammatically complete feedback cue shown alongside or instead of the primary representation. Their joined text must contain at most 30 words. It is not necessarily a question. Choose the form that best supports the intended feedback:
+- observation or working assumption: expose how the agent currently interprets the direction;
+- discrepancy statement: reveal a concrete tension with the user model;
+- annotation instruction: invite the person to mark a relevant region of one artifact;
+- adjustment prompt: indicate what quality or region can be changed;
+- spectrum description: name the quality and its meaningful range;
+- completion prompt: leave one meaningful criterion for the person to supply;
+- direct question: use only when an explicit verbal answer is genuinely necessary.
+
+Prefer declarative or action-oriented cues. Do not default to yes/no, "Should…", "Does…", "Would…", or forced A-or-B wording. Write the cue within the limit from the start; never truncate longer text. Do not restate the reasoning or proposition.
+
+Build cue_segments in display order. Each segment contains text plus its provenance:
+- reasoning: use when that phrase is grounded in STEP REASONING; evidence_quote must be an exact supporting quote and proposition_id must be null;
+- proposition: use when that phrase is grounded in a cited USER MODEL proposition; proposition_id must also appear in proposition_ids and evidence_quote must be null;
+- neutral: use only for connective or interaction language not claimed by either source; both provenance fields must be null.
+
+Segment text may paraphrase its source naturally; the provenance field points to the exact source. Every cue requires at least one reasoning segment. Alignment and conflict require at least one proposition segment. Uncovered must contain no proposition segment. Keep neutral language minimal so the person can inspect why the cue exists. The unused representation payloads must be null: text sets code_visual_type and code_visual_brief to null and uses no image fields; code-visual sets image fields to null; image sets code_visual_type and code_visual_brief to null. Never combine primary representations.
 
 Anchor the note to the closest relevant existing node in CANVAS. If the exact object is about to be created, use its existing parent or containing section. Use null only when CANVAS has no relevant node or the decision truly concerns the whole canvas.
 
@@ -63,8 +91,7 @@ function renderPreviousNotes(notes: readonly FeedbackNoteHistoryItem[]): string 
     .map(
       (note) =>
         `- ${note.topic} [${note.status}, ${note.relationship}] ${note.text}\n` +
-        `  representation: ${note.mode}${note.visualType ? `/${note.visualType}` : ''} — ${note.representationGoal}\n` +
-        `  guide: ${note.annotationAffordance}\n` +
+        `  representation: ${note.representationType}${note.representationSubtype ? `/${note.representationSubtype}` : ''} — ${note.representationGoal}\n` +
         `  propositions: ${note.propositionIds.join(', ') || '(none)'}\n` +
         `  evidence: ${note.evidenceFromReasoning}\n` +
         `  node: ${note.nodeId ?? 'agent cursor'}`

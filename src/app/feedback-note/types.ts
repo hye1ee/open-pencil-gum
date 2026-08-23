@@ -1,8 +1,81 @@
 export type FeedbackNoteRelationship = 'alignment' | 'conflict' | 'uncovered'
-export type FeedbackNoteMode = 'text' | 'visual'
-export type FeedbackNoteVisualType = 'diagram' | 'artifact' | 'illustration'
-export type FeedbackNoteImageStatus = 'none' | 'loading' | 'ready' | 'failed'
+export type FeedbackNoteImageStatus = 'loading' | 'ready' | 'failed'
+export type FeedbackNoteCodeVisualType =
+  | 'artifact'
+  | 'spectrum'
+  | 'flow'
+  | 'comparison'
+  | 'palette'
+  | 'wireframe'
+export type FeedbackNoteCodeVisualStatus = 'loading' | 'ready' | 'failed'
 export type FeedbackNoteHistoryStatus = 'active' | 'continued' | 'answered'
+export type FeedbackNoteImageType =
+  | 'illustration'
+  | 'scene'
+  | 'metaphor'
+  | 'texture'
+  | 'photographic-reference'
+  | 'expressive-style'
+
+export type FeedbackNoteRepresentation =
+  | { type: 'text' }
+  | {
+      type: 'code-visual'
+      visualType: FeedbackNoteCodeVisualType
+      brief: CodeVisualBrief
+      artifact: CodeVisualArtifact | null
+      status: FeedbackNoteCodeVisualStatus
+    }
+  | {
+      type: 'image'
+      imageType: FeedbackNoteImageType
+      prompt: string
+      url: string | null
+      status: FeedbackNoteImageStatus
+    }
+
+export interface CodeVisualAlternative {
+  label: string
+  description: string
+}
+
+export interface CodeVisualBrief {
+  subject: string
+  decision: string
+  alternatives: CodeVisualAlternative[]
+  mustShow: string[]
+  formatHint: 'html' | 'svg' | null
+}
+
+export interface CodeVisualTarget {
+  id: string
+  label: string
+}
+
+export interface CodeVisualArtifact {
+  format: 'html' | 'svg'
+  srcdoc: string
+  targets: CodeVisualTarget[]
+}
+
+export type FeedbackCueSegment =
+  | {
+      text: string
+      source: 'neutral'
+    }
+  | {
+      text: string
+      source: 'reasoning'
+      evidenceQuote: string
+    }
+  | {
+      text: string
+      source: 'proposition'
+      propositionId: string
+      propositionText: string
+      propositionConfidence: number
+      propositionRationale: string | null
+    }
 
 export interface FeedbackNote {
   id: string
@@ -10,14 +83,10 @@ export interface FeedbackNote {
   originChunk: number
   topic: string
   relationship: FeedbackNoteRelationship
-  mode: FeedbackNoteMode
-  visualType: FeedbackNoteVisualType | null
+  representation: FeedbackNoteRepresentation
   representationGoal: string
   text: string
-  imagePrompt: string | null
-  imageUrl: string | null
-  imageStatus: FeedbackNoteImageStatus
-  annotationAffordance: string
+  cueSegments: FeedbackCueSegment[]
   nodeId: string | null
   evidenceFromReasoning: string
   propositionIds: string[]
@@ -29,11 +98,10 @@ export interface FeedbackNoteHistoryItem {
   originChunk: number
   topic: string
   relationship: FeedbackNoteRelationship
-  mode: FeedbackNoteMode
-  visualType: FeedbackNoteVisualType | null
+  representationType: FeedbackNoteRepresentation['type']
+  representationSubtype: FeedbackNoteCodeVisualType | FeedbackNoteImageType | null
   representationGoal: string
   text: string
-  annotationAffordance: string
   nodeId: string | null
   evidenceFromReasoning: string
   propositionIds: string[]

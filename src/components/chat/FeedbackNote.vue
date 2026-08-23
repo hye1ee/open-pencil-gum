@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { useEventListener } from '@vueuse/core'
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import { CODE_VISUAL_SIZE_BRIDGE_SOURCE } from '@/app/feedback-note/code-visual/document'
 import { dismissFeedbackNote, feedbackNoteState, openFeedbackNote } from '@/app/feedback-note/use'
+import type { FeedbackCueSegment } from '@/app/feedback-note/types'
 import { useEditorStore } from '@/app/editor/active-store'
 import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 type NoteSelection =
-  | { type: 'image'; x: number; y: number; width: number; height: number }
+  | { type: 'region'; x: number; y: number; width: number; height: number }
   | { type: 'text'; text: string }
 
 interface RegionDrag {
@@ -23,6 +26,8 @@ const introTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const selections = reactive<Record<string, NoteSelection | undefined>>({})
 const feedbackDrafts = reactive<Record<string, string>>({})
 const submittedFeedback = reactive<Record<string, string>>({})
+const provenanceIndices = reactive<Record<string, number | undefined>>({})
+const codeVisualAspectRatios = reactive<Record<string, string | undefined>>({})
 const regionDrag = ref<RegionDrag | null>(null)
 const recordingId = ref<string | null>(null)
 let ownsHighlight = false
@@ -43,11 +48,13 @@ function relativePoint(event: PointerEvent): Vector | null {
 }
 
 function startRegion(noteId: string, event: PointerEvent) {
+  const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
+  if (note?.representation.type !== 'image' && note?.representation.type !== 'code-visual') return
   if (event.button !== 0) return
   const start = relativePoint(event)
   if (!start) return
   regionDrag.value = { noteId, start }
-  selections[noteId] = { type: 'image', x: start.x, y: start.y, width: 0, height: 0 }
+  selections[noteId] = { type: 'region', x: start.x, y: start.y, width: 0, height: 0 }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
@@ -56,7 +63,7 @@ function updateRegion(noteId: string, event: PointerEvent) {
   const point = relativePoint(event)
   if (!drag || drag.noteId !== noteId || !point) return
   selections[noteId] = {
-    type: 'image',
+    type: 'region',
     x: Math.min(drag.start.x, point.x),
     y: Math.min(drag.start.y, point.y),
     width: Math.abs(point.x - drag.start.x),
@@ -66,8 +73,8 @@ function updateRegion(noteId: string, event: PointerEvent) {
 
 function finishRegion(noteId: string, event: PointerEvent) {
   const selection = selections[noteId]
-  if (selection?.type === 'image' && selection.width * selection.height < 0.001) {
-    delete selections[noteId]
+  if (selection?.type === 'region' && selection.width * selection.height < 0.001) {
+    selections[noteId] = undefined
   }
   const target = event.currentTarget
   if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
@@ -90,14 +97,14 @@ function textSegments(noteId: string, text: string): string[] {
   const selection = selections[noteId]
   if (selection?.type !== 'text') return [text]
   const start = text.indexOf(selection.text)
-  if (start < 0) return [text]
+  if (start === -1) return [text]
   const end = start + selection.text.length
   return [text.slice(0, start), text.slice(start, end), text.slice(end)]
 }
 
 function regionStyle(noteId: string) {
   const selection = selections[noteId]
-  if (selection?.type !== 'image') return undefined
+  if (selection?.type !== 'region') return undefined
   return {
     left: `${selection.x * 100}%`,
     top: `${selection.y * 100}%`,
@@ -107,9 +114,9 @@ function regionStyle(noteId: string) {
 }
 
 function clearSelection(noteId: string) {
-  delete selections[noteId]
-  delete feedbackDrafts[noteId]
-  delete submittedFeedback[noteId]
+  selections[noteId] = undefined
+  feedbackDrafts[noteId] = ''
+  submittedFeedback[noteId] = ''
   if (recordingId.value === noteId) recordingId.value = null
 }
 
@@ -129,6 +136,23 @@ function submitSelectionFeedback(noteId: string) {
   const feedback = feedbackDrafts[noteId]?.trim()
   if (!feedback) return
   submittedFeedback[noteId] = feedback
+}
+
+function toggleProvenance(noteId: string, segmentIndex: number) {
+  if (window.getSelection()?.toString().trim()) return
+  provenanceIndices[noteId] = provenanceIndices[noteId] === segmentIndex ? undefined : segmentIndex
+}
+
+function provenanceSegment(
+  note: (typeof feedbackNoteState.notes)[number]
+): FeedbackCueSegment | null {
+  const index = provenanceIndices[note.id]
+  return index === undefined ? null : (note.cueSegments[index] ?? null)
+}
+
+function propositionConfidence(segment: FeedbackCueSegment | null): string {
+  if (segment?.source !== 'proposition') return ''
+  return `${(segment.propositionConfidence * 9 + 1).toFixed(0)}/10 confidence`
 }
 
 function anchorSlot(note: (typeof feedbackNoteState.notes)[number], index: number) {
@@ -201,6 +225,52 @@ function rating(relationship: (typeof feedbackNoteState.notes)[number]['relation
   if (relationship === 'alignment') return 3
   return 0
 }
+
+function visualUrl(note: (typeof feedbackNoteState.notes)[number]): string | null {
+  if (note.representation.type === 'image') return note.representation.url
+  return null
+}
+
+function visualHtml(note: (typeof feedbackNoteState.notes)[number]): string | null {
+  return note.representation.type === 'code-visual'
+    ? (note.representation.artifact?.srcdoc ?? null)
+    : null
+}
+
+function visualIsLoading(note: (typeof feedbackNoteState.notes)[number]): boolean {
+  return (
+    (note.representation.type === 'code-visual' || note.representation.type === 'image') &&
+    note.representation.status === 'loading'
+  )
+}
+
+function hasVisualArtifact(note: (typeof feedbackNoteState.notes)[number]): boolean {
+  return Boolean(visualUrl(note) || visualHtml(note))
+}
+
+function codeVisualStyle(noteId: string) {
+  return { aspectRatio: codeVisualAspectRatios[noteId] ?? '720 / 440' }
+}
+
+useEventListener(window, 'message', (event: MessageEvent) => {
+  const message = event.data
+  if (
+    typeof message !== 'object' ||
+    message === null ||
+    message.source !== CODE_VISUAL_SIZE_BRIDGE_SOURCE ||
+    typeof message.noteId !== 'string' ||
+    typeof message.width !== 'number' ||
+    typeof message.height !== 'number' ||
+    message.width < 1 ||
+    message.height < 120 ||
+    message.height > 1200
+  ) {
+    return
+  }
+  const note = feedbackNoteState.notes.find((candidate) => candidate.id === message.noteId)
+  if (note?.representation.type !== 'code-visual') return
+  codeVisualAspectRatios[note.id] = `${message.width} / ${message.height}`
+})
 
 function syncHighlights() {
   const entries = feedbackNoteState.notes
@@ -292,14 +362,8 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
         :aria-label="`Open ${note.relationship} feedback note`"
         @click="openFeedbackNote(note.id)"
       >
-        <icon-lucide-circle-check-big
-          v-if="note.relationship === 'alignment'"
-          class="size-4"
-        />
-        <icon-lucide-triangle-alert
-          v-else-if="note.relationship === 'conflict'"
-          class="size-4"
-        />
+        <icon-lucide-circle-check-big v-if="note.relationship === 'alignment'" class="size-4" />
+        <icon-lucide-triangle-alert v-else-if="note.relationship === 'conflict'" class="size-4" />
         <icon-lucide-circle-help v-else class="size-4" />
       </button>
 
@@ -321,58 +385,131 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
               Note from Step {{ note.originStep }} · Chunk {{ note.originChunk }}
             </p>
             <div
-              v-if="note.imageStatus === 'loading'"
+              v-if="visualIsLoading(note)"
               class="mb-3 flex aspect-3/2 items-center justify-center rounded-lg bg-hover text-muted"
             >
               <icon-lucide-loader-circle class="size-5 animate-spin" />
             </div>
             <div
-              v-else-if="note.imageUrl"
+              v-else-if="hasVisualArtifact(note)"
               class="relative mb-3 cursor-crosshair touch-none overflow-hidden rounded-lg select-none"
               @pointerdown.prevent="startRegion(note.id, $event)"
               @pointermove="updateRegion(note.id, $event)"
               @pointerup="finishRegion(note.id, $event)"
               @pointercancel="finishRegion(note.id, $event)"
             >
+              <iframe
+                v-if="visualHtml(note)"
+                :srcdoc="visualHtml(note) ?? undefined"
+                title="Interactive feedback representation"
+                sandbox="allow-scripts"
+                class="pointer-events-none block w-full border-0 bg-transparent"
+                :style="codeVisualStyle(note.id)"
+              />
               <img
-                :src="note.imageUrl"
+                v-else
+                :src="visualUrl(note) ?? undefined"
                 alt="Interactive feedback representation"
                 draggable="false"
                 class="pointer-events-none h-auto w-full object-contain"
               />
               <div
-                v-if="selections[note.id]?.type === 'image'"
+                v-if="selections[note.id]?.type === 'region'"
                 class="pointer-events-none absolute border-2 border-violet-500 bg-violet-400/10 shadow-sm"
                 :style="regionStyle(note.id)"
               />
-              <div
-                class="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-panel/90 px-2 py-1 text-[11px] font-medium text-surface shadow-sm ring-1 ring-border backdrop-blur-sm"
-              >
-                <icon-lucide-pencil class="size-3 shrink-0" />
-                <span class="truncate">{{ note.annotationAffordance }}</span>
-              </div>
             </div>
             <p
               class="cursor-text text-base leading-snug select-text [-webkit-user-select:text] selection:bg-violet-300/70 selection:text-surface"
               @mouseup="selectText(note.id, $event)"
             >
-              <span
-                v-for="(segment, segmentIndex) in textSegments(note.id, note.text)"
-                :key="segmentIndex"
-                :class="{
-                  'rounded-sm bg-violet-300/60':
-                    textSegments(note.id, note.text).length === 3 && segmentIndex === 1
-                }"
-                >{{ segment }}</span
-              >
+              <template v-for="(cueSegment, cueIndex) in note.cueSegments" :key="cueIndex">
+                <span v-if="cueIndex > 0">{{ ' ' }}</span>
+                <span
+                  :role="cueSegment.source === 'neutral' ? undefined : 'button'"
+                  :tabindex="cueSegment.source === 'neutral' ? undefined : 0"
+                  :class="{
+                    'cursor-pointer rounded-sm underline decoration-dotted underline-offset-4 transition hover:bg-sky-100':
+                      cueSegment.source === 'reasoning',
+                    'cursor-pointer rounded-sm underline decoration-dotted underline-offset-4 transition hover:bg-amber-100':
+                      cueSegment.source === 'proposition',
+                    'bg-sky-100':
+                      cueSegment.source === 'reasoning' && provenanceIndices[note.id] === cueIndex,
+                    'bg-amber-100':
+                      cueSegment.source === 'proposition' && provenanceIndices[note.id] === cueIndex
+                  }"
+                  @click.stop="
+                    cueSegment.source !== 'neutral' && toggleProvenance(note.id, cueIndex)
+                  "
+                  @keydown.enter.prevent="
+                    cueSegment.source !== 'neutral' && toggleProvenance(note.id, cueIndex)
+                  "
+                  @keydown.space.prevent="
+                    cueSegment.source !== 'neutral' && toggleProvenance(note.id, cueIndex)
+                  "
+                >
+                  <span
+                    v-for="(part, partIndex) in textSegments(note.id, cueSegment.text)"
+                    :key="partIndex"
+                    :class="{
+                      'rounded-sm bg-violet-300/60':
+                        textSegments(note.id, cueSegment.text).length === 3 && partIndex === 1
+                    }"
+                    >{{ part }}</span
+                  >
+                </span>
+              </template>
             </p>
-            <p
-              v-if="note.mode === 'text'"
-              class="mt-3 flex items-center gap-1 text-sm font-medium text-muted"
+            <div
+              v-if="provenanceSegment(note)?.source === 'reasoning'"
+              class="mt-3 rounded-lg bg-sky-50 p-3 text-xs text-surface ring-1 ring-sky-200"
             >
-              <icon-lucide-pencil class="size-3.5" />
-              {{ note.annotationAffordance }}
-            </p>
+              <p class="mb-1 flex items-center gap-1.5 font-semibold text-sky-700">
+                <icon-lucide-brain class="size-3.5" />
+                From agent reasoning
+              </p>
+              <p class="leading-relaxed text-muted">
+                “{{
+                  provenanceSegment(note)?.source === 'reasoning'
+                    ? provenanceSegment(note)?.evidenceQuote
+                    : ''
+                }}”
+              </p>
+            </div>
+            <div
+              v-else-if="provenanceSegment(note)?.source === 'proposition'"
+              class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-surface ring-1 ring-amber-200"
+            >
+              <p class="mb-1 flex items-center justify-between gap-2 font-semibold text-amber-700">
+                <span class="flex items-center gap-1.5">
+                  <icon-lucide-user-round class="size-3.5" />
+                  From user model
+                </span>
+                <span class="font-normal text-amber-600">
+                  {{ propositionConfidence(provenanceSegment(note)) }}
+                </span>
+              </p>
+              <p class="leading-relaxed text-muted">
+                {{
+                  provenanceSegment(note)?.source === 'proposition'
+                    ? provenanceSegment(note)?.propositionText
+                    : ''
+                }}
+              </p>
+              <p
+                v-if="
+                  provenanceSegment(note)?.source === 'proposition' &&
+                  provenanceSegment(note)?.propositionRationale
+                "
+                class="mt-1.5 border-t border-amber-200 pt-1.5 leading-relaxed text-muted"
+              >
+                {{
+                  provenanceSegment(note)?.source === 'proposition'
+                    ? provenanceSegment(note)?.propositionRationale
+                    : ''
+                }}
+              </p>
+            </div>
           </div>
 
           <div class="absolute top-full left-0 mt-3 flex w-full items-center gap-2">

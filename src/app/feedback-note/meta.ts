@@ -37,13 +37,16 @@ export async function considerFeedbackNotesForStep(
   }
 
   for (const [index, note] of notes.entries()) {
+    let subtype: string | null = null
+    if (note.representation.type === 'code-visual') subtype = note.representation.visualType
+    if (note.representation.type === 'image') subtype = note.representation.imageType
     logFeedbackNote(
       note.originStep,
       index + 1,
       note.relationship,
-      note.mode,
+      note.representation.type,
       note.nodeId,
-      `chunk=${note.originChunk}  topic=${note.topic}  representation=${note.mode}${note.visualType ? `/${note.visualType}` : ''}  goal=${JSON.stringify(note.representationGoal)}  text=${JSON.stringify(note.text)}  guide=${JSON.stringify(note.annotationAffordance)}  propositions=${note.propositionIds.join(',') || 'none'}`
+      `chunk=${note.originChunk}  topic=${note.topic}  representation=${note.representation.type}${subtype ? `/${subtype}` : ''}  goal=${JSON.stringify(note.representationGoal)}  text=${JSON.stringify(note.text)}  propositions=${note.propositionIds.join(',') || 'none'}`
     )
   }
 }

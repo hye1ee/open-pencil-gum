@@ -197,18 +197,30 @@ export function logFeedbackNote(
   step: number,
   position: number,
   relationship: 'alignment' | 'conflict' | 'uncovered' | null,
-  mode: 'text' | 'visual' | null,
+  representation: 'text' | 'code-visual' | 'image' | null,
   nodeId: string | null,
   detail?: string
 ): void {
   write(
     'NOTE',
-    `step ${step}${position > 0 ? ` note ${position}` : ''} → ${relationship ? `${relationship}/${mode}` : 'skip'}${relationship ? `  ${nodeId ?? 'agent cursor'}` : ''}${detail ? `  ${detail}` : ''}`
+    `step ${step}${position > 0 ? ` note ${position}` : ''} → ${relationship ? `${relationship}/${representation}` : 'skip'}${relationship ? `  ${nodeId ?? 'agent cursor'}` : ''}${detail ? `  ${detail}` : ''}`
   )
 }
 
-export function logFeedbackNoteImage(id: string, status: 'ready' | 'failed'): void {
-  write('NOTE-IMG', `${id} → ${status}`)
+export function logFeedbackNoteImage(
+  id: string,
+  status: 'ready' | 'failed',
+  detail?: string
+): void {
+  write('NOTE-IMG', `${id} → ${status}${detail ? `  ${detail}` : ''}`)
+}
+
+export function logFeedbackNoteCode(
+  id: string,
+  status: 'html' | 'svg' | 'failed',
+  detail?: string
+): void {
+  write('NOTE-CODE', `${id} → ${status}${detail ? `  ${detail}` : ''}`)
 }
 
 export function logJudgeSkip(chars: number): void {

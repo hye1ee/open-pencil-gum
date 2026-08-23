@@ -1,33 +1,17 @@
 import { generateText } from 'ai'
 import { reactive } from 'vue'
 
-import { logFeedbackNoteImage } from '@/app/ai/chat/agent-log'
+import { logFeedbackNoteCode, logFeedbackNoteImage } from '@/app/ai/chat/agent-log'
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
+import { composeCodeVisual } from '@/app/feedback-note/code-visual/use'
 import { generateFeedbackNoteImage } from '@/app/feedback-note/image'
+import { feedbackNoteRelationship, readFeedbackNote } from '@/app/feedback-note/parse'
 import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
 import { FEEDBACK_NOTE_TOOLS } from '@/app/feedback-note/tools'
-import type {
-  FeedbackNote,
-  FeedbackNoteHistoryItem,
-  FeedbackNoteRelationship,
-  FeedbackNoteVisualType
-} from '@/app/feedback-note/types'
+import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/feedback-note/types'
 import type { Proposition } from '@/app/meta-agent/judge'
-
-interface RawFeedbackNote {
-  topic?: unknown
-  mode?: unknown
-  visual_type?: unknown
-  representation_goal?: unknown
-  text?: unknown
-  image_prompt?: unknown
-  annotation_affordance?: unknown
-  node_id?: unknown
-  evidence_from_reasoning?: unknown
-  proposition_ids?: unknown
-}
 
 export const feedbackNoteState = reactive<{
   notes: FeedbackNote[]
@@ -43,98 +27,20 @@ let nextId = 1
 const NOTE_HISTORY_LIMIT = 15
 let feedbackNoteHistory: FeedbackNoteHistoryItem[] = []
 
-function relationship(toolName: string): FeedbackNoteRelationship | null {
-  if (toolName === 'create_alignment_feedback_note') return 'alignment'
-  if (toolName === 'create_conflict_feedback_note') return 'conflict'
-  if (toolName === 'create_uncovered_feedback_note') return 'uncovered'
-  return null
-}
-
-function readString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-function readVisualType(value: unknown): FeedbackNoteVisualType | null {
-  if (value === 'diagram' || value === 'artifact' || value === 'illustration') return value
-  return null
-}
-
-function readEvidence(value: unknown, reasoning: string): string {
-  const evidence = readString(value)
-  return evidence && reasoning.includes(evidence) ? evidence : reasoning.trim().slice(0, 200)
-}
-
-function readPropositionIds(value: unknown, propositions: Proposition[]): string[] {
-  if (!Array.isArray(value)) return []
-  const known = new Set(propositions.map((item) => item.id))
-  return value.filter((id): id is string => typeof id === 'string' && known.has(id))
-}
-
-function readAffordance(value: unknown, mode: FeedbackNote['mode']): string {
-  const affordance = readString(value).split(/\s+/).slice(0, 8).join(' ')
-  if (mode === 'text' && /^(circle|connect|choose|select|rate|rank)\b/i.test(affordance)) {
-    return 'Mark or say what you would change'
-  }
-  return affordance
-}
-
-function readNote(
-  input: unknown,
-  relation: FeedbackNoteRelationship,
-  reasoning: string,
-  propositions: Proposition[],
-  originStep: number,
-  originChunk: number
-): FeedbackNote | null {
-  if (typeof input !== 'object' || input === null) return null
-  const row = input as RawFeedbackNote
-  const topic = readString(row.topic)
-  if (topic === '') return null
-  const mode = row.mode === 'visual' ? 'visual' : 'text'
-  const visualType = readVisualType(row.visual_type)
-  const imagePrompt = mode === 'visual' ? readString(row.image_prompt) : null
-  if (mode === 'visual' && (!visualType || !imagePrompt)) return null
-  const representationGoal = readString(row.representation_goal)
-  if (representationGoal === '') return null
-  const rawText = readString(row.text)
-  const text = rawText.split(/\s+/).slice(0, 8).join(' ')
-  const annotationAffordance = readAffordance(row.annotation_affordance, mode)
-  if (annotationAffordance === '') return null
-  const propositionIds = readPropositionIds(row.proposition_ids, propositions)
-  if (relation === 'uncovered' ? propositionIds.length > 0 : propositionIds.length === 0)
-    return null
-  return {
-    id: `n${nextId++}`,
-    originStep,
-    originChunk,
-    topic,
-    relationship: relation,
-    mode,
-    visualType: mode === 'visual' ? visualType : null,
-    representationGoal,
-    text: text || 'What should guide this decision?',
-    imagePrompt,
-    imageUrl: null,
-    imageStatus: mode === 'visual' ? 'loading' : 'none',
-    annotationAffordance,
-    nodeId: typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null,
-    evidenceFromReasoning: readEvidence(row.evidence_from_reasoning, reasoning),
-    propositionIds
-  }
-}
-
 function rememberNote(note: FeedbackNote): void {
+  let subtype: FeedbackNoteHistoryItem['representationSubtype'] = null
+  if (note.representation.type === 'code-visual') subtype = note.representation.visualType
+  if (note.representation.type === 'image') subtype = note.representation.imageType
   feedbackNoteHistory.push({
     id: note.id,
     originStep: note.originStep,
     originChunk: note.originChunk,
     topic: note.topic,
     relationship: note.relationship,
-    mode: note.mode,
-    visualType: note.visualType,
+    representationType: note.representation.type,
+    representationSubtype: subtype,
     representationGoal: note.representationGoal,
     text: note.text,
-    annotationAffordance: note.annotationAffordance,
     nodeId: note.nodeId,
     evidenceFromReasoning: note.evidenceFromReasoning,
     propositionIds: [...note.propositionIds],
@@ -190,40 +96,36 @@ export async function createFeedbackNotes(input: {
       model: createUntracedLanguageModel(modelConfigForSlot('meta-agent')),
       system: FEEDBACK_NOTE_SYSTEM,
       prompt: renderFeedbackNotePrompt({ ...input, previousNotes: feedbackNoteHistory }),
-      maxOutputTokens: 1024,
+      maxOutputTokens: 2048,
       providerOptions: backgroundProviderOptions('meta-agent'),
       tools: FEEDBACK_NOTE_TOOLS,
       toolChoice: 'auto'
     })
     const knownTopics = new Set(feedbackNoteHistory.map((note) => note.topic.toLowerCase()))
-    const queriedPropositions = new Set(feedbackNoteHistory.flatMap((note) => note.propositionIds))
     const notes = result.staticToolCalls.slice(0, 1).flatMap((call) => {
-      const relation = relationship(call.toolName)
+      const relation = feedbackNoteRelationship(call.toolName)
       if (!relation) return []
-      const note = readNote(
-        call.input,
+      const note = readFeedbackNote({
+        id: `n${nextId++}`,
+        value: call.input,
         relation,
-        input.reasoning,
-        input.propositions,
-        input.originStep,
-        input.originChunk
-      )
-      if (
-        !note ||
-        knownTopics.has(note.topic.toLowerCase()) ||
-        note.propositionIds.some((id) => queriedPropositions.has(id))
-      ) {
+        reasoning: input.reasoning,
+        propositions: input.propositions,
+        originStep: input.originStep,
+        originChunk: input.originChunk
+      })
+      if (!note || knownTopics.has(note.topic.toLowerCase())) {
         return []
       }
       knownTopics.add(note.topic.toLowerCase())
-      for (const id of note.propositionIds) queriedPropositions.add(id)
       return [note]
     })
     const storedNotes = notes.flatMap((note) => {
       const index = feedbackNoteState.notes.push(note) - 1
       const storedNote = feedbackNoteState.notes[index]
       rememberNote(storedNote)
-      if (storedNote.mode === 'visual' && storedNote.imagePrompt) void fillImage(storedNote)
+      if (storedNote.representation.type === 'code-visual') void fillCodeVisual(storedNote)
+      if (storedNote.representation.type === 'image') void fillImage(storedNote)
       return [storedNote]
     })
     if (storedNotes.length > 0) {
@@ -238,21 +140,35 @@ export async function createFeedbackNotes(input: {
   }
 }
 
-async function fillImage(note: FeedbackNote): Promise<void> {
-  if (!note.imagePrompt || !note.visualType) return
+async function fillCodeVisual(note: FeedbackNote): Promise<void> {
+  if (note.representation.type !== 'code-visual') return
+  const representation = note.representation
   try {
-    note.imageUrl = await generateFeedbackNoteImage(
-      note.imagePrompt,
-      note.annotationAffordance,
-      note.visualType,
+    representation.artifact = await composeCodeVisual(note)
+    representation.status = 'ready'
+    logFeedbackNoteCode(note.id, representation.artifact.format)
+  } catch (error) {
+    console.warn('[feedback-note] code visual generation failed:', error)
+    representation.status = 'failed'
+    logFeedbackNoteCode(note.id, 'failed', error instanceof Error ? error.message : 'unknown error')
+  }
+}
+
+async function fillImage(note: FeedbackNote): Promise<void> {
+  if (note.representation.type !== 'image') return
+  const representation = note.representation
+  try {
+    representation.url = await generateFeedbackNoteImage(
+      representation.prompt,
+      representation.imageType,
       note.representationGoal
     )
-    note.imageStatus = 'ready'
+    representation.status = 'ready'
     logFeedbackNoteImage(note.id, 'ready')
   } catch (error) {
     console.warn('[feedback-note] image generation failed:', error)
-    note.imageStatus = 'failed'
-    logFeedbackNoteImage(note.id, 'failed')
+    representation.status = 'failed'
+    logFeedbackNoteImage(note.id, 'failed', error instanceof Error ? error.message : 'unknown error')
   }
 }
 

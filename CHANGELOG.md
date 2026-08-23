@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Add experimental Interactive Feedback Notes that compare each completed AI reasoning step with the user model, pause before its action, create up to two canvas-anchored text or image notes, and reveal the confirmed result with a one-way fade.
+- Add experimental Interactive Feedback Notes that compare each completed AI reasoning step with the user model, pause before its action, choose exactly one text, deterministic code visual, or generated image representation, and reveal the confirmed result with a one-way fade.
 - Add JSX authoring support for components, component sets, and instances.
 - Add design JSX variable helpers so color props can use `designVar()` / `defineVars()` references and emit graph variable bindings.
 - Add structured design JSX paint helpers for solid fills, multiple fills, and gradients.
