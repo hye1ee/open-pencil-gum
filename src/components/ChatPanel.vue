@@ -6,11 +6,12 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { agentActivity } from '@/app/ai/chat/agent-activity'
-import { logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
+import { logFeedbackStep, logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
 import {
   abandonTurn,
   agentTurn,
   forgetAbandonedTurn,
+  resumeTurn,
   setTurnRunning
 } from '@/app/ai/chat/agent-turn'
 import {
@@ -21,11 +22,18 @@ import {
 } from '@/app/ai/chat/mismatch'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
+import { renderStepFeedbackReport } from '@/app/feedback-note/report'
+import {
+  beginFeedbackReplay,
+  hasExplicitStepFeedback,
+  setStepFeedbackHandler,
+  type StepFeedbackResult
+} from '@/app/feedback-note/session'
 import {
   MAX_AGENT_STEPS,
   clearToolLogEntries,
   continueRunSteps,
-  currentRunSteps,
+  currentRunStepNumber,
   didHitStepLimit
 } from '@/app/ai/tools'
 import { currentMetaRequest, marksAwaitingAnswer, noteSettledMarks } from '@/app/meta-agent/use'
@@ -67,8 +75,17 @@ const debugCopied = refAutoReset(false, 1500)
 const acpLogCopied = refAutoReset(false, 1500)
 
 const messages = computed(() => chat.value?.messages ?? [])
+const visibleMessages = computed(() =>
+  messages.value.filter((message) => {
+    const metadata = message.metadata
+    return !(typeof metadata === 'object' && metadata !== null && 'internal' in metadata)
+  })
+)
 const status = computed(() => chat.value?.status ?? 'ready')
 const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
+const retryHandoffToken = ref<number | null>(null)
+let nextRetryHandoffToken = 1
+const logicallyRunning = computed(() => isRunning.value || retryHandoffToken.value !== null)
 
 // Messages the user typed while a run was in progress. They're injected into the
 // running loop (not the persisted history), so we echo them here optimistically.
@@ -84,21 +101,34 @@ const queuedMessages = computed<UIMessage[]>(() =>
 // restarted after marker feedback writes a second assistant message, so
 // counting `step-start` parts there would send the bar back to zero half way
 // through — the restart is an implementation detail and must not show.
-const currentStep = computed(() => currentRunSteps())
+const currentStep = computed(() => Math.min(currentRunStepNumber(), MAX_AGENT_STEPS))
 
 const activityText = computed(() => {
   if (agentActivity.metaAgentTasks > 0) return 'Reviewing the current decision…'
-  if (!isRunning.value) return null
+  if (!logicallyRunning.value) return null
   if (agentTurn.paused) return 'Waiting for your feedback…'
   if (currentStep.value === 0) return 'Starting the task…'
   return `Working on step ${currentStep.value}…`
 })
 
 const activityIsProcessing = computed(
-  () => agentActivity.metaAgentTasks > 0 || (isRunning.value && !agentTurn.paused)
+  () => agentActivity.metaAgentTasks > 0 || (logicallyRunning.value && !agentTurn.paused)
 )
 
-const showStepBar = computed(() => isRunning.value)
+const showStepBar = computed(() => logicallyRunning.value)
+
+function beginRetryHandoff(): number {
+  const token = nextRetryHandoffToken++
+  retryHandoffToken.value = token
+  setTurnRunning(true)
+  return token
+}
+
+function finishRetryHandoff(token: number): void {
+  if (retryHandoffToken.value !== token) return
+  retryHandoffToken.value = null
+  setTurnRunning(isRunning.value)
+}
 
 const showContinue = computed(() => {
   if (status.value !== 'ready') return false
@@ -133,6 +163,7 @@ watch(
 watch(
   isRunning,
   (running) => {
+    if (!running && retryHandoffToken.value !== null) return
     setTurnRunning(running)
     if (running) return
     reportPassedMarks()
@@ -145,7 +176,10 @@ watch(
 )
 
 onMounted(() => showAgentCursor(getActiveEditorStore()))
-onUnmounted(() => hideAgentCursor(getActiveEditorStore()))
+onUnmounted(() => {
+  hideAgentCursor(getActiveEditorStore())
+  setStepFeedbackHandler(null)
+})
 
 async function handleSubmit(text: string) {
   // Mid-run: route to the intervention queue instead of a new chat turn, and
@@ -220,7 +254,7 @@ async function handleMarkResume() {
   const store = getActiveEditorStore()
   const wasRunning = isRunning.value
   const request = currentMetaRequest()
-  const step = currentRunSteps(store)
+  const step = currentRunStepNumber(store)
   const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), takeAnswers(store))
 
   // `abandonTurn` before the stop, not after. Aborting the request does not
@@ -228,8 +262,10 @@ async function handleMarkResume() {
   // for the hold to lift, and lifting it is what sends it through. This says the
   // turn is being thrown away, so the transform drops it instead.
   if (wasRunning && hasContent(report)) {
+    const handoffToken = beginRetryHandoff()
     abandonTurn('marker feedback restart')
     await chat.value?.stop()
+    if (!chat.value) finishRetryHandoff(handoffToken)
   }
   releaseAnswerHold()
 
@@ -267,7 +303,22 @@ async function handleMarkResume() {
   // opening message of the restarted turn — so without this the one thing the
   // agent is told about the interruption never appears on the timeline.
   logUserMessage(text)
-  chat.value?.sendMessage({ text }).catch((e: unknown) => {
+  const activeChat = chat.value
+  if (!activeChat) {
+    const token = retryHandoffToken.value
+    if (token !== null) finishRetryHandoff(token)
+    return
+  }
+  const handoffToken = retryHandoffToken.value
+  const retry = activeChat.sendMessage({ text })
+  if (handoffToken !== null) {
+    void retry.then(
+      () => finishRetryHandoff(handoffToken),
+      () => undefined
+    )
+  }
+  retry.catch((e: unknown) => {
+    if (handoffToken !== null) finishRetryHandoff(handoffToken)
     console.error('Chat error:', e)
     toast.error(e instanceof Error ? e.message : String(e))
   })
@@ -276,6 +327,83 @@ async function handleMarkResume() {
 setMarkResumeHandler(() => {
   void handleMarkResume()
 })
+
+async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
+  if (!hasExplicitStepFeedback(result)) {
+    logFeedbackStep(
+      result.step,
+      'proceed',
+      `notes=${result.outcomes.length} implicit=${result.outcomes.length} explicit=0; releasing held tool stream`
+    )
+    logMarkAnswer('passed', `${result.outcomes.length} feedback notes implicitly accepted`)
+    resumeTurn('feedback-note')
+    return
+  }
+
+  const store = getActiveEditorStore()
+  const wasRunning = isRunning.value
+  const request = currentMetaRequest()
+  if (!wasRunning) {
+    logFeedbackStep(
+      result.step,
+      'retry',
+      'explicit feedback arrived after the run ended; no held tool stream to replace'
+    )
+    resumeTurn('feedback-note')
+    return
+  }
+
+  const explicitOutcomes = result.outcomes.filter(
+    (outcome) => outcome.resolution === 'explicit-feedback'
+  )
+  const feedbackItems = explicitOutcomes.reduce(
+    (count, outcome) => count + outcome.feedbackItems.length,
+    0
+  )
+  logFeedbackStep(
+    result.step,
+    'retry',
+    `notes=${result.outcomes.length} implicit=${result.outcomes.length - explicitOutcomes.length} explicit=${explicitOutcomes.length} feedback-items=${feedbackItems}; discarding held tool stream before action`
+  )
+
+  const handoffToken = beginRetryHandoff()
+  abandonTurn('feedback note retry')
+  await chat.value?.stop()
+  if (chat.value) chat.value.messages = withoutDanglingToolCalls(chat.value.messages)
+  continueRunSteps(store)
+  noteUserRequest(request)
+  beginFeedbackReplay(result.step)
+  forgetAbandonedTurn()
+
+  const text = renderStepFeedbackReport(result, request)
+  logFeedbackStep(
+    result.step,
+    'report',
+    `reasoning-chunks=${result.reasoningChunks.length} notes=${result.outcomes.length} feedback-items=${feedbackItems} chars=${text.length}; sending retry context`
+  )
+  logMarkAnswer(
+    'resumed',
+    `${explicitOutcomes.length} corrected, step ${result.step} retrying without notes`
+  )
+  logUserMessage(text)
+  const activeChat = chat.value
+  if (!activeChat) {
+    finishRetryHandoff(handoffToken)
+    return
+  }
+  const retry = activeChat.sendMessage({ text, metadata: { internal: 'feedback-step-retry' } })
+  void retry.then(
+    () => finishRetryHandoff(handoffToken),
+    () => undefined
+  )
+  retry.catch((error: unknown) => {
+    finishRetryHandoff(handoffToken)
+    console.error('Feedback retry error:', error)
+    toast.error(error instanceof Error ? error.message : String(error))
+  })
+}
+
+setStepFeedbackHandler(handleStepFeedback)
 
 async function handleCopyDebug() {
   await copyChatLog(messages.value)
@@ -334,7 +462,7 @@ function handleClearChat() {
 
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
-            <ChatMessage v-for="msg in messages" :key="msg.id" :message="msg" />
+            <ChatMessage v-for="msg in visibleMessages" :key="msg.id" :message="msg" />
 
             <!-- Mid-run messages the user queued while the agent is working -->
             <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />

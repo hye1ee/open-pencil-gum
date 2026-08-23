@@ -22,6 +22,18 @@ import { FEEDBACK_DRAFT_SYSTEM, renderFeedbackDraftPrompt } from '@/app/feedback
 import { buildFeedbackNoteImagePrompt } from '@/app/feedback-note/image'
 import { readFeedbackNote } from '@/app/feedback-note/parse'
 import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
+import { renderStepFeedbackReport } from '@/app/feedback-note/report'
+import {
+  beginFeedbackReplay,
+  completeFeedbackReplay,
+  currentFeedbackReplayStep,
+  hasExplicitStepFeedback,
+  interactiveFeedbackStep,
+  recordFeedbackOutcome,
+  recordFeedbackReasoning,
+  resetStepFeedbackSession,
+  takeStepFeedbackResult
+} from '@/app/feedback-note/session'
 import { FEEDBACK_NOTE_TOOLS } from '@/app/feedback-note/tools'
 
 const COMPARISON_SVG = `<svg viewBox="0 0 720 440">
@@ -32,6 +44,66 @@ const COMPARISON_SVG = `<svg viewBox="0 0 720 440">
 </svg>`
 
 describe('interactive feedback note', () => {
+  test('collects a whole step before deciding whether its action may proceed', () => {
+    resetStepFeedbackSession()
+    const note = {
+      id: 'step-note',
+      originStep: 3,
+      originChunk: 2,
+      topic: 'card-density',
+      relationship: 'alignment' as const,
+      representation: { type: 'text' as const },
+      representationGoal: 'Confirm card density.',
+      text: 'The cards will use compact spacing.',
+      cueSegments: [],
+      nodeId: null,
+      evidenceFromReasoning: 'I will tighten the card spacing.',
+      propositionIds: ['compact-layout']
+    }
+    expect(recordFeedbackReasoning(3, 1, 'I will arrange the cards.')).toBe(true)
+    expect(recordFeedbackReasoning(3, 2, 'I will tighten the card spacing.')).toBe(true)
+    recordFeedbackOutcome(note, [])
+    const accepted = takeStepFeedbackResult(3)
+    expect(accepted.reasoningChunks.map((chunk) => chunk.chunk)).toEqual([1, 2])
+    expect(hasExplicitStepFeedback(accepted)).toBe(false)
+
+    recordFeedbackOutcome(note, [
+      {
+        id: 'feedback-1',
+        noteId: note.id,
+        topic: note.topic,
+        noteContext: {
+          cue: note.text,
+          representationGoal: note.representationGoal,
+          relationship: note.relationship,
+          reasoningEvidence: note.evidenceFromReasoning,
+          propositionIds: [...note.propositionIds]
+        },
+        selection: { type: 'text', text: 'compact', source: 'cue', start: 19, end: 26 },
+        feedback: 'Keep analytics cards separate.',
+        createdAt: 1
+      }
+    ])
+    const corrected = takeStepFeedbackResult(3)
+    expect(hasExplicitStepFeedback(corrected)).toBe(true)
+    const report = renderStepFeedbackReport(corrected, 'Create three cards')
+    expect(report).toContain("none of that step's tool calls were executed")
+    expect(report).toContain('Keep analytics cards separate.')
+    expect(report).toContain('Interactive feedback is disabled for this retry')
+  })
+
+  test('suppresses feedback notes until the retried step completes an action', () => {
+    resetStepFeedbackSession()
+    beginFeedbackReplay(4)
+    expect(currentFeedbackReplayStep()).toBe(4)
+    expect(interactiveFeedbackStep(4)).toBeNull()
+    expect(recordFeedbackReasoning(4, 1, 'Retry reasoning')).toBe(false)
+    expect(completeFeedbackReplay()).toBe(4)
+    expect(currentFeedbackReplayStep()).toBeNull()
+    expect(completeFeedbackReplay()).toBeNull()
+    expect(interactiveFeedbackStep(5)).toBe(5)
+  })
+
   test('drafts editable feedback without treating selection as approval', () => {
     expect(FEEDBACK_DRAFT_SYSTEM).toContain('Selection signals attention, not approval')
     expect(FEEDBACK_DRAFT_SYSTEM).toContain('at most 25 words')
@@ -323,6 +395,12 @@ describe('interactive feedback note', () => {
     })
     expect(prompt).toContain('I will use equal-width cards.')
     expect(prompt).toContain('representation: code-visual/flow')
+    expect(FEEDBACK_NOTE_SYSTEM).toContain(
+      "confirming a primary button's accent does not settle whether secondary or tertiary controls"
+    )
+    expect(FEEDBACK_NOTE_SYSTEM).toContain(
+      'Skip as repetition only when the earlier answer necessarily resolves the current decision'
+    )
   })
 
   test('accepts freely composed SVG in the canonical centered viewport', () => {

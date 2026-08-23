@@ -11,7 +11,7 @@ import {
 import { cropFeedbackImage } from '@/app/feedback-note/draft/image'
 import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
 import { generateFeedbackDraft } from '@/app/feedback-note/draft/use'
-import { dismissFeedbackNote, feedbackNoteState, openFeedbackNote } from '@/app/feedback-note/use'
+import { feedbackNoteState, openFeedbackNote, resolveFeedbackNote } from '@/app/feedback-note/use'
 import type { FeedbackCueSegment } from '@/app/feedback-note/types'
 import { useEditorStore } from '@/app/editor/active-store'
 import type { Vector } from '@open-pencil/scene-graph/primitives'
@@ -318,7 +318,7 @@ function addFeedback(noteId: string): boolean {
 
 function continueFeedbackNote(noteId: string) {
   if (hasFeedbackDraft(noteId)) addFeedback(noteId)
-  dismissFeedbackNote(noteId)
+  void resolveFeedbackNote(noteId)
 }
 
 function toggleProvenance(noteId: string, segmentIndex: number) {

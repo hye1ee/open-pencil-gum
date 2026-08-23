@@ -133,13 +133,33 @@ function frame(store: EditorStore, state: AgentCursorState): void {
   next()
 }
 
+function agentCursorNodeAnchor(store: EditorStore, nodeId: string): Vector | null {
+  const node = store.graph.getNode(nodeId)
+  if (!node) return null
+  const pos = store.graph.getAbsolutePosition(nodeId)
+  return { x: pos.x + node.width / 2, y: pos.y + node.height / 2 }
+}
+
 /** Point the agent cursor at a node (called as the agent touches nodes). */
 export function setAgentCursorTarget(store: EditorStore, nodeId: string): void {
-  const node = store.graph.getNode(nodeId)
-  if (!node) return
-  const pos = store.graph.getAbsolutePosition(nodeId)
+  const anchor = agentCursorNodeAnchor(store, nodeId)
+  if (!anchor) return
   const state = getState(store)
-  state.nodeAnchor = { x: pos.x + node.width / 2, y: pos.y + node.height / 2 }
+  state.nodeAnchor = anchor
+}
+
+/**
+ * Move immediately to the decision a Feedback Note is holding for review.
+ * A normal target eases while the agent works, but the turn is already paused
+ * by the time a Note has a node, so easing would leave the cursor frozen at its
+ * previous task position.
+ */
+export function focusAgentCursorTarget(store: EditorStore, nodeId: string): void {
+  const anchor = agentCursorNodeAnchor(store, nodeId)
+  if (!anchor) return
+  const state = getState(store)
+  state.nodeAnchor = anchor
+  state.cur = { ...anchor }
 }
 
 /** Show the agent cursor and keep it alive (idempotent). */

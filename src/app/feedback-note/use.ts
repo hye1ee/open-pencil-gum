@@ -7,10 +7,19 @@ import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
 import { composeCodeVisual } from '@/app/feedback-note/code-visual/use'
-import { resetConfirmedFeedbackHistory } from '@/app/feedback-note/draft/history'
+import {
+  confirmedFeedbackForNote,
+  resetConfirmedFeedbackHistory
+} from '@/app/feedback-note/draft/history'
 import { generateFeedbackNoteImage } from '@/app/feedback-note/image'
 import { feedbackNoteRelationship, readFeedbackNote } from '@/app/feedback-note/parse'
 import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
+import {
+  recordFeedbackOutcome,
+  resetStepFeedbackSession,
+  submitStepFeedback,
+  takeStepFeedbackResult
+} from '@/app/feedback-note/session'
 import { FEEDBACK_NOTE_TOOLS } from '@/app/feedback-note/tools'
 import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/feedback-note/types'
 import type { Proposition } from '@/app/meta-agent/judge'
@@ -59,6 +68,7 @@ function setHistoryStatus(id: string, status: FeedbackNoteHistoryItem['status'])
 export function resetFeedbackNoteHistory(): void {
   feedbackNoteHistory = []
   resetConfirmedFeedbackHistory()
+  resetStepFeedbackSession()
 }
 
 export function resetFeedbackNotes(): void {
@@ -185,10 +195,16 @@ export function openFeedbackNote(id: string): void {
   feedbackNoteState.activeId = id
 }
 
-export function dismissFeedbackNote(id: string): void {
-  setHistoryStatus(id, 'continued')
+export async function resolveFeedbackNote(id: string): Promise<void> {
+  const note = feedbackNoteState.notes.find((candidate) => candidate.id === id)
+  if (!note) return
+  const feedbackItems = confirmedFeedbackForNote(id)
+  recordFeedbackOutcome(note, feedbackItems)
+  setHistoryStatus(id, feedbackItems.length > 0 ? 'answered' : 'continued')
   const wasActive = feedbackNoteState.activeId === id
   feedbackNoteState.notes = feedbackNoteState.notes.filter((note) => note.id !== id)
   if (wasActive) feedbackNoteState.activeId = feedbackNoteState.notes[0]?.id ?? null
-  if (feedbackNoteState.notes.length === 0) resumeTurn('feedback-note')
+  if (feedbackNoteState.notes.length > 0) return
+  const handled = await submitStepFeedback(takeStepFeedbackResult(note.originStep))
+  if (!handled) resumeTurn('feedback-note')
 }

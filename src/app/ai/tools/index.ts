@@ -77,6 +77,9 @@ class RunState {
 }
 
 const runStates = new WeakMap<EditorStore, RunState>()
+const MUTATING_AI_TOOL_NAMES = new Set(
+  CORE_TOOLS.filter((definition) => definition.mutates).map((definition) => definition.name)
+)
 
 function getRunState(store?: EditorStore): RunState {
   const target = store ?? getActiveEditorStore()
@@ -136,6 +139,15 @@ export function didHitStepLimit(store?: EditorStore): boolean {
 /** How many steps this run has spent. The step the person interrupted. */
 export function currentRunSteps(store?: EditorStore): number {
   return getRunState(store).currentSteps
+}
+
+/** The active step as shown to a person. `currentRunSteps` is a completed-step count. */
+export function currentRunStepNumber(store?: EditorStore): number {
+  return currentRunSteps(store) + 1
+}
+
+export function isMutatingAITool(toolName: string): boolean {
+  return MUTATING_AI_TOOL_NAMES.has(toolName)
 }
 
 export function clearToolLogEntries(store?: EditorStore): void {

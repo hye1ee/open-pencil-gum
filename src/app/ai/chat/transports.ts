@@ -9,6 +9,7 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
   logIntervention,
+  logFeedbackReplay,
   logModelRouting,
   logPlan,
   logRunContinue,
@@ -37,12 +38,16 @@ import { describeModelRouting, modelConfigForSlot } from '@/app/ai/model-routing
 import {
   MAX_AGENT_STEPS,
   createAITools,
+  currentRunStepNumber,
   currentRunSteps,
+  isMutatingAITool,
   isContinuingRun,
+  recordAuxUsage,
   recordStepUsage,
   resetRunSteps
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
+import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/feedback-note/session'
 import { noteAgentPlan } from '@/app/meta-agent/events'
 import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
@@ -293,7 +298,7 @@ export function createToolLoopTransport({
       logStep(
         // Ours, not the SDK's, which counts from zero again in the second call
         // of a restarted build and would report step 8 as step 0.
-        currentRunSteps(store),
+        currentRunStepNumber(store),
         [
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',
@@ -316,6 +321,24 @@ export function createToolLoopTransport({
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()
+      const replayedStep = currentFeedbackReplayStep()
+      const mutatingCalls = step.toolCalls.filter((call) => isMutatingAITool(call.toolName))
+      if (mutatingCalls.length > 0 && step.toolResults.length > 0) {
+        const completedReplayStep = completeFeedbackReplay()
+        if (completedReplayStep !== null) {
+          logFeedbackReplay(
+            completedReplayStep,
+            'completed',
+            `mutation-tools=${mutatingCalls.map((call) => call.toolName).join(',')} tool-results=${step.toolResults.length}; interactive notes re-enabled for following steps`
+          )
+        }
+      } else if (step.toolCalls.length > 0 && replayedStep !== null) {
+        logFeedbackReplay(
+          replayedStep,
+          'waiting',
+          `read-only-tools=${step.toolCalls.map((call) => call.toolName).join(',')}; same retry step and suppression remain active`
+        )
+      }
       // The log line and the canvas bubble are both driven from the stream tap
       // in `model-trace.ts` — doing it here would put them after the tool calls
       // they came before.
@@ -328,6 +351,21 @@ export function createToolLoopTransport({
         timestamp: Date.now()
       }
       logUsage(recorded)
+      const wasAbortedBeforeCompletion =
+        step.finishReason === 'other' &&
+        step.toolResults.length === 0 &&
+        recorded.inputTokens === 0 &&
+        recorded.outputTokens === 0 &&
+        recorded.cacheReadTokens === 0 &&
+        recorded.cacheWriteTokens === 0
+      if (wasAbortedBeforeCompletion) {
+        logTurnAbandoned('aborted zero-usage step excluded from progress count')
+        return
+      }
+      if (replayedStep !== null && mutatingCalls.length === 0) {
+        recordAuxUsage(recorded, store)
+        return
+      }
       recordStepUsage(recorded, store)
     },
     onFinish: ({ finishReason, steps }) => {

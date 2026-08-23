@@ -58,6 +58,10 @@ export function resetConfirmedFeedbackHistory(): void {
   nextFeedbackId = 1
 }
 
+export function confirmedFeedbackForNote(noteId: string): ConfirmedFeedback[] {
+  return history.filter((item) => item.noteId === noteId)
+}
+
 export function relevantConfirmedFeedback(note: FeedbackNote, limit = 3): ConfirmedFeedback[] {
   const propositionIds = new Set(note.propositionIds)
   return history

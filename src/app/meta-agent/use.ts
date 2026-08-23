@@ -10,10 +10,11 @@ import {
 import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import { isSlotConfigured } from '@/app/ai/model-routing'
-import { currentRunSteps } from '@/app/ai/tools'
+import { currentRunStepNumber } from '@/app/ai/tools'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { considerFeedbackNotesForStep } from '@/app/feedback-note/meta'
+import { interactiveFeedbackStep, recordFeedbackReasoning } from '@/app/feedback-note/session'
 import {
   resetFeedbackNoteHistory,
   resetFeedbackNotes,
@@ -45,9 +46,6 @@ import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
 import { forgetReportedMarks } from '@/app/meta-agent/report'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { awaitUserModelSettled } from '@/app/user-model/use'
-
-/** The app-specific half of the meta-agent: which model it calls, how the canvas
- * is described to it, and where its judgment lands. `judge.ts` knows none of it. */
 
 let agent: MetaAgent | null = null
 let feedbackNoteChunk = 0
@@ -176,7 +174,7 @@ setReasoningObserver({
   start: () => {
     if (feedbackNotesEnabled) {
       feedbackNoteChunk = 0
-      feedbackNoteStep = runStore ? currentRunSteps(runStore) + 1 : null
+      feedbackNoteStep = runStore ? interactiveFeedbackStep(currentRunStepNumber(runStore)) : null
       feedbackNoteStepSettled = false
     }
     if (!feedbackNotesEnabled) agent?.beginStep()
@@ -189,8 +187,9 @@ setReasoningObserver({
     const store = runStore
     if (!store || reasoningChunk.trim() === '') return
     feedbackNoteChunk++
-    const originStep = feedbackNoteStep ?? currentRunSteps(store) + 1
+    const originStep = feedbackNoteStep ?? currentRunStepNumber(store)
     const originChunk = feedbackNoteChunk
+    if (!recordFeedbackReasoning(originStep, originChunk, reasoningChunk)) return
     feedbackNoteTask = feedbackNoteTask.then(() =>
       considerFeedbackNotesForStep({
         store,

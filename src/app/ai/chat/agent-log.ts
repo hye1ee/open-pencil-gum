@@ -223,6 +223,30 @@ export function logFeedbackNoteCode(
   write('NOTE-CODE', `${id} → ${status}${detail ? `  ${detail}` : ''}`)
 }
 
+/**
+ * State transitions after the user reviews an Interactive Feedback Note.
+ *
+ * These are intentionally separate from NOTE, which records generation. A run
+ * can now be checked end-to-end: what was shown, how each note was resolved,
+ * and whether the held action was released or the step was retried.
+ */
+export function logFeedbackStep(
+  step: number,
+  event: 'note' | 'proceed' | 'retry' | 'report',
+  detail: string
+): void {
+  write('NOTE-STEP', `step ${step} ${event} → ${detail}`)
+}
+
+/** The lifetime of the one-retry window in which new notes are suppressed. */
+export function logFeedbackReplay(
+  step: number,
+  event: 'started' | 'waiting' | 'completed',
+  detail: string
+): void {
+  write('NOTE-RTRY', `step ${step} ${event} → ${detail}`)
+}
+
 export function logJudgeSkip(chars: number): void {
   write('META', `${chars} chars → skipped, a judgment was already running`)
 }

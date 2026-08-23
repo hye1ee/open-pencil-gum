@@ -1,3 +1,4 @@
+import { focusAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logFeedbackNote } from '@/app/ai/chat/agent-log'
 import type { EditorStore } from '@/app/editor/active-store'
 import { createFeedbackNotes } from '@/app/feedback-note/use'
@@ -35,6 +36,9 @@ export async function considerFeedbackNotesForStep(
     logFeedbackNote(input.originStep, 0, null, null, null, `chunk=${input.originChunk}`)
     return
   }
+
+  const activeNote = notes[0]
+  if (activeNote?.nodeId) focusAgentCursorTarget(store, activeNote.nodeId)
 
   for (const [index, note] of notes.entries()) {
     let subtype: string | null = null
