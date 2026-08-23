@@ -103,10 +103,10 @@ function frame(store: EditorStore, state: AgentCursorState): void {
     state.cur.y += (goal.y - state.cur.y) * FOLLOW
   }
 
-  // Working means a turn is actually advancing, not merely open. A held turn has
-  // stopped for the person to read a marker, and a cursor still pulsing through
-  // that would contradict the frozen position right above.
-  const working = (agentTurn.running && !agentTurn.paused) || metaAgentIsWorking()
+  // A feedback hold freezes position, but it is still the same active agent
+  // turn. Keep the working colour through the review so showing a Note does not
+  // make the cursor briefly look idle or disconnected from the task.
+  const working = agentTurn.running || agentTurn.paused || metaAgentIsWorking()
   state.energy += ((working ? 1 : 0) - state.energy) * ENERGY_FOLLOW
 
   if (!state.cur) {

@@ -8,18 +8,10 @@ import {
   logMarkTool
 } from '@/app/ai/chat/agent-log'
 import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
-import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import { isSlotConfigured } from '@/app/ai/model-routing'
-import { currentRunStepNumber } from '@/app/ai/tools'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
-import { considerFeedbackNotesForStep } from '@/app/feedback-note/meta'
-import { interactiveFeedbackStep, recordFeedbackReasoning } from '@/app/feedback-note/session'
-import {
-  resetFeedbackNoteHistory,
-  resetFeedbackNotes,
-  settleFeedbackNoteStep
-} from '@/app/feedback-note/use'
+import { resetFeedbackNoteHistory, resetFeedbackNotes } from '@/app/feedback-note/use'
 import { callMetaAgent } from '@/app/meta-agent/call'
 import { compareReasoningWithUserModel } from '@/app/meta-agent/comparison/use'
 import {
@@ -43,21 +35,21 @@ import {
   type SettledNote
 } from '@/app/meta-agent/judge'
 import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
+import {
+  installReasoningObserver,
+  resetFeedbackNoteStreams
+} from '@/app/meta-agent/reasoning-observer'
 import { forgetReportedMarks } from '@/app/meta-agent/report'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { awaitUserModelSettled } from '@/app/user-model/use'
 
 let agent: MetaAgent | null = null
-let feedbackNoteChunk = 0
-let feedbackNoteStep: number | null = null
-let feedbackNoteStepSettled = false
 let request = ''
 let runPropositions: Proposition[] = []
 let runStore: EditorStore | null = null
 const feedbackNotesEnabled = import.meta.env.VITE_FEEDBACK_NOTE_EXPERIMENT === 'true'
 const comparisonShadowEnabled =
   import.meta.env.DEV && import.meta.env.VITE_META_COMPARISON_SHADOW === 'true'
-let feedbackNoteTask: Promise<void> = Promise.resolve()
 let comparisonShadowTask: Promise<void> = Promise.resolve()
 
 /** One line per mark. The quoted words are the only way to tell a mark that
@@ -147,10 +139,8 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   const withheld = runPropositions.filter((p) => !p.shownToAgent).length
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
   resetFeedbackNotes()
-  feedbackNoteTask = Promise.resolve()
+  resetFeedbackNoteStreams()
   comparisonShadowTask = Promise.resolve()
-  feedbackNoteStep = null
-  feedbackNoteStepSettled = false
   if (feedbackNotesEnabled) setMarks(store, [])
   else ensureAgent(store).beginTurn()
 }
@@ -170,57 +160,22 @@ setMarkDismissedObserver((id) => {
 })
 
 // Registered here because the tap must not import anything that builds a model.
-setReasoningObserver({
-  start: () => {
-    if (feedbackNotesEnabled) {
-      feedbackNoteChunk = 0
-      feedbackNoteStep = runStore ? interactiveFeedbackStep(currentRunStepNumber(runStore)) : null
-      feedbackNoteStepSettled = false
-    }
-    if (!feedbackNotesEnabled) agent?.beginStep()
-  },
-  chunk: (reasoningChunk, reasoningSoFar) => {
-    if (!feedbackNotesEnabled) {
-      considerReasoning(reasoningSoFar)
-      return
-    }
-    const store = runStore
-    if (!store || reasoningChunk.trim() === '') return
-    feedbackNoteChunk++
-    const originStep = feedbackNoteStep ?? currentRunStepNumber(store)
-    const originChunk = feedbackNoteChunk
-    if (!recordFeedbackReasoning(originStep, originChunk, reasoningChunk)) return
-    feedbackNoteTask = feedbackNoteTask.then(() =>
-      considerFeedbackNotesForStep({
-        store,
-        request,
-        plan: currentPlan(),
-        reasoning: reasoningChunk,
-        originStep,
-        originChunk,
-        propositions: runPropositions
-      })
-    )
-  },
-  end: (reasoning) => {
+installReasoningObserver({
+  feedbackNotesEnabled,
+  getStore: () => runStore,
+  getRequest: () => request,
+  getPlan: currentPlan,
+  getPropositions: () => runPropositions,
+  onOrdinaryStart: () => agent?.beginStep(),
+  onOrdinaryChunk: considerReasoning,
+  onReasoningEnd: (reasoning) => {
     if (comparisonShadowEnabled && reasoning.trim() !== '') {
       comparisonShadowTask = comparisonShadowTask.then(() =>
         compareReasoningWithUserModel({ request, reasoning, propositions: runPropositions })
       )
     }
-    if (
-      !feedbackNotesEnabled ||
-      feedbackNoteChunk === 0 ||
-      feedbackNoteStep === null ||
-      feedbackNoteStepSettled
-    ) {
-      return
-    }
-    feedbackNoteStepSettled = true
-    const generation = feedbackNoteTask
-    feedbackNoteTask = settleFeedbackNoteStep(feedbackNoteStep, generation)
   },
-  settled: () => (feedbackNotesEnabled ? feedbackNoteTask : (agent?.settled() ?? Promise.resolve()))
+  ordinarySettled: () => agent?.settled() ?? Promise.resolve()
 })
 
 /** Standing marks plus retired ones. Not the marks the meta-agent withdrew,

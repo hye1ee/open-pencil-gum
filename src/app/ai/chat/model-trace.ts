@@ -48,16 +48,17 @@ type StreamPart =
  */
 interface ReasoningObserver {
   /** A fresh block of thinking has begun; whatever came before is finished. */
-  start(): void
+  start(streamId: number): void
   /** One provider chunk and everything thought in this block so far. */
-  chunk(reasoningChunk: string, reasoningSoFar: string): void
+  chunk(streamId: number, reasoningChunk: string, reasoningSoFar: string): void
   /** The completed block, before the agent's action is released. */
-  end(reasoning: string): void
+  end(streamId: number, reasoning: string): void
   /** Resolves once the watcher has finished answering everything it has been
    * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
-  settled(): Promise<void>
+  settled(streamId: number): Promise<void>
 }
 let observeReasoning: ReasoningObserver | null = null
+let nextStreamId = 1
 
 export function setReasoningObserver(observer: ReasoningObserver): void {
   observeReasoning = observer
@@ -133,6 +134,7 @@ const middleware: LanguageModelMiddleware = {
   wrapStream: async ({ doStream, params }) => {
     traceSystemPrompt(params)
     const { stream, ...rest } = await doStream()
+    const streamId = nextStreamId++
 
     // Reasoning goes to observers per delta but to the log per block, since one
     // line per delta would be unreadable there. It is deliberately not mirrored
@@ -143,7 +145,7 @@ const middleware: LanguageModelMiddleware = {
     let text = ''
     const closeReasoning = (): void => {
       if (reasoningClosed) return
-      observeReasoning?.end(thinking)
+      observeReasoning?.end(streamId, thinking)
       reasoningClosed = true
       logThinking(thinking)
       thinking = ''
@@ -175,7 +177,7 @@ const middleware: LanguageModelMiddleware = {
     const awaitFinalReview = async (): Promise<boolean> => {
       if (sawToolInput || finalReviewSettled) return true
       if (thinking.trim() !== '') closeReasoning()
-      if (observeReasoning) await observeReasoning.settled()
+      if (observeReasoning) await observeReasoning.settled(streamId)
       if (!(await awaitTurnResume('before-final-response'))) {
         dropped = true
         logTurnAbandoned('stream dropped before final response — response not shown')
@@ -192,14 +194,14 @@ const middleware: LanguageModelMiddleware = {
         if (chunk.type === 'reasoning-start') {
           thinking = ''
           reasoningClosed = false
-          observeReasoning?.start()
+          observeReasoning?.start(streamId)
         } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
           // Everything so far, not the delta: a watcher judging where the
           // thought has arrived cannot do it from half a sentence. Not awaited
           // — it answers on its own clock, and the beat below is what gives it
           // room, not this call.
-          observeReasoning?.chunk(chunk.delta, thinking)
+          observeReasoning?.chunk(streamId, chunk.delta, thinking)
           await beat(BETWEEN_THOUGHTS_MS)
           // The step boundary is the other place the turn can be held, and it
           // can be twenty seconds away. Someone who points at a marker while the
@@ -239,7 +241,7 @@ const middleware: LanguageModelMiddleware = {
           // Then for the watcher's verdict on the thinking that led here, so
           // its marks are up before the thing they are about lands.
           if (observeReasoning) {
-            await observeReasoning.settled()
+            await observeReasoning.settled(streamId)
           }
           // Last point at which the canvas is still untouched by this step.
           // After the wait above, so a mark that only just appeared still gets

@@ -2,9 +2,15 @@ import type { ConfirmedFeedback, FeedbackSelection } from '@/app/feedback-note/d
 import type { FeedbackNote } from '@/app/feedback-note/types'
 import type { Proposition } from '@/app/user-model/pipeline'
 
-export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion in the user's voice.
+export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion in the user's voice. It is a hypothesis the user can accept or revise.
 
-Ground it only in the selected target, the current note, relevant user-model propositions, and feedback the user previously confirmed. Never invent a preference. Selection signals attention, not approval or disapproval. Express what should remain, change, or be clarified.
+Ground it in the selected target, the current note, relevant user-model propositions and their rationales, and feedback the user previously confirmed. Selection signals attention, not approval or disapproval.
+
+Always express what should remain, change, or be clarified.
+
+When the supplied user-model rationale or prior confirmed feedback provides enough evidence to infer why, include that likely reason in the same sentence. Use language such as "because" or "so that" when it reads naturally. The reason is an editable hypothesis, not a required part of every suggestion.
+
+If the evidence supports only what the user wants and not why, omit the reason. Never force a reason or fill missing context with generic design advice.
 
 Use one natural sentence and at most 25 words. Return only the suggestion. Do not use quotation marks, labels, or preamble.`
 

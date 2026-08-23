@@ -23,6 +23,7 @@ import {
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
 import { renderStepFeedbackReport } from '@/app/feedback-note/report'
+import { userModelFeedbackBatch } from '@/app/feedback-note/user-model'
 import {
   beginFeedbackReplay,
   hasExplicitStepFeedback,
@@ -45,7 +46,7 @@ import {
   takeUnreportedMarks,
   withoutDanglingToolCalls
 } from '@/app/meta-agent/report'
-import { observeMarkNotes } from '@/app/user-model/use'
+import { observeFeedbackNotes, observeMarkNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
@@ -104,7 +105,7 @@ const queuedMessages = computed<UIMessage[]>(() =>
 const currentStep = computed(() => Math.min(currentRunStepNumber(), MAX_AGENT_STEPS))
 
 const activityText = computed(() => {
-  if (agentActivity.metaAgentTasks > 0) return 'Reviewing the current decision…'
+  if (agentActivity.metaAgentTasks > 0) return "Reviewing the current agent's reasoning…"
   if (!logicallyRunning.value) return null
   if (agentTurn.paused) return 'Waiting for your feedback…'
   if (currentStep.value === 0) return 'Starting the task…'
@@ -329,6 +330,10 @@ setMarkResumeHandler(() => {
 })
 
 async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
+  // Durable and independent from the task-agent branch below: implicit notes
+  // proceed, explicit notes retry, but both are evidence for the user model.
+  void observeFeedbackNotes(userModelFeedbackBatch(result))
+
   if (!hasExplicitStepFeedback(result)) {
     logFeedbackStep(
       result.step,

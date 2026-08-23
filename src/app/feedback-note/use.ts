@@ -37,6 +37,15 @@ export const feedbackNoteState = reactive<{
 let nextId = 1
 const NOTE_HISTORY_LIMIT = 15
 let feedbackNoteHistory: FeedbackNoteHistoryItem[] = []
+let generation = 1
+
+export function currentFeedbackNoteGeneration(): number {
+  return generation
+}
+
+function isCurrentGeneration(value: number): boolean {
+  return value === generation
+}
 
 function rememberNote(note: FeedbackNote): void {
   let subtype: FeedbackNoteHistoryItem['representationSubtype'] = null
@@ -72,6 +81,7 @@ export function resetFeedbackNoteHistory(): void {
 }
 
 export function resetFeedbackNotes(): void {
+  generation++
   for (const note of feedbackNoteState.notes) setHistoryStatus(note.id, 'continued')
   feedbackNoteState.notes = []
   feedbackNoteState.activeId = null
@@ -81,14 +91,18 @@ export function resetFeedbackNotes(): void {
 
 export async function settleFeedbackNoteStep(
   originStep: number,
-  generation: Promise<void>
+  generationAtStart: number,
+  generationTask: Promise<void>
 ): Promise<void> {
+  if (!isCurrentGeneration(generationAtStart)) return
   pauseTurn('feedback-note')
   try {
-    await generation
+    await generationTask
   } finally {
-    const hasStepNote = feedbackNoteState.notes.some((note) => note.originStep === originStep)
-    if (!hasStepNote && feedbackNoteState.notes.length === 0) resumeTurn('feedback-note')
+    if (isCurrentGeneration(generationAtStart)) {
+      const hasStepNote = feedbackNoteState.notes.some((note) => note.originStep === originStep)
+      if (!hasStepNote && feedbackNoteState.notes.length === 0) resumeTurn('feedback-note')
+    }
   }
 }
 
@@ -101,8 +115,9 @@ export async function createFeedbackNotes(input: {
   propositions: Proposition[]
   canvas: string
   actions: string[]
+  generation: number
 }): Promise<FeedbackNote[]> {
-  if (input.reasoning.trim() === '') return []
+  if (input.reasoning.trim() === '' || !isCurrentGeneration(input.generation)) return []
   const finishActivity = beginMetaAgentActivity()
   feedbackNoteState.pending = true
   try {
@@ -115,6 +130,7 @@ export async function createFeedbackNotes(input: {
       tools: FEEDBACK_NOTE_TOOLS,
       toolChoice: 'auto'
     })
+    if (!isCurrentGeneration(input.generation)) return []
     const knownTopics = new Set(feedbackNoteHistory.map((note) => note.topic.toLowerCase()))
     const notes = result.staticToolCalls.slice(0, 1).flatMap((call) => {
       const relation = feedbackNoteRelationship(call.toolName)
@@ -150,7 +166,7 @@ export async function createFeedbackNotes(input: {
     console.warn('[feedback-note] generation failed:', error)
     return []
   } finally {
-    feedbackNoteState.pending = false
+    if (isCurrentGeneration(input.generation)) feedbackNoteState.pending = false
     finishActivity()
   }
 }

@@ -1,13 +1,19 @@
 import {
   logPropositionChange,
   logRationaleChange,
+  logUserModelFeedback,
   logUserModelStage
 } from '@/app/ai/chat/agent-log'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
 import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
-import { createUserModel, type FeedbackNote, type UserModel } from '@/app/user-model/pipeline'
+import {
+  createUserModel,
+  type FeedbackNote,
+  type UserModel,
+  type UserModelFeedbackBatch
+} from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 
@@ -58,14 +64,45 @@ export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
   current ??= createPropositionSink('answers')
   const replied = notes.filter((note) => note.reply !== null).length
   logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
-  pending = current.observe(notes).finally(() => {
-    pending = null
-    logUserModelStage('observed', 'user model up to date')
-  })
-  await pending
+  await enqueueObservation(() => current?.observe(notes) ?? Promise.resolve())
 }
 
 let pending: Promise<void> | null = null
+
+async function enqueueObservation(observe: () => Promise<void>): Promise<void> {
+  const before = pending ?? Promise.resolve()
+  const queued = before.catch(() => undefined).then(observe)
+  pending = queued
+  try {
+    await queued
+  } finally {
+    if (pending === queued) {
+      pending = null
+      logUserModelStage('observed', 'user model up to date')
+    }
+  }
+}
+
+export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promise<void> {
+  if (batch.notes.length === 0 || !canBuildUserModel()) return
+  current ??= createPropositionSink('feedback-notes')
+  const explicit = batch.notes.filter((note) => note.resolution === 'explicit-feedback').length
+  const items = batch.notes.reduce((sum, note) => sum + note.feedbackItems.length, 0)
+  logUserModelFeedback(
+    batch.step ?? 0,
+    'queued',
+    `notes=${batch.notes.length} explicit=${explicit} implicit=${batch.notes.length - explicit} items=${items}`
+  )
+  try {
+    await enqueueObservation(() => current?.observeFeedback(batch) ?? Promise.resolve())
+  } catch (error) {
+    logUserModelFeedback(
+      batch.step ?? 0,
+      'failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
 
 /** The meta-agent reads the model once per turn. A restart after an answer is
  * two model calls ahead of the revision that answer caused. */

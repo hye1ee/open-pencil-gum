@@ -247,6 +247,14 @@ export function logFeedbackReplay(
   write('NOTE-RTRY', `step ${step} ${event} → ${detail}`)
 }
 
+export function logUserModelFeedback(
+  step: number,
+  event: 'queued' | 'evidence' | 'duplicate' | 'failed',
+  detail: string
+): void {
+  write('UM-FEEDBACK', `step ${step} ${event} → ${detail}`)
+}
+
 export function logJudgeSkip(chars: number): void {
   write('META', `${chars} chars → skipped, a judgment was already running`)
 }

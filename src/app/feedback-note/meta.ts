@@ -13,6 +13,7 @@ interface FeedbackNoteJudgmentInput {
   originStep: number
   originChunk: number
   propositions: Proposition[]
+  generation: number
 }
 
 export async function considerFeedbackNotesForStep(
@@ -29,7 +30,8 @@ export async function considerFeedbackNotesForStep(
     originChunk: input.originChunk,
     propositions: input.propositions,
     canvas: summariseCanvas(store),
-    actions: actionsSoFar(store)
+    actions: actionsSoFar(store),
+    generation: input.generation
   })
 
   if (notes.length === 0) {

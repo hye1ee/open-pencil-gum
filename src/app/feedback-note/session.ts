@@ -1,6 +1,7 @@
 import { logFeedbackReplay, logFeedbackStep } from '@/app/ai/chat/agent-log'
 import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
 import type { FeedbackNote } from '@/app/feedback-note/types'
+import { resetObservedFeedbackNotes } from '@/app/feedback-note/user-model'
 
 export type FeedbackNoteResolution = 'implicitly-accepted' | 'explicit-feedback'
 
@@ -101,4 +102,5 @@ export function resetStepFeedbackSession(): void {
   reasoningByStep.clear()
   outcomesByStep.clear()
   replayStep = null
+  resetObservedFeedbackNotes()
 }
