@@ -27,6 +27,7 @@ import {
   resetFeedbackNotes,
   settleFeedbackNoteStep
 } from '@/app/feedback-note/use'
+import { compareReasoningWithUserModel } from '@/app/meta-agent/comparison/use'
 import {
   actionsSoFar,
   propositionsForRun,
@@ -74,7 +75,10 @@ let request = ''
 let runPropositions: Proposition[] = []
 let runStore: EditorStore | null = null
 const feedbackNotesEnabled = import.meta.env.VITE_FEEDBACK_NOTE_EXPERIMENT === 'true'
+const comparisonShadowEnabled =
+  import.meta.env.DEV && import.meta.env.VITE_META_COMPARISON_SHADOW === 'true'
 let feedbackNoteTask: Promise<void> = Promise.resolve()
+let comparisonShadowTask: Promise<void> = Promise.resolve()
 
 /** One line per mark. The quoted words are the only way to tell a mark that
  * answers the reasoning from one the model reached for. */
@@ -177,6 +181,7 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
   resetFeedbackNotes()
   feedbackNoteTask = Promise.resolve()
+  comparisonShadowTask = Promise.resolve()
   feedbackNoteStep = null
   feedbackNoteStepSettled = false
   if (feedbackNotesEnabled) setMarks(store, [])
@@ -229,7 +234,12 @@ setReasoningObserver({
       })
     )
   },
-  end: () => {
+  end: (reasoning) => {
+    if (comparisonShadowEnabled && reasoning.trim() !== '') {
+      comparisonShadowTask = comparisonShadowTask.then(() =>
+        compareReasoningWithUserModel({ request, reasoning, propositions: runPropositions })
+      )
+    }
     if (
       !feedbackNotesEnabled ||
       feedbackNoteChunk === 0 ||

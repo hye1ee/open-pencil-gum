@@ -188,6 +188,11 @@ export function logJudgment(chars: number, marks: string[]): void {
   writeBlock('META', `${chars} chars →\n${marks.join('\n')}`)
 }
 
+/** Shadow analysis only: it never creates a mark or changes the active turn. */
+export function logPropositionComparison(chars: number, detail: string): void {
+  writeBlock('META-GRAPH', `${chars} chars →\n${detail}`)
+}
+
 export function logFeedbackNote(
   step: number,
   position: number,

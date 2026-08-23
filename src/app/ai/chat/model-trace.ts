@@ -161,6 +161,13 @@ const middleware: LanguageModelMiddleware = {
     let thinking = ''
     let reasoningClosed = false
     let text = ''
+    const closeReasoning = (): void => {
+      if (reasoningClosed) return
+      observeReasoning?.end(thinking)
+      reasoningClosed = true
+      logThinking(thinking)
+      thinking = ''
+    }
     // Repeats collapsed to a count — a step is mostly deltas, and the question
     // this answers is which part types arrive and in what order.
     const shape: string[] = []
@@ -202,10 +209,7 @@ const middleware: LanguageModelMiddleware = {
             return
           }
         } else if (chunk.type === 'reasoning-end') {
-          if (!reasoningClosed) observeReasoning?.end(thinking)
-          reasoningClosed = true
-          logThinking(thinking)
-          thinking = ''
+          closeReasoning()
           // Keep a short beat before the agent switches from thinking to
           // speaking, without waiting on a hidden bubble animation.
           await beat(AFTER_THINKING_MS)
@@ -218,10 +222,7 @@ const middleware: LanguageModelMiddleware = {
           sayAgent(text)
           text = ''
         } else if (chunk.type === 'tool-input-start') {
-          if (!reasoningClosed && thinking.trim() !== '') {
-            observeReasoning?.end(thinking)
-            reasoningClosed = true
-          }
+          if (thinking.trim() !== '') closeReasoning()
           // Nothing downstream has run yet — holding the chunk here holds the
           // tool call itself, so the canvas doesn't change until the line
           // announcing it has been up long enough to read.
