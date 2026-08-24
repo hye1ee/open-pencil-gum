@@ -4,7 +4,8 @@
 import type {
   UserModelFeedbackBatch,
   UserModelFeedbackItem,
-  UserModelFeedbackNote
+  UserModelFeedbackNote,
+  UserModelFeedbackPoint
 } from '@/app/user-model/pipeline'
 
 export const PROPOSE_SYSTEM = `TASK
@@ -297,13 +298,28 @@ const WHAT_THE_NOTE_SAID: Record<UserModelFeedbackNote['relationship'], string> 
 }
 
 function renderFeedbackItem(item: UserModelFeedbackItem, index: number): string {
-  const selection =
-    item.selection.type === 'region'
-      ? `visual region x=${item.selection.x.toFixed(2)}, y=${item.selection.y.toFixed(2)}, w=${item.selection.width.toFixed(2)}, h=${item.selection.height.toFixed(2)}`
-      : item.selection.type === 'text'
-        ? `${item.selection.source} text: "${item.selection.text}"`
-        : 'no specific selection (legacy feedback)'
+  const selection = userModelSelectionText(item.selection)
   return `    ${index + 1}. selected ${selection}\n       said: "${item.feedback}"`
+}
+
+function userModelSelectionText(selection: UserModelFeedbackItem['selection']): string {
+  const point = (value: UserModelFeedbackPoint) => `(${value.x.toFixed(2)}, ${value.y.toFixed(2)})`
+  switch (selection.type) {
+    case 'none':
+      return 'no specific selection (legacy feedback)'
+    case 'region':
+      return `visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
+    case 'point':
+      return `position ${point(selection)}`
+    case 'arrow':
+      return `direction ${point(selection.start)} → ${point(selection.end)}`
+    case 'sequence':
+      return `ordered positions ${selection.points.map((value, index) => `${index + 1}:${point(value)}`).join(' → ')}`
+    case 'freehand':
+      return `freehand path through ${selection.points.length} points`
+    case 'text':
+      return `${selection.source} text: "${selection.text}"`
+  }
 }
 
 function renderNote(note: UserModelFeedbackNote, index: number): string {

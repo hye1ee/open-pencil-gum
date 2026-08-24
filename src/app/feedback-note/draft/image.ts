@@ -1,7 +1,47 @@
-import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
+import type { FeedbackPoint, FeedbackSelection } from '@/app/feedback-note/draft/types'
 
 const OVERVIEW_MAX_SIZE = 640
 const CROP_MAX_SIZE = 480
+const ANNOTATION_PADDING = 0.06
+
+interface SelectionBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function paddedBounds(points: FeedbackPoint[]): SelectionBounds | null {
+  if (points.length === 0) return null
+  const left = Math.min(...points.map((point) => point.x))
+  const right = Math.max(...points.map((point) => point.x))
+  const top = Math.min(...points.map((point) => point.y))
+  const bottom = Math.max(...points.map((point) => point.y))
+  const x = Math.max(0, left - ANNOTATION_PADDING)
+  const y = Math.max(0, top - ANNOTATION_PADDING)
+  return {
+    x,
+    y,
+    width: Math.min(1 - x, Math.max(ANNOTATION_PADDING * 2, right - left + ANNOTATION_PADDING * 2)),
+    height: Math.min(1 - y, Math.max(ANNOTATION_PADDING * 2, bottom - top + ANNOTATION_PADDING * 2))
+  }
+}
+
+function selectionBounds(selection: FeedbackSelection): SelectionBounds | null {
+  switch (selection.type) {
+    case 'region':
+      return selection
+    case 'point':
+      return paddedBounds([selection])
+    case 'arrow':
+      return paddedBounds([selection.start, selection.end])
+    case 'sequence':
+    case 'freehand':
+      return paddedBounds(selection.points)
+    case 'text':
+      return null
+  }
+}
 
 async function canvasBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((resolve) => {
@@ -57,12 +97,13 @@ export async function cropFeedbackCanvas(
       overview.height
     )
   const overviewImage = await canvasBytes(overview)
-  if (selection.type !== 'region') return { overviewImage }
+  const bounds = selectionBounds(selection)
+  if (!bounds) return { overviewImage }
 
-  const sourceX = Math.round(selection.x * sourceCanvas.width)
-  const sourceY = Math.round(selection.y * sourceCanvas.height)
-  const sourceWidth = Math.max(1, Math.round(selection.width * sourceCanvas.width))
-  const sourceHeight = Math.max(1, Math.round(selection.height * sourceCanvas.height))
+  const sourceX = Math.round(bounds.x * sourceCanvas.width)
+  const sourceY = Math.round(bounds.y * sourceCanvas.height)
+  const sourceWidth = Math.max(1, Math.round(bounds.width * sourceCanvas.width))
+  const sourceHeight = Math.max(1, Math.round(bounds.height * sourceCanvas.height))
   const cropSize = fittedSize(sourceWidth, sourceHeight, CROP_MAX_SIZE)
   const crop = document.createElement('canvas')
   crop.width = cropSize.width

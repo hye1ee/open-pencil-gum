@@ -1,7 +1,16 @@
 import type { FeedbackNote, FeedbackNoteRelationship } from '@/app/feedback-note/types'
 
+export interface FeedbackPoint {
+  x: number
+  y: number
+}
+
 export type FeedbackSelection =
   | { type: 'region'; x: number; y: number; width: number; height: number }
+  | { type: 'point'; x: number; y: number }
+  | { type: 'arrow'; start: FeedbackPoint; end: FeedbackPoint }
+  | { type: 'sequence'; points: FeedbackPoint[] }
+  | { type: 'freehand'; points: FeedbackPoint[] }
   | {
       type: 'text'
       text: string

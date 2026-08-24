@@ -116,9 +116,18 @@ export interface FeedbackNote {
 export type UserModelFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
 export type UserModelFeedbackResolution = 'explicit-feedback' | 'implicitly-accepted'
 
+export interface UserModelFeedbackPoint {
+  x: number
+  y: number
+}
+
 export type UserModelFeedbackSelection =
   | { type: 'none' }
   | { type: 'region'; x: number; y: number; width: number; height: number }
+  | { type: 'point'; x: number; y: number }
+  | { type: 'arrow'; start: UserModelFeedbackPoint; end: UserModelFeedbackPoint }
+  | { type: 'sequence'; points: UserModelFeedbackPoint[] }
+  | { type: 'freehand'; points: UserModelFeedbackPoint[] }
   | {
       type: 'text'
       text: string

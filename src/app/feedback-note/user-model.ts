@@ -1,30 +1,15 @@
 import { logUserModelFeedback } from '@/app/ai/chat/agent-log'
-import type { ConfirmedFeedback, FeedbackSelection } from '@/app/feedback-note/draft/types'
+import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
+import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
 import type { StepFeedbackResult } from '@/app/feedback-note/session'
-import type {
-  UserModelFeedbackBatch,
-  UserModelFeedbackItem,
-  UserModelFeedbackSelection
-} from '@/app/user-model/pipeline'
+import type { UserModelFeedbackBatch, UserModelFeedbackItem } from '@/app/user-model/pipeline'
 
 const observedNoteIds = new Set<string>()
-
-function feedbackSelection(selection: FeedbackSelection): UserModelFeedbackSelection {
-  return selection.type === 'region'
-    ? { ...selection }
-    : {
-        type: 'text',
-        text: selection.text,
-        source: selection.source,
-        start: selection.start,
-        end: selection.end
-      }
-}
 
 function feedbackItem(item: ConfirmedFeedback): UserModelFeedbackItem {
   return {
     id: item.id,
-    selection: feedbackSelection(item.selection),
+    selection: copyFeedbackSelection(item.selection),
     feedback: item.feedback,
     createdAt: item.createdAt
   }

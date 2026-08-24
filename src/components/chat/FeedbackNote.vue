@@ -9,6 +9,7 @@ import {
   rememberConfirmedFeedback
 } from '@/app/feedback-note/draft/history'
 import { cropFeedbackImage } from '@/app/feedback-note/draft/image'
+import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
 import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
 import { generateFeedbackDraft } from '@/app/feedback-note/draft/use'
 import { feedbackNoteState, openFeedbackNote, resolveFeedbackNote } from '@/app/feedback-note/use'
@@ -31,8 +32,12 @@ interface CollectedFeedback {
   text: string
 }
 
-interface RegionDrag {
+type VisualTool = 'region' | 'point' | 'arrow' | 'sequence' | 'freehand'
+const VISUAL_TOOLS: VisualTool[] = ['region', 'point', 'arrow', 'sequence', 'freehand']
+
+interface VisualGesture {
   noteId: string
+  tool: Exclude<VisualTool, 'point' | 'sequence'>
   start: Vector
 }
 
@@ -47,6 +52,7 @@ const introducedIds = ref<string[]>([])
 const seenIds = new Set<string>()
 const introTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const selections = reactive<Record<string, NoteSelection | undefined>>({})
+const visualTools = reactive<Record<string, VisualTool | undefined>>({})
 const feedbackDrafts = reactive<Record<string, string>>({})
 const feedbackSuggestions = reactive<Record<string, string | undefined>>({})
 const suggestionLoading = reactive<Record<string, boolean | undefined>>({})
@@ -55,7 +61,7 @@ const hoveredFeedback = ref<{ noteId: string; index: number } | null>(null)
 const provenanceIndices = reactive<Record<string, number | undefined>>({})
 const codeVisualAspectRatios = reactive<Record<string, string | undefined>>({})
 const codeVisualFrames = useTemplateRef<HTMLIFrameElement[]>('codeVisualFrames')
-const regionDrag = ref<RegionDrag | null>(null)
+const visualGesture = ref<VisualGesture | null>(null)
 let ownsHighlight = false
 let noteQueueOrigin: NoteQueueOrigin | null = null
 const suggestionVersions = new Map<string, number>()
@@ -75,43 +81,92 @@ function relativePoint(event: PointerEvent): Vector | null {
   }
 }
 
-function startRegion(noteId: string, event: PointerEvent) {
+function visualTool(noteId: string): VisualTool {
+  return visualTools[noteId] ?? 'region'
+}
+
+function selectVisualTool(noteId: string, tool: VisualTool) {
+  visualTools[noteId] = tool
+  const selection = selections[noteId]
+  if (selection?.type !== 'text' && selection?.type !== tool) clearSelection(noteId)
+}
+
+function startVisualSelection(noteId: string, event: PointerEvent) {
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
   if (note?.representation.type !== 'image' && note?.representation.type !== 'code-visual') return
   if (event.button !== 0) return
   const start = relativePoint(event)
   if (!start) return
   beginSuggestionRequest(noteId)
-  regionDrag.value = { noteId, start }
-  selections[noteId] = { type: 'region', x: start.x, y: start.y, width: 0, height: 0 }
+  const tool = visualTool(noteId)
+  if (tool === 'point') {
+    const selection: NoteSelection = { type: 'point', ...start }
+    selections[noteId] = selection
+    void requestFeedbackSuggestion(noteId, selection)
+    return
+  }
+  if (tool === 'sequence') {
+    const existing = selections[noteId]
+    const points = existing?.type === 'sequence' ? [...existing.points, start] : [start]
+    const selection: NoteSelection = { type: 'sequence', points }
+    selections[noteId] = selection
+    void requestFeedbackSuggestion(noteId, selection)
+    return
+  }
+  visualGesture.value = { noteId, tool, start }
+  if (tool === 'region') {
+    selections[noteId] = { type: 'region', x: start.x, y: start.y, width: 0, height: 0 }
+  } else if (tool === 'arrow') {
+    selections[noteId] = { type: 'arrow', start, end: start }
+  } else {
+    selections[noteId] = { type: 'freehand', points: [start] }
+  }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
-function updateRegion(noteId: string, event: PointerEvent) {
-  const drag = regionDrag.value
+function updateVisualSelection(noteId: string, event: PointerEvent) {
+  const gesture = visualGesture.value
   const point = relativePoint(event)
-  if (!drag || drag.noteId !== noteId || !point) return
-  selections[noteId] = {
-    type: 'region',
-    x: Math.min(drag.start.x, point.x),
-    y: Math.min(drag.start.y, point.y),
-    width: Math.abs(point.x - drag.start.x),
-    height: Math.abs(point.y - drag.start.y)
+  if (!gesture || gesture.noteId !== noteId || !point) return
+  if (gesture.tool === 'region') {
+    selections[noteId] = {
+      type: 'region',
+      x: Math.min(gesture.start.x, point.x),
+      y: Math.min(gesture.start.y, point.y),
+      width: Math.abs(point.x - gesture.start.x),
+      height: Math.abs(point.y - gesture.start.y)
+    }
+  } else if (gesture.tool === 'arrow') {
+    selections[noteId] = { type: 'arrow', start: gesture.start, end: point }
+  } else {
+    const selection = selections[noteId]
+    if (selection?.type !== 'freehand') return
+    const previous = selection.points.at(-1)
+    if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) > 0.006) {
+      selections[noteId] = { type: 'freehand', points: [...selection.points, point] }
+    }
   }
 }
 
-function finishRegion(noteId: string, event: PointerEvent) {
+function finishVisualSelection(noteId: string, event: PointerEvent) {
+  const gesture = visualGesture.value
+  if (!gesture || gesture.noteId !== noteId) return
   const selection = selections[noteId]
-  if (selection?.type === 'region' && selection.width * selection.height < 0.001) {
+  const tooSmallRegion = selection?.type === 'region' && selection.width * selection.height < 0.001
+  const tooShortArrow =
+    selection?.type === 'arrow' &&
+    Math.hypot(selection.end.x - selection.start.x, selection.end.y - selection.start.y) < 0.025
+  const tooShortPath = selection?.type === 'freehand' && selection.points.length < 2
+  if (tooSmallRegion || tooShortArrow || tooShortPath) {
     selections[noteId] = undefined
-  } else if (selection?.type === 'region') {
+  } else if (selection) {
     void requestFeedbackSuggestion(noteId, selection)
   }
   const target = event.currentTarget
   if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
     target.releasePointerCapture(event.pointerId)
   }
-  regionDrag.value = null
+  visualGesture.value = null
 }
 
 function selectText(
@@ -171,7 +226,7 @@ async function requestFeedbackSuggestion(noteId: string, selection: NoteSelectio
     }
     const suggestion = await generateFeedbackDraft({
       note,
-      selection: copySelection(selection),
+      selection: copyFeedbackSelection(selection),
       ...images
     })
     if (suggestionVersions.get(noteId) !== version) return
@@ -249,6 +304,39 @@ function regionStyle(noteId: string) {
   }
 }
 
+function pointStyle(point: Vector) {
+  return { left: `${point.x * 100}%`, top: `${point.y * 100}%` }
+}
+
+function selectedPoint(noteId: string): Vector | null {
+  const selection = highlightedSelection(noteId)
+  return selection?.type === 'point' ? selection : null
+}
+
+function sequencePoints(noteId: string): Vector[] {
+  const selection = highlightedSelection(noteId)
+  return selection?.type === 'sequence' ? selection.points : []
+}
+
+function arrowStyle(noteId: string) {
+  const selection = highlightedSelection(noteId)
+  if (selection?.type !== 'arrow') return undefined
+  const dx = selection.end.x - selection.start.x
+  const dy = selection.end.y - selection.start.y
+  return {
+    left: `${selection.start.x * 100}%`,
+    top: `${selection.start.y * 100}%`,
+    width: `${Math.hypot(dx, dy) * 100}%`,
+    transform: `rotate(${Math.atan2(dy, dx)}rad)`
+  }
+}
+
+function freehandPoints(noteId: string): string {
+  const selection = highlightedSelection(noteId)
+  if (selection?.type !== 'freehand') return ''
+  return selection.points.map((point) => `${point.x * 100},${point.y * 100}`).join(' ')
+}
+
 function clearSelection(noteId: string) {
   beginSuggestionRequest(noteId)
   selections[noteId] = undefined
@@ -269,6 +357,10 @@ function feedbackCount(noteId: string): number {
 
 function feedbackTargetLabel(selection: NoteSelection): string {
   if (selection.type === 'region') return 'Selected visual region'
+  if (selection.type === 'point') return 'Selected position'
+  if (selection.type === 'arrow') return 'Selected direction'
+  if (selection.type === 'sequence') return 'Selected order'
+  if (selection.type === 'freehand') return 'Selected freehand path'
   const compact = selection.text.replaceAll(/\s+/g, ' ').trim()
   return compact.length > 56 ? `“${compact.slice(0, 56)}…”` : `“${compact}”`
 }
@@ -282,31 +374,12 @@ function removeFeedback(noteId: string, index: number) {
   )
 }
 
-function copySelection(selection: NoteSelection): NoteSelection {
-  if (selection.type === 'region') {
-    return {
-      type: 'region',
-      x: selection.x,
-      y: selection.y,
-      width: selection.width,
-      height: selection.height
-    }
-  }
-  return {
-    type: 'text',
-    text: selection.text,
-    source: selection.source,
-    start: selection.start,
-    end: selection.end
-  }
-}
-
 function addFeedback(noteId: string): boolean {
   const selection = selections[noteId]
   const text = feedbackDrafts[noteId]?.trim()
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
   if (!selection || !text || !note) return false
-  const copiedSelection = copySelection(selection)
+  const copiedSelection = copyFeedbackSelection(selection)
   const id = rememberConfirmedFeedback(note, copiedSelection, text)
   collectedFeedback[noteId] = [
     ...(collectedFeedback[noteId] ?? []),
@@ -553,7 +626,7 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
   if (relationship === 'alignment') {
     return 'text-emerald-600 ring-emerald-300'
   }
-  return 'text-violet-600 ring-violet-300'
+  return 'text-gray-500 ring-gray-300'
 }
 </script>
 
@@ -608,39 +681,88 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
             >
               <icon-lucide-loader-circle class="size-5 animate-spin" />
             </div>
-            <div
-              v-else-if="hasVisualArtifact(note)"
-              class="relative mb-3 cursor-crosshair touch-none overflow-hidden rounded-lg select-none"
-              @pointerdown.prevent="startRegion(note.id, $event)"
-              @pointermove="updateRegion(note.id, $event)"
-              @pointerup="finishRegion(note.id, $event)"
-              @pointercancel="finishRegion(note.id, $event)"
-            >
-              <iframe
-                v-if="visualHtml(note)"
-                ref="codeVisualFrames"
-                :srcdoc="visualHtml(note) ?? undefined"
-                :data-note-id="note.id"
-                title="Interactive feedback representation"
-                sandbox="allow-scripts allow-same-origin"
-                class="pointer-events-none block w-full border-0 bg-transparent"
-                :style="codeVisualStyle(note.id)"
-              />
-              <img
-                v-else
-                :src="visualUrl(note) ?? undefined"
-                alt="Interactive feedback representation"
-                draggable="false"
-                class="pointer-events-none h-auto w-full object-contain"
-              />
+            <div v-else-if="hasVisualArtifact(note)" class="relative mb-3">
               <div
-                v-if="highlightedSelection(note.id)?.type === 'region'"
-                class="pointer-events-none absolute border-2 border-violet-500 bg-violet-400/10 shadow-sm"
-                :class="{
-                  'animate-pulse ring-4 ring-violet-300/70': isFeedbackHighlightActive(note.id)
-                }"
-                :style="regionStyle(note.id)"
-              />
+                class="relative touch-none overflow-hidden rounded-lg select-none"
+                :class="
+                  visualTool(note.id) === 'point' || visualTool(note.id) === 'sequence'
+                    ? 'cursor-cell'
+                    : 'cursor-crosshair'
+                "
+                @pointerdown.prevent="startVisualSelection(note.id, $event)"
+                @pointermove="updateVisualSelection(note.id, $event)"
+                @pointerup="finishVisualSelection(note.id, $event)"
+                @pointercancel="finishVisualSelection(note.id, $event)"
+              >
+                <iframe
+                  v-if="visualHtml(note)"
+                  ref="codeVisualFrames"
+                  :srcdoc="visualHtml(note) ?? undefined"
+                  :data-note-id="note.id"
+                  title="Interactive feedback representation"
+                  sandbox="allow-scripts allow-same-origin"
+                  class="pointer-events-none block w-full border-0 bg-transparent"
+                  :style="codeVisualStyle(note.id)"
+                />
+                <img
+                  v-else
+                  :src="visualUrl(note) ?? undefined"
+                  alt="Interactive feedback representation"
+                  draggable="false"
+                  class="pointer-events-none h-auto w-full object-contain"
+                />
+                <div
+                  v-if="highlightedSelection(note.id)?.type === 'region'"
+                  class="pointer-events-none absolute border-2 border-violet-500 bg-violet-400/10 shadow-sm"
+                  :class="{
+                    'animate-pulse ring-4 ring-violet-300/70': isFeedbackHighlightActive(note.id)
+                  }"
+                  :style="regionStyle(note.id)"
+                />
+                <div
+                  v-else-if="highlightedSelection(note.id)?.type === 'point'"
+                  class="pointer-events-none absolute -translate-x-1/2 -translate-y-full text-violet-600 drop-shadow-sm"
+                  :class="{ 'animate-pulse': isFeedbackHighlightActive(note.id) }"
+                  :style="pointStyle(selectedPoint(note.id) ?? { x: 0, y: 0 })"
+                >
+                  <icon-lucide-map-pin class="size-6 fill-violet-100 stroke-[2.5]" />
+                </div>
+                <template v-else-if="highlightedSelection(note.id)?.type === 'sequence'">
+                  <div
+                    v-for="(point, pointIndex) in sequencePoints(note.id)"
+                    :key="pointIndex"
+                    class="pointer-events-none absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white shadow-md ring-2 ring-white"
+                    :class="{ 'animate-pulse': isFeedbackHighlightActive(note.id) }"
+                    :style="pointStyle(point)"
+                  >
+                    {{ pointIndex + 1 }}
+                  </div>
+                </template>
+                <div
+                  v-else-if="highlightedSelection(note.id)?.type === 'arrow'"
+                  class="pointer-events-none absolute h-0.5 origin-left bg-violet-600 shadow-sm after:absolute after:top-1/2 after:right-0 after:size-2.5 after:translate-x-0.5 after:-translate-y-1/2 after:rotate-45 after:border-t-2 after:border-r-2 after:border-violet-600"
+                  :class="{ 'animate-pulse': isFeedbackHighlightActive(note.id) }"
+                  :style="arrowStyle(note.id)"
+                />
+                <svg
+                  v-else-if="highlightedSelection(note.id)?.type === 'freehand'"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  class="pointer-events-none absolute inset-0 size-full overflow-visible"
+                  :class="{ 'animate-pulse': isFeedbackHighlightActive(note.id) }"
+                  aria-hidden="true"
+                >
+                  <polyline
+                    :points="freehandPoints(note.id)"
+                    fill="none"
+                    stroke="rgb(124 58 237)"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    vector-effect="non-scaling-stroke"
+                  />
+                </svg>
+              </div>
             </div>
             <p
               class="cursor-text text-base leading-snug select-text [-webkit-user-select:text] selection:bg-violet-300/70 selection:text-surface"
@@ -828,6 +950,44 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
                 class="size-3.5"
               />
               <icon-lucide-arrow-right v-else class="size-3.5" />
+            </button>
+          </div>
+
+          <div
+            v-if="hasVisualArtifact(note)"
+            class="absolute top-12 left-full ml-2 flex w-8 flex-col gap-1 rounded-xl bg-panel p-1.5 shadow-lg ring-1 ring-border"
+            aria-label="Visual feedback marker tools"
+          >
+            <button
+              v-for="tool in VISUAL_TOOLS"
+              :key="tool"
+              type="button"
+              class="flex size-5 items-center justify-center rounded-md transition"
+              :class="
+                visualTool(note.id) === tool
+                  ? 'bg-violet-600 text-white shadow-sm'
+                  : 'text-muted hover:bg-hover hover:text-surface'
+              "
+              :aria-label="`Use ${tool} marker`"
+              :title="
+                tool === 'region'
+                  ? 'Select region'
+                  : tool === 'point'
+                    ? 'Place a point'
+                    : tool === 'arrow'
+                      ? 'Draw direction'
+                      : tool === 'sequence'
+                        ? 'Mark an order'
+                        : 'Draw freely'
+              "
+              @pointerdown.stop
+              @click.stop="selectVisualTool(note.id, tool)"
+            >
+              <icon-lucide-scan v-if="tool === 'region'" class="size-3" />
+              <icon-lucide-map-pin v-else-if="tool === 'point'" class="size-3" />
+              <icon-lucide-move-up-right v-else-if="tool === 'arrow'" class="size-3" />
+              <icon-lucide-list-ordered v-else-if="tool === 'sequence'" class="size-3" />
+              <icon-lucide-pencil-line v-else class="size-3" />
             </button>
           </div>
 

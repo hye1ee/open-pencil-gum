@@ -1,15 +1,5 @@
-import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
+import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
 import type { StepFeedbackResult } from '@/app/feedback-note/session'
-
-function selectionLabel(selection: FeedbackSelection): string {
-  if (selection.type === 'region') {
-    return (
-      `visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, ` +
-      `w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
-    )
-  }
-  return `${selection.source} text: "${selection.text}"`
-}
 
 export function renderStepFeedbackReport(result: StepFeedbackResult, request: string): string {
   const lines = [
@@ -41,7 +31,9 @@ export function renderStepFeedbackReport(result: StepFeedbackResult, request: st
       lines.push('   The user reviewed this note and accepted it without correction.')
     } else {
       for (const item of outcome.feedbackItems) {
-        lines.push(`   On ${selectionLabel(item.selection)}, the user said: "${item.feedback}"`)
+        lines.push(
+          `   On ${feedbackSelectionLabel(item.selection)}, the user said: "${item.feedback}"`
+        )
       }
     }
   }

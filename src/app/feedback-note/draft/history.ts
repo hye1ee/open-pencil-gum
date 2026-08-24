@@ -1,27 +1,10 @@
+import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
 import type { ConfirmedFeedback, FeedbackSelection } from '@/app/feedback-note/draft/types'
 import type { FeedbackNote } from '@/app/feedback-note/types'
 
 const HISTORY_LIMIT = 50
 const history: ConfirmedFeedback[] = []
 let nextFeedbackId = 1
-
-function copySelection(selection: FeedbackSelection): FeedbackSelection {
-  return selection.type === 'region'
-    ? {
-        type: 'region',
-        x: selection.x,
-        y: selection.y,
-        width: selection.width,
-        height: selection.height
-      }
-    : {
-        type: 'text',
-        text: selection.text,
-        source: selection.source,
-        start: selection.start,
-        end: selection.end
-      }
-}
 
 export function rememberConfirmedFeedback(
   note: FeedbackNote,
@@ -40,7 +23,7 @@ export function rememberConfirmedFeedback(
       reasoningEvidence: note.evidenceFromReasoning,
       propositionIds: [...note.propositionIds]
     },
-    selection: copySelection(selection),
+    selection: copyFeedbackSelection(selection),
     feedback,
     createdAt: Date.now()
   })

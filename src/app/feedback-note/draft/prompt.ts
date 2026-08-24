@@ -1,3 +1,4 @@
+import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
 import type { ConfirmedFeedback, FeedbackSelection } from '@/app/feedback-note/draft/types'
 import type { FeedbackNote } from '@/app/feedback-note/types'
 import type { Proposition } from '@/app/user-model/pipeline'
@@ -16,7 +17,7 @@ Use one natural sentence and at most 25 words. Return only the suggestion. Do no
 
 function selectionText(selection: FeedbackSelection): string {
   if (selection.type === 'text') return `Selected text: ${selection.text}`
-  return `Selected visual region: x=${selection.x.toFixed(3)}, y=${selection.y.toFixed(3)}, width=${selection.width.toFixed(3)}, height=${selection.height.toFixed(3)}`
+  return `Selected visual annotation: ${feedbackSelectionLabel(selection)}`
 }
 
 export function renderFeedbackDraftPrompt(input: {
@@ -42,7 +43,7 @@ export function renderFeedbackDraftPrompt(input: {
       : input.previousFeedback
           .map(
             (item) =>
-              `- Note context: ${item.noteContext.cue}\n  Reasoning context: ${item.noteContext.reasoningEvidence}\n  Selected: ${item.selection.type === 'text' ? item.selection.text : 'a visual region'}\n  Confirmed feedback: ${item.feedback}`
+              `- Note context: ${item.noteContext.cue}\n  Reasoning context: ${item.noteContext.reasoningEvidence}\n  Selected: ${feedbackSelectionLabel(item.selection)}\n  Confirmed feedback: ${item.feedback}`
           )
           .join('\n')
 
