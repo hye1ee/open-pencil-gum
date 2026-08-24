@@ -8,8 +8,9 @@ import {
   forgetConfirmedFeedback,
   rememberConfirmedFeedback
 } from '@/app/feedback-note/draft/history'
-import { cropFeedbackImage } from '@/app/feedback-note/draft/image'
+import { annotateFeedbackImage } from '@/app/feedback-note/draft/image'
 import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
+import { resolveCodeVisualTarget } from '@/app/feedback-note/draft/target'
 import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
 import { generateFeedbackDraft } from '@/app/feedback-note/draft/use'
 import { feedbackNoteState, openFeedbackNote, resolveFeedbackNote } from '@/app/feedback-note/use'
@@ -91,6 +92,25 @@ function selectVisualTool(noteId: string, tool: VisualTool) {
   if (selection?.type !== 'text' && selection?.type !== tool) clearSelection(noteId)
 }
 
+function withCodeVisualTarget(
+  noteId: string,
+  selection: NoteSelection,
+  container: HTMLElement
+): NoteSelection {
+  const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
+  if (selection.type === 'text' || note?.representation.type !== 'code-visual') return selection
+  const artifact = note.representation.artifact
+  const frame = codeVisualFrames.value?.find((candidate) => candidate.dataset.noteId === noteId)
+  if (!artifact || !frame) return selection
+  const target = resolveCodeVisualTarget({
+    frame,
+    container,
+    targets: artifact.targets,
+    selection
+  })
+  return target ? { ...selection, target } : selection
+}
+
 function startVisualSelection(noteId: string, event: PointerEvent) {
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
   if (note?.representation.type !== 'image' && note?.representation.type !== 'code-visual') return
@@ -99,8 +119,10 @@ function startVisualSelection(noteId: string, event: PointerEvent) {
   if (!start) return
   beginSuggestionRequest(noteId)
   const tool = visualTool(noteId)
+  const container = event.currentTarget
+  if (!(container instanceof HTMLElement)) return
   if (tool === 'point') {
-    const selection: NoteSelection = { type: 'point', ...start }
+    const selection = withCodeVisualTarget(noteId, { type: 'point', ...start }, container)
     selections[noteId] = selection
     void requestFeedbackSuggestion(noteId, selection)
     return
@@ -108,7 +130,7 @@ function startVisualSelection(noteId: string, event: PointerEvent) {
   if (tool === 'sequence') {
     const existing = selections[noteId]
     const points = existing?.type === 'sequence' ? [...existing.points, start] : [start]
-    const selection: NoteSelection = { type: 'sequence', points }
+    const selection = withCodeVisualTarget(noteId, { type: 'sequence', points }, container)
     selections[noteId] = selection
     void requestFeedbackSuggestion(noteId, selection)
     return
@@ -121,7 +143,7 @@ function startVisualSelection(noteId: string, event: PointerEvent) {
   } else {
     selections[noteId] = { type: 'freehand', points: [start] }
   }
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  container.setPointerCapture(event.pointerId)
 }
 
 function updateVisualSelection(noteId: string, event: PointerEvent) {
@@ -151,7 +173,13 @@ function updateVisualSelection(noteId: string, event: PointerEvent) {
 function finishVisualSelection(noteId: string, event: PointerEvent) {
   const gesture = visualGesture.value
   if (!gesture || gesture.noteId !== noteId) return
-  const selection = selections[noteId]
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement)) return
+  const currentSelection = selections[noteId]
+  const selection = currentSelection
+    ? withCodeVisualTarget(noteId, currentSelection, target)
+    : undefined
+  selections[noteId] = selection
   const tooSmallRegion = selection?.type === 'region' && selection.width * selection.height < 0.001
   const tooShortArrow =
     selection?.type === 'arrow' &&
@@ -162,8 +190,7 @@ function finishVisualSelection(noteId: string, event: PointerEvent) {
   } else if (selection) {
     void requestFeedbackSuggestion(noteId, selection)
   }
-  const target = event.currentTarget
-  if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
+  if (target.hasPointerCapture(event.pointerId)) {
     target.releasePointerCapture(event.pointerId)
   }
   visualGesture.value = null
@@ -207,10 +234,10 @@ async function requestFeedbackSuggestion(noteId: string, selection: NoteSelectio
   const version = suggestionVersions.get(noteId) ?? 0
   suggestionLoading[noteId] = true
   try {
-    let images: { overviewImage?: Uint8Array; selectionImage?: Uint8Array } = {}
+    let images: { overviewImage?: Uint8Array; annotatedImage?: Uint8Array } = {}
     if (note.representation.type === 'image' && note.representation.url) {
       try {
-        images = await cropFeedbackImage(note.representation.url, selection)
+        images = await annotateFeedbackImage(note.representation.url, selection)
       } catch (error) {
         console.warn('[feedback-note] could not crop draft context:', error)
       }

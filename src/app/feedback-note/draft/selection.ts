@@ -11,13 +11,28 @@ export function copyFeedbackSelection(selection: FeedbackSelection): FeedbackSel
     case 'point':
       return { ...selection }
     case 'arrow':
-      return { type: 'arrow', start: copyPoint(selection.start), end: copyPoint(selection.end) }
+      return {
+        type: 'arrow',
+        start: copyPoint(selection.start),
+        end: copyPoint(selection.end),
+        target: selection.target ? { ...selection.target } : undefined
+      }
     case 'sequence':
-      return { type: 'sequence', points: selection.points.map(copyPoint) }
+      return {
+        type: 'sequence',
+        points: selection.points.map(copyPoint),
+        target: selection.target ? { ...selection.target } : undefined
+      }
     case 'freehand':
-      return { type: 'freehand', points: selection.points.map(copyPoint) }
+      return {
+        type: 'freehand',
+        points: selection.points.map(copyPoint),
+        target: selection.target ? { ...selection.target } : undefined
+      }
     case 'text':
       return { ...selection }
+    default:
+      throw new Error(`Unknown feedback selection: ${String(selection satisfies never)}`)
   }
 }
 
@@ -26,6 +41,8 @@ function pointText(point: FeedbackPoint): string {
 }
 
 export function feedbackSelectionLabel(selection: FeedbackSelection): string {
+  const target = selection.type !== 'text' && selection.target
+  if (target) return `${target.label} alternative (${target.id})`
   switch (selection.type) {
     case 'region':
       return `visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
@@ -39,5 +56,7 @@ export function feedbackSelectionLabel(selection: FeedbackSelection): string {
       return `freehand path through ${selection.points.length} points`
     case 'text':
       return `${selection.source} text: "${selection.text}"`
+    default:
+      throw new Error(`Unknown feedback selection: ${String(selection satisfies never)}`)
   }
 }

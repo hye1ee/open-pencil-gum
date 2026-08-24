@@ -41,6 +41,7 @@ import {
 } from '@/app/meta-agent/reasoning-observer'
 import { forgetReportedMarks } from '@/app/meta-agent/report'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
+import { propositions as currentUserModelPropositions } from '@/app/user-model/store'
 import { awaitUserModelSettled } from '@/app/user-model/use'
 
 let agent: MetaAgent | null = null
@@ -133,9 +134,13 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   // A restart after a marker answer has a revision in flight; reading early
   // would judge the redone step against the belief just corrected.
   await awaitUserModelSettled()
-  // Held for the turn: the capture pipeline writes to disk while the agent
-  // works, and a model that grows mid-run makes two steps incomparable.
-  runPropositions = propositionsForRun(await loadSavedUserModel())
+  // Held for the turn. Prefer the in-memory model: feedback revision updates it
+  // synchronously, while persistence is intentionally disabled for fixtures
+  // and otherwise finishes in the background. Disk is only the cold-start
+  // fallback before anything has populated the store.
+  const inMemory = currentUserModelPropositions.value
+  const userModel = inMemory.length > 0 ? inMemory : await loadSavedUserModel()
+  runPropositions = propositionsForRun(userModel)
   const withheld = runPropositions.filter((p) => !p.shownToAgent).length
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
   resetFeedbackNotes()

@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas'
 
-import { cropFeedbackCanvas } from '@/app/feedback-note/draft/image'
+import { annotateFeedbackCanvas } from '@/app/feedback-note/draft/image'
 import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
 
 async function svgCanvas(svg: SVGSVGElement): Promise<HTMLCanvasElement> {
@@ -39,12 +39,12 @@ async function htmlCanvas(root: HTMLElement | null): Promise<HTMLCanvasElement> 
 export async function captureCodeVisualSelection(
   frame: HTMLIFrameElement,
   selection: FeedbackSelection
-): Promise<{ overviewImage: Uint8Array; selectionImage?: Uint8Array }> {
+): Promise<{ overviewImage: Uint8Array; annotatedImage?: Uint8Array }> {
   const frameDocument = frame.contentDocument
   if (!frameDocument) throw new Error('Code visual document is unavailable')
   const svg = frameDocument.querySelector('svg')
   const canvas = svg
     ? await svgCanvas(svg)
     : await htmlCanvas(frameDocument.querySelector<HTMLElement>('.code-visual-root'))
-  return cropFeedbackCanvas(canvas, selection)
+  return annotateFeedbackCanvas(canvas, selection)
 }

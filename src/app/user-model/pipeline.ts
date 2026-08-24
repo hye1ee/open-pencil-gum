@@ -121,13 +121,32 @@ export interface UserModelFeedbackPoint {
   y: number
 }
 
+export interface UserModelFeedbackTarget {
+  id: string
+  label: string
+}
+
+interface TargetedUserModelFeedbackSelection {
+  target?: UserModelFeedbackTarget
+}
+
 export type UserModelFeedbackSelection =
   | { type: 'none' }
-  | { type: 'region'; x: number; y: number; width: number; height: number }
-  | { type: 'point'; x: number; y: number }
-  | { type: 'arrow'; start: UserModelFeedbackPoint; end: UserModelFeedbackPoint }
-  | { type: 'sequence'; points: UserModelFeedbackPoint[] }
-  | { type: 'freehand'; points: UserModelFeedbackPoint[] }
+  | ({
+      type: 'region'
+      x: number
+      y: number
+      width: number
+      height: number
+    } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'point'; x: number; y: number } & TargetedUserModelFeedbackSelection)
+  | ({
+      type: 'arrow'
+      start: UserModelFeedbackPoint
+      end: UserModelFeedbackPoint
+    } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'sequence'; points: UserModelFeedbackPoint[] } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'freehand'; points: UserModelFeedbackPoint[] } & TargetedUserModelFeedbackSelection)
   | {
       type: 'text'
       text: string
@@ -263,6 +282,7 @@ interface RawReplyItem {
   confidence?: unknown
   decay?: unknown
   reasoning?: unknown
+  relation?: unknown
 }
 
 function isRawReplyItem(item: unknown): item is RawReplyItem {
@@ -369,7 +389,23 @@ interface RequestedRevision {
   confidence: number
   decay: number
   reasoning: string
+  relation?: FeedbackClaimRelation
 }
+
+type FeedbackClaimRelation =
+  | 'confirmation'
+  | 'same_claim_refinement'
+  | 'contextual_exception'
+  | 'contradiction'
+  | 'new_claim'
+
+const FEEDBACK_CLAIM_RELATIONS = new Set<FeedbackClaimRelation>([
+  'confirmation',
+  'same_claim_refinement',
+  'contextual_exception',
+  'contradiction',
+  'new_claim'
+])
 
 function readRequestedRevisions(raw: string): RequestedRevision[] {
   return parseJsonArray(raw)
@@ -383,10 +419,27 @@ function readRequestedRevisions(raw: string): RequestedRevision[] {
         text,
         confidence: readScore(item.confidence, 0.5),
         decay: readScore(item.decay, 0.5),
-        reasoning: readString(item.reasoning)
+        reasoning: readString(item.reasoning),
+        relation: FEEDBACK_CLAIM_RELATIONS.has(readString(item.relation) as FeedbackClaimRelation)
+          ? (readString(item.relation) as FeedbackClaimRelation)
+          : undefined
       }
     })
     .filter((op): op is RequestedRevision => op !== null)
+}
+
+function validFeedbackRevision(revision: RequestedRevision, propositions: Proposition[]): boolean {
+  const relation = revision.relation
+  if (!relation) return false
+  const existing = revision.id === null ? undefined : propositions.find((p) => p.id === revision.id)
+  if (revision.id !== null && !existing) return false
+  if (relation === 'confirmation') {
+    return existing?.text === revision.text
+  }
+  if (relation === 'same_claim_refinement') return existing !== undefined
+  if (relation === 'new_claim') return revision.id === null
+  if (relation === 'contextual_exception') return revision.id === null
+  return true
 }
 
 // ---------------------------------------------------------------- retrieval
@@ -648,9 +701,9 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
-  /** One call, no propose step, and no retrieval for anything a note already
-   * names by id. Notes citing nothing still get neighbours, or the revision
-   * cannot see it is about to duplicate something already held. */
+  /** One call, no propose step. Directly cited propositions establish why a
+   * note was created, while embedding neighbours expose adjacent claims that
+   * may also need refinement and prevent near-duplicate creation. */
   async function observeFeedback(batch: UserModelFeedbackBatch): Promise<void> {
     if (batch.notes.length === 0) return
     // Direct user evidence must not disappear because a timer-driven frame
@@ -668,15 +721,15 @@ export function createUserModel(options: UserModelOptions): UserModel {
         if (held) shown.set(held.id, held)
       }
 
-      const uncited = batch.notes.filter((note) => note.propositionIds.length === 0)
-      if (uncited.length > 0) {
-        const vectors = await deps.embed(
-          uncited.map((note) => `${note.topic}: ${note.cue}\n${note.reasoningEvidence}`)
-        )
-        for (const [i] of uncited.entries()) {
-          for (const near of nearestPropositions(vectors[i] ?? [], propositions, now)) {
-            shown.set(near.id, near)
-          }
+      const vectors = await deps.embed(
+        batch.notes.map((note) => {
+          const feedback = note.feedbackItems.map((item) => item.feedback).join('\n')
+          return [note.topic, note.cue, note.reasoningEvidence, feedback].filter(Boolean).join('\n')
+        })
+      )
+      for (const [i] of batch.notes.entries()) {
+        for (const near of nearestPropositions(vectors[i] ?? [], propositions, now)) {
+          shown.set(near.id, near)
         }
       }
 
@@ -692,7 +745,9 @@ export function createUserModel(options: UserModelOptions): UserModel {
       // Explicit feedback may refine the scope or conditions of an existing
       // proposition. FEEDBACK_SYSTEM keeps implicit acceptance and mere
       // paraphrases from rewriting it.
-      const asked = readRequestedRevisions(raw)
+      const asked = readRequestedRevisions(raw).filter((revision) =>
+        validFeedbackRevision(revision, propositions)
+      )
       const changed = applyRevisions(asked, stamp)
       if (changed.length > 0) await reEmbed(changed)
 

@@ -209,6 +209,21 @@ REFINING AN EXISTING PROPOSITION
 
 Explicit feedback may refine an existing proposition when the user's own words add or correct a reusable scope, condition, or boundary of the same underlying claim. In that case, return the existing id with a sharper sentence that preserves every clause the new evidence did not address.
 
+Before choosing an operation, classify the evidence against the closest existing proposition:
+- confirmation: it supports the same claim without changing its scope. Keep the text exactly unchanged and update that id.
+- same_claim_refinement: it corrects or adds a reusable boundary within the same design decision. Update that id with one coherent, sharper proposition.
+- contextual_exception: the original remains the default, but a separately named context behaves differently. Keep the original and create one new proposition for the exception.
+- contradiction: the original claim is rejected rather than bounded. Lower it, and create a replacement only when the accepted alternative generalizes.
+- new_claim: no existing proposition makes the same underlying claim. Create one proposition.
+
+Prefer same_claim_refinement over contradiction plus a new proposition when the old and new evidence can be represented truthfully as one reusable sentence. Do not manufacture two competing propositions merely because the feedback changes one clause.
+
+Example:
+Existing: "Uses one warm amber accent while keeping secondary and tertiary controls neutral."
+Explicit feedback: "Use amber on the text-only tertiary control so it reads as interactive."
+This is same_claim_refinement, not a wholesale contradiction and not a contextual exception.
+Update the existing id to: "Uses warm amber selectively on primary actions and interactive text-only tertiary controls."
+
 Do not refine from implicit acceptance. Do not rewrite merely to improve style, shorten the sentence, or substitute synonyms. Do not remove a clause unless the explicit feedback supplies evidence against that exact clause. If the feedback establishes a genuinely separate preference or a context-specific exception that can stand on its own, create a new proposition instead.
 
 For example, do not rewrite "near-monochrome greys with one warm accent, never a default blue or indigo" to "near-monochrome with one warm accent" merely because a warm gradient appeared. Nothing there addressed indigo, so deleting that clause destroys evidence. But if the user explicitly says "blue is acceptable for informational links, just not primary actions," refining the existing sentence to preserve that boundary is appropriate.
@@ -278,6 +293,7 @@ Two more requirements:
 RETURN FORMAT
 
 For each proposition you change, return:
+- relation: confirmation, same_claim_refinement, contextual_exception, contradiction, or new_claim.
 - id: the existing proposition's id, or null to create a new one.
 - text: for a new proposition, the sentence. For an existing proposition, repeat its wording unless explicit feedback justifies a scope or condition refinement under the rules above.
 - confidence: 1-10. How strongly the evidence now supports it. 1 means you no longer believe it.
@@ -289,7 +305,14 @@ Rules:
 - Leave a proposition out of your response entirely if it needs no change.
 - Nothing is ever deleted. Confidence 1 is how a proposition retires.
 
-Respond with ONLY a JSON array: [{"id": "... or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]`
+Operation consistency rules:
+- confirmation and same_claim_refinement require an existing id.
+- confirmation must repeat the existing text exactly.
+- contextual_exception and new_claim require id: null.
+- contradiction may update an existing id and may separately create a reusable replacement.
+- Never return an invented non-null id.
+
+Respond with ONLY a JSON array: [{"relation": "same_claim_refinement", "id": "existing id or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]`
 
 const WHAT_THE_NOTE_SAID: Record<UserModelFeedbackNote['relationship'], string> = {
   conflict: 'the note said the agent was about to go AGAINST that proposition',
@@ -304,21 +327,27 @@ function renderFeedbackItem(item: UserModelFeedbackItem, index: number): string 
 
 function userModelSelectionText(selection: UserModelFeedbackItem['selection']): string {
   const point = (value: UserModelFeedbackPoint) => `(${value.x.toFixed(2)}, ${value.y.toFixed(2)})`
+  const target =
+    selection.type !== 'none' && selection.type !== 'text' && selection.target
+      ? `target alternative "${selection.target.label}" (id: ${selection.target.id}), marked by `
+      : ''
   switch (selection.type) {
     case 'none':
       return 'no specific selection (legacy feedback)'
     case 'region':
-      return `visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
+      return `${target}visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
     case 'point':
-      return `position ${point(selection)}`
+      return `${target}position ${point(selection)}`
     case 'arrow':
-      return `direction ${point(selection.start)} → ${point(selection.end)}`
+      return `${target}direction ${point(selection.start)} → ${point(selection.end)}`
     case 'sequence':
-      return `ordered positions ${selection.points.map((value, index) => `${index + 1}:${point(value)}`).join(' → ')}`
+      return `${target}ordered positions ${selection.points.map((value, index) => `${index + 1}:${point(value)}`).join(' → ')}`
     case 'freehand':
-      return `freehand path through ${selection.points.length} points`
+      return `${target}freehand path through ${selection.points.length} points`
     case 'text':
       return `${selection.source} text: "${selection.text}"`
+    default:
+      throw new Error(`Unknown feedback selection: ${String(selection satisfies never)}`)
   }
 }
 

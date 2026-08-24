@@ -5,7 +5,9 @@ import type { Proposition } from '@/app/user-model/pipeline'
 
 export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion in the user's voice. It is a hypothesis the user can accept or revise.
 
-Ground it in the selected target, the current note, relevant user-model propositions and their rationales, and feedback the user previously confirmed. Selection signals attention, not approval or disapproval.
+Ground it in the selected target, the current note, relevant user-model propositions and their rationales, and feedback the user previously confirmed.
+
+When CURRENT SELECTION says the note asked for a choice, treat the selected alternative as the user's choice. The user model may help explain that choice, but it must not reverse or ignore it. For all other selections, a mark signals attention rather than approval or disapproval.
 
 Always express what should remain, change, or be clarified.
 
@@ -15,8 +17,19 @@ If the evidence supports only what the user wants and not why, omit the reason. 
 
 Use one natural sentence and at most 25 words. Return only the suggestion. Do not use quotation marks, labels, or preamble.`
 
-function selectionText(selection: FeedbackSelection): string {
+const CHOICE_CUE_PATTERN =
+  /\b(?:choose|select|pick|which|prefer(?:red)?|decide|confirm|resolve|mark)\b/i
+
+function selectionText(note: FeedbackNote, selection: FeedbackSelection): string {
   if (selection.type === 'text') return `Selected text: ${selection.text}`
+  if (selection.target) {
+    const target = `"${selection.target.label}" (id: ${selection.target.id})`
+    const asksForChoice = CHOICE_CUE_PATTERN.test(`${note.text}\n${note.representationGoal}`)
+    if (asksForChoice) {
+      return `The note explicitly asks the user to choose an alternative. The user selected ${target}. Treat this as their chosen alternative, not merely an area of attention.`
+    }
+    return `Selected visual target: ${target}. Annotation: ${feedbackSelectionLabel(selection)}`
+  }
   return `Selected visual annotation: ${feedbackSelectionLabel(selection)}`
 }
 
@@ -26,7 +39,7 @@ export function renderFeedbackDraftPrompt(input: {
   propositions: Proposition[]
   previousFeedback: ConfirmedFeedback[]
   hasOverviewImage: boolean
-  hasSelectionImage: boolean
+  hasAnnotatedImage: boolean
 }): string {
   const propositionBlock =
     input.propositions.length === 0
@@ -54,9 +67,9 @@ Reasoning evidence: ${input.note.evidenceFromReasoning}
 Relationship: ${input.note.relationship}
 
 CURRENT SELECTION
-${selectionText(input.selection)}
+${selectionText(input.note, input.selection)}
 ${input.hasOverviewImage ? 'The first attached image shows the full visual.' : ''}
-${input.hasSelectionImage ? 'The second attached image is the selected crop.' : ''}
+${input.hasAnnotatedImage ? 'The second attached image shows the same full visual with the user annotation overlaid.' : ''}
 
 RELEVANT USER MODEL
 ${propositionBlock}

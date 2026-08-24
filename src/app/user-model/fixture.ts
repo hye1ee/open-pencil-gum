@@ -42,12 +42,13 @@ const ITEMS = [
 
 export const USER_MODEL_FIXTURE: Proposition[] = ITEMS.map(
   ([text, confidence, rationale], index) => {
-    const embedding = ITEMS.map((_, embeddingIndex) => (embeddingIndex === index ? 1 : 0))
     return {
       id: `fixture-${index + 1}`,
       text,
       confidence,
-      decay: 0.2,
+      // A deterministic development fixture must remain retrievable regardless
+      // of the date on which the scenario is rerun.
+      decay: 0,
       reasoning: 'Stable test proposition for feedback-note evaluation.',
       rationale,
       rationaleGrounds: 'Seeded test rationale for the three-button feedback scenario.',
@@ -55,9 +56,12 @@ export const USER_MODEL_FIXTURE: Proposition[] = ITEMS.map(
       createdAt: AT,
       updatedAt: AT,
       observations: 1,
-      embedding,
+      // Hydrated with the configured embedding model when the fixture is loaded.
+      // A synthetic vector here silently breaks retrieval as soon as its
+      // dimensions differ from the provider's output.
+      embedding: [],
       originalText: text,
-      originalEmbedding: [...embedding],
+      originalEmbedding: [],
       revisions: 0
     }
   }

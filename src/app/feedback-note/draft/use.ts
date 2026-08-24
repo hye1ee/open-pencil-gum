@@ -25,11 +25,11 @@ export async function generateFeedbackDraft(input: FeedbackDraftInput): Promise<
     propositions: relevantPropositions,
     previousFeedback,
     hasOverviewImage: input.overviewImage !== undefined,
-    hasSelectionImage: input.selectionImage !== undefined
+    hasAnnotatedImage: input.annotatedImage !== undefined
   })
   const content: UserContent = [{ type: 'text', text: prompt }]
   if (input.overviewImage) content.push({ type: 'image', image: input.overviewImage })
-  if (input.selectionImage) content.push({ type: 'image', image: input.selectionImage })
+  if (input.annotatedImage) content.push({ type: 'image', image: input.annotatedImage })
 
   const result = await generateText({
     model: createUntracedLanguageModel(modelConfigForSlot('feedback-draft')),

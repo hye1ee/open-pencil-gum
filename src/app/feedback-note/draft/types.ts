@@ -5,12 +5,27 @@ export interface FeedbackPoint {
   y: number
 }
 
+export interface FeedbackVisualTarget {
+  id: string
+  label: string
+}
+
+interface TargetedVisualSelection {
+  target?: FeedbackVisualTarget
+}
+
 export type FeedbackSelection =
-  | { type: 'region'; x: number; y: number; width: number; height: number }
-  | { type: 'point'; x: number; y: number }
-  | { type: 'arrow'; start: FeedbackPoint; end: FeedbackPoint }
-  | { type: 'sequence'; points: FeedbackPoint[] }
-  | { type: 'freehand'; points: FeedbackPoint[] }
+  | ({
+      type: 'region'
+      x: number
+      y: number
+      width: number
+      height: number
+    } & TargetedVisualSelection)
+  | ({ type: 'point'; x: number; y: number } & TargetedVisualSelection)
+  | ({ type: 'arrow'; start: FeedbackPoint; end: FeedbackPoint } & TargetedVisualSelection)
+  | ({ type: 'sequence'; points: FeedbackPoint[] } & TargetedVisualSelection)
+  | ({ type: 'freehand'; points: FeedbackPoint[] } & TargetedVisualSelection)
   | {
       type: 'text'
       text: string
@@ -39,5 +54,5 @@ export interface FeedbackDraftInput {
   note: FeedbackNote
   selection: FeedbackSelection
   overviewImage?: Uint8Array
-  selectionImage?: Uint8Array
+  annotatedImage?: Uint8Array
 }

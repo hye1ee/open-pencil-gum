@@ -8,10 +8,13 @@ import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
 import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
+import { userModelFixtureEnabled } from '@/app/user-model/fixture'
 import {
   createUserModel,
   type FeedbackNote,
+  type SavedProposition,
   type UserModel,
+  type UserModelDeps,
   type UserModelFeedbackBatch
 } from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
@@ -56,6 +59,7 @@ export function frameNote(): string | undefined {
 /** One instance only: two would both write the same file and the second's saves
  * would undo the first's. Built on demand, since feedback outlives capture. */
 let current: UserModel | null = null
+let currentReady: Promise<void> = Promise.resolve()
 
 /** Not gated on capture: this is the only place the person tells us anything in
  * words, and it is the best evidence the model gets. */
@@ -64,7 +68,10 @@ export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
   current ??= createPropositionSink('answers')
   const replied = notes.filter((note) => note.reply !== null).length
   logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
-  await enqueueObservation(() => current?.observe(notes) ?? Promise.resolve())
+  await enqueueObservation(async () => {
+    await currentReady
+    await current?.observe(notes)
+  })
 }
 
 let pending: Promise<void> | null = null
@@ -94,7 +101,10 @@ export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promi
     `notes=${batch.notes.length} explicit=${explicit} implicit=${batch.notes.length - explicit} items=${items}`
   )
   try {
-    await enqueueObservation(() => current?.observeFeedback(batch) ?? Promise.resolve())
+    await enqueueObservation(async () => {
+      await currentReady
+      await current?.observeFeedback(batch)
+    })
   } catch (error) {
     logUserModelFeedback(
       batch.step ?? 0,
@@ -107,12 +117,13 @@ export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promi
 /** The meta-agent reads the model once per turn. A restart after an answer is
  * two model calls ahead of the revision that answer caused. */
 export function awaitUserModelSettled(): Promise<void> {
-  return pending ?? Promise.resolve()
+  return pending ?? currentReady
 }
 
 export function createPropositionSink(sessionId: string): UserModel {
+  const deps = modelCalls()
   const model = createUserModel({
-    deps: modelCalls(),
+    deps,
 
     onStage: (stage) => {
       noteStage(stage)
@@ -156,15 +167,38 @@ export function createPropositionSink(sessionId: string): UserModel {
     }
   })
 
-  void load().then((saved) => {
+  currentReady = load().then(async (saved) => {
     if (saved.length === 0) return
-    model.load(saved)
+    let hydrated = saved
+    if (userModelFixtureEnabled) {
+      try {
+        hydrated = await hydrateFixtureEmbeddings(saved, deps.embed)
+      } catch (error) {
+        noteError(error)
+      }
+    }
+    model.load(hydrated)
     // Read back, not `saved`: `load` fills in drift fields an older file lacks.
     setPropositions(model.propositions)
   })
 
   current = model
   return model
+}
+
+async function hydrateFixtureEmbeddings(
+  saved: SavedProposition[],
+  embed: UserModelDeps['embed']
+): Promise<SavedProposition[]> {
+  const vectors = await embed(saved.map((proposition) => proposition.text))
+  return saved.map((proposition, index) => {
+    const embedding = vectors.at(index) ?? []
+    return {
+      ...proposition,
+      embedding,
+      originalEmbedding: [...embedding]
+    }
+  })
 }
 
 export { clearSaved }
