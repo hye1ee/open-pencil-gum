@@ -188,6 +188,73 @@ export function logJudgment(chars: number, marks: string[]): void {
   writeBlock('META', `${chars} chars →\n${marks.join('\n')}`)
 }
 
+/** Shadow analysis only: it never creates a mark or changes the active turn. */
+export function logPropositionComparison(chars: number, detail: string): void {
+  writeBlock('META-GRAPH', `${chars} chars →\n${detail}`)
+}
+
+export function logFeedbackNote(
+  step: number,
+  position: number,
+  relationship: 'alignment' | 'conflict' | 'uncovered' | null,
+  representation: 'text' | 'code-visual' | 'image' | null,
+  nodeId: string | null,
+  detail?: string
+): void {
+  write(
+    'NOTE',
+    `step ${step}${position > 0 ? ` note ${position}` : ''} → ${relationship ? `${relationship}/${representation}` : 'skip'}${relationship ? `  ${nodeId ?? 'agent cursor'}` : ''}${detail ? `  ${detail}` : ''}`
+  )
+}
+
+export function logFeedbackNoteImage(
+  id: string,
+  status: 'ready' | 'failed',
+  detail?: string
+): void {
+  write('NOTE-IMG', `${id} → ${status}${detail ? `  ${detail}` : ''}`)
+}
+
+export function logFeedbackNoteCode(
+  id: string,
+  status: 'html' | 'svg' | 'failed',
+  detail?: string
+): void {
+  write('NOTE-CODE', `${id} → ${status}${detail ? `  ${detail}` : ''}`)
+}
+
+/**
+ * State transitions after the user reviews an Interactive Feedback Note.
+ *
+ * These are intentionally separate from NOTE, which records generation. A run
+ * can now be checked end-to-end: what was shown, how each note was resolved,
+ * and whether the held action was released or the step was retried.
+ */
+export function logFeedbackStep(
+  step: number,
+  event: 'note' | 'waiting' | 'proceed' | 'retry' | 'report',
+  detail: string
+): void {
+  write('NOTE-STEP', `step ${step} ${event} → ${detail}`)
+}
+
+/** The lifetime of the one-retry window in which new notes are suppressed. */
+export function logFeedbackReplay(
+  step: number,
+  event: 'started' | 'waiting' | 'completed',
+  detail: string
+): void {
+  write('NOTE-RTRY', `step ${step} ${event} → ${detail}`)
+}
+
+export function logUserModelFeedback(
+  step: number,
+  event: 'queued' | 'evidence' | 'duplicate' | 'failed',
+  detail: string
+): void {
+  write('UM-FEEDBACK', `step ${step} ${event} → ${detail}`)
+}
+
 export function logJudgeSkip(chars: number): void {
   write('META', `${chars} chars → skipped, a judgment was already running`)
 }

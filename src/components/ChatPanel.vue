@@ -5,8 +5,15 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
-import { logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
-import { abandonTurn, forgetAbandonedTurn, setTurnRunning } from '@/app/ai/chat/agent-turn'
+import { agentActivity } from '@/app/ai/chat/agent-activity'
+import { logFeedbackStep, logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
+import {
+  abandonTurn,
+  agentTurn,
+  forgetAbandonedTurn,
+  resumeTurn,
+  setTurnRunning
+} from '@/app/ai/chat/agent-turn'
 import {
   clearMarks,
   releaseAnswerHold,
@@ -15,11 +22,18 @@ import {
 } from '@/app/ai/chat/mismatch'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { copyChatLog } from '@/app/ai/debug'
+import { renderStepFeedbackReport } from '@/app/feedback-note/report'
+import { userModelFeedbackBatch } from '@/app/feedback-note/user-model'
 import {
-  MAX_AGENT_STEPS,
+  beginFeedbackReplay,
+  hasExplicitStepFeedback,
+  setStepFeedbackHandler,
+  type StepFeedbackResult
+} from '@/app/feedback-note/session'
+import {
   clearToolLogEntries,
   continueRunSteps,
-  currentRunSteps,
+  currentRunStepNumber,
   didHitStepLimit
 } from '@/app/ai/tools'
 import { currentMetaRequest, marksAwaitingAnswer, noteSettledMarks } from '@/app/meta-agent/use'
@@ -31,7 +45,7 @@ import {
   takeUnreportedMarks,
   withoutDanglingToolCalls
 } from '@/app/meta-agent/report'
-import { observeMarkNotes } from '@/app/user-model/use'
+import { observeFeedbackNotes, observeMarkNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
@@ -45,7 +59,6 @@ import { useI18n } from '@open-pencil/vue'
 
 import type { Chat } from '@ai-sdk/vue'
 import type { UIMessage } from 'ai'
-import type { JsonObject } from '@open-pencil/scene-graph/primitives'
 
 const IS_DEV = import.meta.env.DEV
 
@@ -62,8 +75,17 @@ const debugCopied = refAutoReset(false, 1500)
 const acpLogCopied = refAutoReset(false, 1500)
 
 const messages = computed(() => chat.value?.messages ?? [])
+const visibleMessages = computed(() =>
+  messages.value.filter((message) => {
+    const metadata = message.metadata
+    return !(typeof metadata === 'object' && metadata !== null && 'internal' in metadata)
+  })
+)
 const status = computed(() => chat.value?.status ?? 'ready')
 const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
+const retryHandoffToken = ref<number | null>(null)
+let nextRetryHandoffToken = 1
+const logicallyRunning = computed(() => isRunning.value || retryHandoffToken.value !== null)
 
 // Messages the user typed while a run was in progress. They're injected into the
 // running loop (not the persisted history), so we echo them here optimistically.
@@ -75,28 +97,37 @@ const queuedMessages = computed<UIMessage[]>(() =>
     parts: [{ type: 'text', text }]
   }))
 )
-const isThinking = computed(() => {
-  const s = status.value
-  if (s !== 'submitted' && s !== 'streaming') return false
-  if (messages.value.length === 0) return true
-  const last = messages.value[messages.value.length - 1]
-  if (last.role !== 'assistant') return true
-  const parts = last.parts
-  if (parts.length === 0) return true
-  const lastPart = parts[parts.length - 1] as JsonObject
-  if (lastPart.type === 'step-start') return true
-  if ('toolCallId' in lastPart && lastPart.state === 'output-available') return true
-  if ('toolCallId' in lastPart && lastPart.state === 'output-error') return true
-  return s === 'submitted'
+// Counted off the run rather than off the last assistant message. A build
+// restarted after marker feedback writes a second assistant message, so the
+// restart remains an implementation detail and does not reset the visible step.
+const currentStep = computed(() => currentRunStepNumber())
+
+const activityText = computed(() => {
+  if (agentActivity.metaAgentTasks > 0) return "Reviewing the current agent's reasoning…"
+  if (!logicallyRunning.value) return null
+  if (agentTurn.paused) return 'Waiting for your feedback…'
+  if (currentStep.value === 0) return 'Starting the task…'
+  return `Working on step ${currentStep.value}…`
 })
 
-// Counted off the run rather than off the last assistant message. A build
-// restarted after marker feedback writes a second assistant message, so
-// counting `step-start` parts there would send the bar back to zero half way
-// through — the restart is an implementation detail and must not show.
-const currentStep = computed(() => currentRunSteps())
+const activityIsProcessing = computed(
+  () => agentActivity.metaAgentTasks > 0 || (logicallyRunning.value && !agentTurn.paused)
+)
 
-const showStepBar = computed(() => isRunning.value)
+const showStepBar = computed(() => logicallyRunning.value)
+
+function beginRetryHandoff(): number {
+  const token = nextRetryHandoffToken++
+  retryHandoffToken.value = token
+  setTurnRunning(true)
+  return token
+}
+
+function finishRetryHandoff(token: number): void {
+  if (retryHandoffToken.value !== token) return
+  retryHandoffToken.value = null
+  setTurnRunning(isRunning.value)
+}
 
 const showContinue = computed(() => {
   if (status.value !== 'ready') return false
@@ -112,6 +143,7 @@ function scrollToBottom() {
 }
 
 watch(messages, scrollToBottom, { deep: true })
+watch(activityText, scrollToBottom)
 watch(
   () => chat.value?.error,
   (error) => {
@@ -130,6 +162,7 @@ watch(
 watch(
   isRunning,
   (running) => {
+    if (!running && retryHandoffToken.value !== null) return
     setTurnRunning(running)
     if (running) return
     reportPassedMarks()
@@ -142,7 +175,10 @@ watch(
 )
 
 onMounted(() => showAgentCursor(getActiveEditorStore()))
-onUnmounted(() => hideAgentCursor(getActiveEditorStore()))
+onUnmounted(() => {
+  hideAgentCursor(getActiveEditorStore())
+  setStepFeedbackHandler(null)
+})
 
 async function handleSubmit(text: string) {
   // Mid-run: route to the intervention queue instead of a new chat turn, and
@@ -183,7 +219,7 @@ async function handleSubmit(text: string) {
  * every hold, so a run stopped mid-hold cannot leave the app paused forever.
  */
 function handleStop() {
-  abandonTurn()
+  abandonTurn('stop button')
   void chat.value?.stop()
   releaseAnswerHold()
 }
@@ -217,7 +253,7 @@ async function handleMarkResume() {
   const store = getActiveEditorStore()
   const wasRunning = isRunning.value
   const request = currentMetaRequest()
-  const step = currentRunSteps(store)
+  const step = currentRunStepNumber(store)
   const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), takeAnswers(store))
 
   // `abandonTurn` before the stop, not after. Aborting the request does not
@@ -225,8 +261,10 @@ async function handleMarkResume() {
   // for the hold to lift, and lifting it is what sends it through. This says the
   // turn is being thrown away, so the transform drops it instead.
   if (wasRunning && hasContent(report)) {
-    abandonTurn()
+    const handoffToken = beginRetryHandoff()
+    abandonTurn('marker feedback restart')
     await chat.value?.stop()
+    if (!chat.value) finishRetryHandoff(handoffToken)
   }
   releaseAnswerHold()
 
@@ -264,7 +302,22 @@ async function handleMarkResume() {
   // opening message of the restarted turn — so without this the one thing the
   // agent is told about the interruption never appears on the timeline.
   logUserMessage(text)
-  chat.value?.sendMessage({ text }).catch((e: unknown) => {
+  const activeChat = chat.value
+  if (!activeChat) {
+    const token = retryHandoffToken.value
+    if (token !== null) finishRetryHandoff(token)
+    return
+  }
+  const handoffToken = retryHandoffToken.value
+  const retry = activeChat.sendMessage({ text })
+  if (handoffToken !== null) {
+    void retry.then(
+      () => finishRetryHandoff(handoffToken),
+      () => undefined
+    )
+  }
+  retry.catch((e: unknown) => {
+    if (handoffToken !== null) finishRetryHandoff(handoffToken)
     console.error('Chat error:', e)
     toast.error(e instanceof Error ? e.message : String(e))
   })
@@ -273,6 +326,87 @@ async function handleMarkResume() {
 setMarkResumeHandler(() => {
   void handleMarkResume()
 })
+
+async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
+  // Durable and independent from the task-agent branch below: implicit notes
+  // proceed, explicit notes retry, but both are evidence for the user model.
+  void observeFeedbackNotes(userModelFeedbackBatch(result))
+
+  if (!hasExplicitStepFeedback(result)) {
+    logFeedbackStep(
+      result.step,
+      'proceed',
+      `notes=${result.outcomes.length} implicit=${result.outcomes.length} explicit=0; releasing held tool stream`
+    )
+    logMarkAnswer('passed', `${result.outcomes.length} feedback notes implicitly accepted`)
+    resumeTurn('feedback-note')
+    return
+  }
+
+  const store = getActiveEditorStore()
+  const wasRunning = isRunning.value
+  const request = currentMetaRequest()
+  if (!wasRunning) {
+    logFeedbackStep(
+      result.step,
+      'retry',
+      'explicit feedback arrived after the run ended; no held tool stream to replace'
+    )
+    resumeTurn('feedback-note')
+    return
+  }
+
+  const explicitOutcomes = result.outcomes.filter(
+    (outcome) => outcome.resolution === 'explicit-feedback'
+  )
+  const feedbackItems = explicitOutcomes.reduce(
+    (count, outcome) => count + outcome.feedbackItems.length,
+    0
+  )
+  logFeedbackStep(
+    result.step,
+    'retry',
+    `notes=${result.outcomes.length} implicit=${result.outcomes.length - explicitOutcomes.length} explicit=${explicitOutcomes.length} feedback-items=${feedbackItems}; discarding held tool stream before action`
+  )
+
+  const handoffToken = beginRetryHandoff()
+  abandonTurn('feedback note retry')
+  await chat.value?.stop()
+  if (chat.value) chat.value.messages = withoutDanglingToolCalls(chat.value.messages)
+  continueRunSteps(store)
+  noteUserRequest(request)
+  beginFeedbackReplay(result.step)
+  forgetAbandonedTurn()
+
+  const text = renderStepFeedbackReport(result, request)
+  logFeedbackStep(
+    result.step,
+    'report',
+    `reasoning-chunks=${result.reasoningChunks.length} notes=${result.outcomes.length} feedback-items=${feedbackItems} chars=${text.length}; sending retry context`
+  )
+  logMarkAnswer(
+    'resumed',
+    `${explicitOutcomes.length} corrected, step ${result.step} retrying without notes`
+  )
+  logUserMessage(text)
+  const activeChat = chat.value
+  if (!activeChat) {
+    finishRetryHandoff(handoffToken)
+    return
+  }
+  const retry = activeChat.sendMessage({ text, metadata: { internal: 'feedback-step-retry' } })
+  void retry.then(
+    () => finishRetryHandoff(handoffToken),
+    () => undefined
+  )
+  retry.catch((error: unknown) => {
+    finishRetryHandoff(handoffToken)
+    console.error('Feedback retry error:', error)
+    toast.error(error instanceof Error ? error.message : String(error))
+  })
+}
+
+setStepFeedbackHandler(handleStepFeedback)
 
 async function handleCopyDebug() {
   await copyChatLog(messages.value)
@@ -300,21 +434,15 @@ function handleClearChat() {
     <ProviderSetup v-if="!isConfigured" />
 
     <template v-else>
-      <!-- Agent loop progress — pinned above the scrollable messages -->
+      <!-- Agent loop step — pinned above the scrollable messages -->
       <div
         v-if="showStepBar"
         data-test-id="chat-step-bar"
-        class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+        class="flex shrink-0 items-center border-b border-border px-3 py-1.5"
       >
         <span class="shrink-0 text-[10px] tabular-nums text-muted">
-          Step {{ currentStep }} / {{ MAX_AGENT_STEPS }}
+          Step {{ currentStep }}
         </span>
-        <div class="h-1 flex-1 overflow-hidden rounded-full bg-hover">
-          <div
-            class="h-full rounded-full bg-accent transition-[width] duration-300"
-            :style="{ width: `${Math.min(100, (currentStep / MAX_AGENT_STEPS) * 100)}%` }"
-          />
-        </div>
       </div>
 
       <ScrollAreaRoot class="min-h-0 flex-1">
@@ -331,31 +459,29 @@ function handleClearChat() {
 
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
-            <ChatMessage v-for="msg in messages" :key="msg.id" :message="msg" />
+            <ChatMessage v-for="msg in visibleMessages" :key="msg.id" :message="msg" />
 
             <!-- Mid-run messages the user queued while the agent is working -->
             <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />
 
-            <!-- Thinking indicator: shown when AI is working but no visible activity -->
-            <div v-if="isThinking" data-test-id="chat-typing-indicator" class="flex gap-2">
+            <!-- Persistent run activity, including background Meta Agent review. -->
+            <div
+              v-if="activityText"
+              data-test-id="chat-activity-indicator"
+              class="flex items-center gap-2 py-1"
+            >
               <div
-                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted/20 text-[10px] font-bold text-muted"
+                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent"
               >
-                AI
+                <icon-lucide-sparkles class="size-3.5" />
               </div>
-              <div class="flex items-center gap-1 py-2">
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 0ms"
+              <div class="flex items-center gap-1.5 text-xs text-muted">
+                <icon-lucide-loader-circle
+                  v-if="activityIsProcessing"
+                  class="size-3.5 animate-spin text-accent"
                 />
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 150ms"
-                />
-                <span
-                  class="size-1.5 animate-bounce rounded-full bg-muted"
-                  style="animation-delay: 300ms"
-                />
+                <icon-lucide-pause v-else class="size-3.5" />
+                <span>{{ activityText }}</span>
               </div>
             </div>
 

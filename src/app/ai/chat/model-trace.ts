@@ -48,14 +48,17 @@ type StreamPart =
  */
 interface ReasoningObserver {
   /** A fresh block of thinking has begun; whatever came before is finished. */
-  start(): void
-  /** Everything thought in this block so far. */
-  chunk(reasoningSoFar: string): void
+  start(streamId: number): void
+  /** One provider chunk and everything thought in this block so far. */
+  chunk(streamId: number, reasoningChunk: string, reasoningSoFar: string): void
+  /** The completed block, before the agent's action is released. */
+  end(streamId: number, reasoning: string): void
   /** Resolves once the watcher has finished answering everything it has been
    * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
-  settled(): Promise<void>
+  settled(streamId: number): Promise<void>
 }
 let observeReasoning: ReasoningObserver | null = null
+let nextStreamId = 1
 
 export function setReasoningObserver(observer: ReasoningObserver): void {
   observeReasoning = observer
@@ -105,30 +108,10 @@ const BEFORE_ACTION_MS = 900
  */
 const BETWEEN_THOUGHTS_MS = 2500
 
-/**
- * How long the tool call waits for the watcher to finish reading the thinking
- * that led to it.
- *
- * The point is an ordering guarantee: a mark about a decision has to be on
- * screen before the decision lands, or the person is being warned about
- * something that already happened. The beats alone do not give that — an answer
- * takes three to five seconds and the beats add up to 3.4 — so this waits for
- * the answer itself.
- *
- * The ceiling is there because the watcher is a model call and can hang. Past
- * it the run goes on without the mark, which is the old behaviour rather than
- * a stuck canvas.
- */
-const SETTLE_TIMEOUT_MS = 8000
-
 function beat(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
-  return Promise.race([promise, beat(ms)])
 }
 
 let lastSystem: string | null = null
@@ -151,13 +134,22 @@ const middleware: LanguageModelMiddleware = {
   wrapStream: async ({ doStream, params }) => {
     traceSystemPrompt(params)
     const { stream, ...rest } = await doStream()
+    const streamId = nextStreamId++
 
     // Reasoning goes to observers per delta but to the log per block, since one
     // line per delta would be unreadable there. It is deliberately not mirrored
     // into the canvas speech bubble; the meta-agent still needs the stream, but
     // exposing the model's private work there adds visual noise.
     let thinking = ''
+    let reasoningClosed = false
     let text = ''
+    const closeReasoning = (): void => {
+      if (reasoningClosed) return
+      observeReasoning?.end(streamId, thinking)
+      reasoningClosed = true
+      logThinking(thinking)
+      thinking = ''
+    }
     // Repeats collapsed to a count — a step is mostly deltas, and the question
     // this answers is which part types arrive and in what order.
     const shape: string[] = []
@@ -173,20 +165,43 @@ const middleware: LanguageModelMiddleware = {
     // buffered behind the hold belongs to a step that is being done again, so
     // none of it may reach the tool executor.
     let dropped = false
+    let sawToolInput = false
+    let finalReviewSettled = false
+
+    /**
+     * A text-only final step has no `tool-input-start`, so `before-action`
+     * cannot hold it. Treat the final response as the step's commit point: its
+     * reasoning must be reviewed and any Note resolved before the response or
+     * finish chunk is allowed through.
+     */
+    const awaitFinalReview = async (): Promise<boolean> => {
+      if (sawToolInput || finalReviewSettled) return true
+      if (thinking.trim() !== '') closeReasoning()
+      if (observeReasoning) await observeReasoning.settled(streamId)
+      if (!(await awaitTurnResume('before-final-response'))) {
+        dropped = true
+        logTurnAbandoned('stream dropped before final response — response not shown')
+        return false
+      }
+      finalReviewSettled = true
+      return true
+    }
+
     const tap = new TransformStream<StreamPart, StreamPart>({
       async transform(chunk, controller) {
         if (dropped) return
         seen(chunk.type)
         if (chunk.type === 'reasoning-start') {
           thinking = ''
-          observeReasoning?.start()
+          reasoningClosed = false
+          observeReasoning?.start(streamId)
         } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
           // Everything so far, not the delta: a watcher judging where the
           // thought has arrived cannot do it from half a sentence. Not awaited
           // — it answers on its own clock, and the beat below is what gives it
           // room, not this call.
-          observeReasoning?.chunk(thinking)
+          observeReasoning?.chunk(streamId, chunk.delta, thinking)
           await beat(BETWEEN_THOUGHTS_MS)
           // The step boundary is the other place the turn can be held, and it
           // can be twenty seconds away. Someone who points at a marker while the
@@ -198,13 +213,17 @@ const middleware: LanguageModelMiddleware = {
             return
           }
         } else if (chunk.type === 'reasoning-end') {
-          logThinking(thinking)
-          thinking = ''
+          closeReasoning()
           // Keep a short beat before the agent switches from thinking to
           // speaking, without waiting on a hidden bubble animation.
           await beat(AFTER_THINKING_MS)
-        } else if (chunk.type === 'text-start') text = ''
-        else if (chunk.type === 'text-delta') text += chunk.delta
+        } else if (chunk.type === 'text-start') {
+          if (!(await awaitFinalReview())) {
+            controller.terminate()
+            return
+          }
+          text = ''
+        } else if (chunk.type === 'text-delta') text += chunk.delta
         else if (chunk.type === 'text-end') {
           logAgentText(text)
           // Replaces the muted thinking line with what the agent actually
@@ -212,6 +231,8 @@ const middleware: LanguageModelMiddleware = {
           sayAgent(text)
           text = ''
         } else if (chunk.type === 'tool-input-start') {
+          sawToolInput = true
+          if (thinking.trim() !== '') closeReasoning()
           // Nothing downstream has run yet — holding the chunk here holds the
           // tool call itself, so the canvas doesn't change until the line
           // announcing it has been up long enough to read.
@@ -220,7 +241,7 @@ const middleware: LanguageModelMiddleware = {
           // Then for the watcher's verdict on the thinking that led here, so
           // its marks are up before the thing they are about lands.
           if (observeReasoning) {
-            await withTimeout(observeReasoning.settled(), SETTLE_TIMEOUT_MS)
+            await observeReasoning.settled(streamId)
           }
           // Last point at which the canvas is still untouched by this step.
           // After the wait above, so a mark that only just appeared still gets
@@ -232,6 +253,9 @@ const middleware: LanguageModelMiddleware = {
             controller.terminate()
             return
           }
+        } else if (chunk.type === 'finish' && !(await awaitFinalReview())) {
+          controller.terminate()
+          return
         }
         controller.enqueue(chunk)
       },

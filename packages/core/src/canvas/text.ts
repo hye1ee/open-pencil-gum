@@ -139,7 +139,14 @@ function resolveParagraphFontFamilies(
   const cached = fontFamilyCache.get(key)
   if (cached) return cached
 
+  // Exact faces are registered under an internal family so CanvasKit cannot
+  // silently substitute a different weight. Keep the public family directly
+  // behind it, though: provider recreation or a rejected internal
+  // registration must not turn otherwise valid text into tofu glyphs. This is
+  // especially important for bundled Inter, where the old code supplied only
+  // the internal family and therefore had no recovery path at all.
   const families = [renderPrimary]
+  if (renderPrimary !== primary) families.push(primary)
   if (primary !== DEFAULT_FONT_FAMILY) families.push(DEFAULT_FONT_FAMILY)
   families.push(...arabicFallbacks, ...cjkFallbacks)
 

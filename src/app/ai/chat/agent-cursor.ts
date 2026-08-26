@@ -1,6 +1,7 @@
-import { AI_ACTIVE_COLOR, AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
+import { AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
+import { metaAgentIsWorking } from '@/app/ai/chat/agent-activity'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import type { EditorStore } from '@/app/editor/active-store'
@@ -17,10 +18,9 @@ import type { EditorStore } from '@/app/editor/active-store'
  * orbit to feel alive, but a cursor circling on its own — including between
  * actions, which is most of a step — reads as a loading spinner.
  *
- * So the sign that it is working is carried by colour and a halo rather than by
- * motion: while a turn is advancing the arrow beats between its resting violet
- * and the blue the agent already uses on the node it is touching. Position stays
- * honest — it points where the work is, and stands still when there is none.
+ * So the sign that it is working is a soft halo rather than motion. The arrow
+ * keeps its resting violet and its position stays honest — it points where the
+ * work is, and stands still when there is none.
  *
  * Nothing here answers the pointer. The cursor used to be draggable, and
  * grabbing it paused the turn; pointing at a mismatch marker does that now, and
@@ -46,9 +46,8 @@ const FOLLOW = 0.08 // easing toward the goal per frame
 const ENERGY_FOLLOW = 0.06
 
 /**
- * Peak halo at full pulse. Kept low because the arrow is nine pixels and the
- * renderer scales it with the same number — a bigger swell drags the nameplate
- * around with it, which reads as jitter rather than breathing.
+ * Peak halo at full pulse. The renderer keeps the arrow and nameplate fixed;
+ * this value changes only the glow intensity.
  */
 const WORKING_EMPHASIS = 0.5
 
@@ -59,15 +58,6 @@ interface AgentCursorState {
   energy: number
   rafId: number
   active: boolean
-}
-
-function mixColor(from: Color, to: { r: number; g: number; b: number }, t: number): Color {
-  return {
-    r: from.r + (to.r - from.r) * t,
-    g: from.g + (to.g - from.g) * t,
-    b: from.b + (to.b - from.b) * t,
-    a: 1
-  }
 }
 
 const states = new WeakMap<EditorStore, AgentCursorState>()
@@ -113,10 +103,10 @@ function frame(store: EditorStore, state: AgentCursorState): void {
     state.cur.y += (goal.y - state.cur.y) * FOLLOW
   }
 
-  // Working means a turn is actually advancing, not merely open. A held turn has
-  // stopped for the person to read a marker, and a cursor still pulsing through
-  // that would contradict the frozen position right above.
-  const working = agentTurn.running && !agentTurn.paused
+  // A feedback hold freezes position, but it is still the same active agent
+  // turn. Keep the working colour through the review so showing a Note does not
+  // make the cursor briefly look idle or disconnected from the task.
+  const working = agentTurn.running || agentTurn.paused || metaAgentIsWorking()
   state.energy += ((working ? 1 : 0) - state.energy) * ENERGY_FOLLOW
 
   if (!state.cur) {
@@ -131,25 +121,45 @@ function frame(store: EditorStore, state: AgentCursorState): void {
 
   store.state.agentCursor = {
     name: 'Agent',
-    // Toward the blue the agent already uses to mark what it is touching, so
-    // "this is the agent working" is one colour across the canvas.
-    color: mixColor(RESTING_COLOR, AI_ACTIVE_COLOR, beat),
+    color: RESTING_COLOR,
     x: state.cur.x,
     y: state.cur.y,
-    emphasis: beat * WORKING_EMPHASIS
+    emphasis: beat * WORKING_EMPHASIS,
+    working: state.energy,
+    appearance: 'agent'
   }
   store.requestRepaint()
 
   next()
 }
 
+function agentCursorNodeAnchor(store: EditorStore, nodeId: string): Vector | null {
+  const node = store.graph.getNode(nodeId)
+  if (!node) return null
+  const pos = store.graph.getAbsolutePosition(nodeId)
+  return { x: pos.x + node.width / 2, y: pos.y + node.height / 2 }
+}
+
 /** Point the agent cursor at a node (called as the agent touches nodes). */
 export function setAgentCursorTarget(store: EditorStore, nodeId: string): void {
-  const node = store.graph.getNode(nodeId)
-  if (!node) return
-  const pos = store.graph.getAbsolutePosition(nodeId)
+  const anchor = agentCursorNodeAnchor(store, nodeId)
+  if (!anchor) return
   const state = getState(store)
-  state.nodeAnchor = { x: pos.x + node.width / 2, y: pos.y + node.height / 2 }
+  state.nodeAnchor = anchor
+}
+
+/**
+ * Move immediately to the decision a Feedback Note is holding for review.
+ * A normal target eases while the agent works, but the turn is already paused
+ * by the time a Note has a node, so easing would leave the cursor frozen at its
+ * previous task position.
+ */
+export function focusAgentCursorTarget(store: EditorStore, nodeId: string): void {
+  const anchor = agentCursorNodeAnchor(store, nodeId)
+  if (!anchor) return
+  const state = getState(store)
+  state.nodeAnchor = anchor
+  state.cur = { ...anchor }
 }
 
 /** Show the agent cursor and keep it alive (idempotent). */

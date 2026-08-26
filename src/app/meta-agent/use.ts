@@ -1,6 +1,3 @@
-import { generateText } from 'ai'
-import type { LanguageModel } from 'ai'
-
 import { setPreviewSettledObserver } from '@/app/ai/chat/action-preview'
 import {
   logJudgeError,
@@ -11,15 +8,12 @@ import {
   logMarkTool
 } from '@/app/ai/chat/agent-log'
 import { setMarkDismissedObserver, setMarks } from '@/app/ai/chat/mismatch'
-import { createUntracedLanguageModel } from '@/app/ai/chat/model'
-import { setReasoningObserver } from '@/app/ai/chat/model-trace'
-import {
-  backgroundProviderOptions,
-  isSlotConfigured,
-  modelConfigForSlot
-} from '@/app/ai/model-routing'
+import { isSlotConfigured } from '@/app/ai/model-routing'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
+import { resetFeedbackNoteHistory, resetFeedbackNotes } from '@/app/feedback-note/use'
+import { callMetaAgent } from '@/app/meta-agent/call'
+import { compareReasoningWithUserModel } from '@/app/meta-agent/comparison/use'
 import {
   actionsSoFar,
   propositionsForRun,
@@ -36,32 +30,28 @@ import {
   signed,
   type AppliedMarkTool,
   type Mark,
-  type MarkToolCall,
   type MetaAgent,
   type Proposition,
   type SettledNote
 } from '@/app/meta-agent/judge'
 import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
+import {
+  installReasoningObserver,
+  resetFeedbackNoteStreams
+} from '@/app/meta-agent/reasoning-observer'
 import { forgetReportedMarks } from '@/app/meta-agent/report'
-import { MARK_TOOLS } from '@/app/meta-agent/tools'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
+import { propositions as currentUserModelPropositions } from '@/app/user-model/store'
 import { awaitUserModelSettled } from '@/app/user-model/use'
-
-/** The app-specific half of the meta-agent: which model it calls, how the canvas
- * is described to it, and where its judgment lands. `judge.ts` knows none of it. */
-
-/** Reasoning shares this budget on Gemini, and the answer is a short list. */
-const JUDGE_MAX_TOKENS = 2048
-
-/** Wants a cheap model, and more than that a different one: a judge on the same
- * model is blind to whatever that model is blind to. `VITE_MODEL_META_AGENT`. */
-function judgeModel(): LanguageModel {
-  return createUntracedLanguageModel(modelConfigForSlot('meta-agent'))
-}
 
 let agent: MetaAgent | null = null
 let request = ''
 let runPropositions: Proposition[] = []
+let runStore: EditorStore | null = null
+const feedbackNotesEnabled = import.meta.env.VITE_FEEDBACK_NOTE_EXPERIMENT === 'true'
+const comparisonShadowEnabled =
+  import.meta.env.DEV && import.meta.env.VITE_META_COMPARISON_SHADOW === 'true'
+let comparisonShadowTask: Promise<void> = Promise.resolve()
 
 /** One line per mark. The quoted words are the only way to tell a mark that
  * answers the reasoning from one the model reached for. */
@@ -90,20 +80,7 @@ function ensureAgent(store: EditorStore): MetaAgent {
     deps: {
       system: JUDGE_SYSTEM,
       render: renderJudgePrompt,
-      judge: async ({ system, prompt }) => {
-        const result = await generateText({
-          model: judgeModel(),
-          system,
-          maxOutputTokens: JUDGE_MAX_TOKENS,
-          providerOptions: backgroundProviderOptions('meta-agent'),
-          prompt,
-          tools: MARK_TOOLS,
-          toolChoice: 'auto'
-        })
-        return result.staticToolCalls.map(
-          (call): MarkToolCall => ({ toolName: call.toolName, input: call.input })
-        )
-      }
+      judge: ({ system, prompt }) => callMetaAgent(system, prompt)
     },
     onChanged: (marks, from) => {
       // Length off the input this answer was made from: answers land out of
@@ -144,23 +121,33 @@ export function noteSettledMarks(notes: SettledNote[]): void {
 
 /** A new turn: what the user asked for, and a clean slate. */
 export async function startMetaAgentTurn(store: EditorStore, userText: string): Promise<void> {
+  runStore = store
   // A restart keeps the same request, so a changed one is what says the last
   // build's answers no longer describe what is being built.
   if (userText !== request) {
     settled = []
     forgetReportedMarks()
+    resetFeedbackNoteHistory()
   }
   request = userText
   noteAgentPlan(null)
   // A restart after a marker answer has a revision in flight; reading early
   // would judge the redone step against the belief just corrected.
   await awaitUserModelSettled()
-  // Held for the turn: the capture pipeline writes to disk while the agent
-  // works, and a model that grows mid-run makes two steps incomparable.
-  runPropositions = propositionsForRun(await loadSavedUserModel())
+  // Held for the turn. Prefer the in-memory model: feedback revision updates it
+  // synchronously, while persistence is intentionally disabled for fixtures
+  // and otherwise finishes in the background. Disk is only the cold-start
+  // fallback before anything has populated the store.
+  const inMemory = currentUserModelPropositions.value
+  const userModel = inMemory.length > 0 ? inMemory : await loadSavedUserModel()
+  runPropositions = propositionsForRun(userModel)
   const withheld = runPropositions.filter((p) => !p.shownToAgent).length
   logJudgeLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
-  ensureAgent(store).beginTurn()
+  resetFeedbackNotes()
+  resetFeedbackNoteStreams()
+  comparisonShadowTask = Promise.resolve()
+  if (feedbackNotesEnabled) setMarks(store, [])
+  else ensureAgent(store).beginTurn()
 }
 
 // Hung off the preview rather than the tool call: the preview is the window
@@ -178,20 +165,28 @@ setMarkDismissedObserver((id) => {
 })
 
 // Registered here because the tap must not import anything that builds a model.
-setReasoningObserver({
-  start: () => {
-    agent?.beginStep()
+installReasoningObserver({
+  feedbackNotesEnabled,
+  getStore: () => runStore,
+  getRequest: () => request,
+  getPlan: currentPlan,
+  getPropositions: () => runPropositions,
+  onOrdinaryStart: () => agent?.beginStep(),
+  onOrdinaryChunk: considerReasoning,
+  onReasoningEnd: (reasoning) => {
+    if (comparisonShadowEnabled && reasoning.trim() !== '') {
+      comparisonShadowTask = comparisonShadowTask.then(() =>
+        compareReasoningWithUserModel({ request, reasoning, propositions: runPropositions })
+      )
+    }
   },
-  chunk: (reasoning) => {
-    considerReasoning(reasoning)
-  },
-  settled: () => agent?.settled() ?? Promise.resolve()
+  ordinarySettled: () => agent?.settled() ?? Promise.resolve()
 })
 
 /** Standing marks plus retired ones. Not the marks the meta-agent withdrew,
  * which were never the person's to accept. */
 export function marksAwaitingAnswer(): Mark[] {
-  return agent?.answerable ?? []
+  return feedbackNotesEnabled ? [] : (agent?.answerable ?? [])
 }
 
 /** So a turn restarted after feedback keeps the request rather than treating

@@ -10,6 +10,58 @@ import { PEN_HANDLE_RADIUS, PEN_VERTEX_RADIUS, PEN_CLOSE_RADIUS_BOOST } from '#c
 import type { SkiaRenderer, RenderOverlays } from './renderer'
 
 type ToScreenFn = (x: number, y: number) => Vector
+type RemoteCursor = NonNullable<RenderOverlays['remoteCursors']>[number]
+
+function cursorWorking(cursor: RemoteCursor): number {
+  if (cursor.appearance !== 'agent') return 1
+  return cursor.working ?? 0
+}
+
+function cursorColorChannel(channel: number, cursor: RemoteCursor, working: number): number {
+  if (cursor.appearance !== 'agent') return channel
+  const idle = 0.08
+  return idle + (channel - idle) * working
+}
+
+function buildRemoteCursorPath(
+  r: SkiaRenderer,
+  screenX: number,
+  screenY: number,
+  size: number,
+  agentAppearance: boolean
+): InstanceType<typeof r.ck.Path> {
+  const path = new r.ck.Path()
+  if (agentAppearance) {
+    // Exact geometry from Cursor-Pointer--Streamline-Iconoir.svg. The source
+    // uses a 16 × 16 viewBox; scale it around the cursor's upper-left bound.
+    const unit = size / 10
+    const x = (value: number) => screenX + (value - 0.5) * unit
+    const y = (value: number) => screenY + (value - 0.5) * unit
+
+    path.moveTo(x(2.88), y(0.96))
+    path.lineTo(x(12.68), y(4.94))
+    path.cubicTo(x(13.9), y(5.43), x(14.02), y(6.78), x(13.128_062_5), y(7.286_562_5))
+    path.lineTo(x(9.05), y(8.46))
+    // Round the concave inner shoulder too, not only the three outer corners.
+    path.cubicTo(x(8.48), y(8.62), x(8.2), y(8.94), x(7.93), y(9.52))
+    path.lineTo(x(6.05), y(13.37))
+    path.cubicTo(x(5.82), y(13.84), x(5.58), y(14.16), x(5.24), y(14.34))
+    path.cubicTo(x(4.45), y(14.76), x(3.45), y(14.26), x(3.28), y(13.45))
+    path.lineTo(x(1.3), y(3.02))
+    path.cubicTo(x(1.12), y(2.22), x(1.12), y(1.76), x(1.48), y(1.35))
+    path.cubicTo(x(1.82), y(0.96), x(2.3), y(0.72), x(2.88), y(0.96))
+  } else {
+    path.moveTo(screenX, screenY)
+    path.lineTo(screenX, screenY + size * 1.35)
+    path.lineTo(screenX + size * 0.38, screenY + size * 1.0)
+    path.lineTo(screenX + size * 0.72, screenY + size * 1.5)
+    path.lineTo(screenX + size * 0.92, screenY + size * 1.38)
+    path.lineTo(screenX + size * 0.58, screenY + size * 0.88)
+    path.lineTo(screenX + size * 1.0, screenY + size * 0.82)
+  }
+  path.close()
+  return path
+}
 
 /** Build a CanvasKit Path from pen state segments */
 function buildSegmentsPath(
@@ -249,48 +301,40 @@ export function drawRemoteCursors(
       }
     }
 
-    // Swells the arrow and lifts a soft halo behind it. The agent cursor beats
-    // this while it is working; the swell is why the label offsets below track
-    // `S` rather than `CURSOR_SIZE`, or the arrow would grow into its nameplate.
+    // Keep the arrow still and pulse only its halo. Scaling the cursor made both
+    // the pointer and its nameplate look restless while the agent was working.
     const emphasis = cursor.emphasis ?? 0
-    const S = CURSOR_SIZE * (1 + 0.3 * emphasis)
+    const agentAppearance = cursor.appearance === 'agent'
+    const working = cursorWorking(cursor)
+    const S = CURSOR_SIZE + Number(agentAppearance) * 3
 
-    if (emphasis > 0.01) {
-      r.auxFill.setColor(r.ck.Color4f(cr, g, b, 0.2 * emphasis))
-      canvas.drawCircle(
-        screenX + S * 0.45,
-        screenY + S * 0.6,
-        S * (1.3 + 0.5 * emphasis),
-        r.auxFill
-      )
+    const haloAlpha = agentAppearance ? 0.06 + 0.22 * emphasis : 0.16 * emphasis
+    if (haloAlpha > 0.01) {
+      r.auxFill.setColor(r.ck.Color4f(cr, g, b, haloAlpha))
+      canvas.drawCircle(screenX + S * 0.45, screenY + S * 0.6, S * 1.6, r.auxFill)
     }
 
-    const path = new r.ck.Path()
-    path.moveTo(screenX, screenY)
-    path.lineTo(screenX, screenY + S * 1.35)
-    path.lineTo(screenX + S * 0.38, screenY + S * 1.0)
-    path.lineTo(screenX + S * 0.72, screenY + S * 1.5)
-    path.lineTo(screenX + S * 0.92, screenY + S * 1.38)
-    path.lineTo(screenX + S * 0.58, screenY + S * 0.88)
-    path.lineTo(screenX + S * 1.0, screenY + S * 0.82)
-    path.close()
+    const path = buildRemoteCursorPath(r, screenX, screenY, S, agentAppearance)
 
+    const cursorR = cursorColorChannel(cr, cursor, working)
+    const cursorG = cursorColorChannel(g, cursor, working)
+    const cursorB = cursorColorChannel(b, cursor, working)
+    r.auxFill.setColor(r.ck.Color4f(cursorR, cursorG, cursorB, 1))
+    canvas.drawPath(path, r.auxFill)
+
+    // Draw the border after the fill so the fill cannot cover its inner half.
     r.auxStroke.setColor(r.ck.Color4f(1, 1, 1, 1))
     r.auxStroke.setStrokeWidth(2)
     r.auxStroke.setPathEffect(null)
     canvas.drawPath(path, r.auxStroke)
-
-    r.auxFill.setColor(r.ck.Color4f(cr, g, b, 1))
-    canvas.drawPath(path, r.auxFill)
     path.delete()
 
     if (cursor.name) {
       const font = r.labelFont
       if (font) {
         font.setSize(LABEL_FONT_SIZE)
-        // Shift with the swell so a hovered arrow doesn't grow into its own label.
-        const labelX = screenX + LABEL_OFFSET_X + (S - CURSOR_SIZE)
-        const labelY = screenY + LABEL_OFFSET_Y + (S - CURSOR_SIZE)
+        const labelX = screenX + LABEL_OFFSET_X + Number(agentAppearance) * 5
+        const labelY = screenY + LABEL_OFFSET_Y + Number(agentAppearance) * 8
 
         // The attention count lives inside the nameplate rather than in a chip of
         // its own: the cursor, its name and what it is watching are one presence,
@@ -306,7 +350,7 @@ export function drawRemoteCursors(
 
         const boxTop = labelY - LABEL_FONT_SIZE - LABEL_PADDING_Y + 2
         const boxHeight = LABEL_FONT_SIZE + LABEL_PADDING_Y * 2
-        r.auxFill.setColor(r.ck.Color4f(cr, g, b, 1))
+        r.auxFill.setColor(r.ck.Color4f(cursorR, cursorG, cursorB, 1))
         const bgRect = r.ck.RRectXY(
           r.ck.XYWHRect(
             labelX - LABEL_PADDING_X,

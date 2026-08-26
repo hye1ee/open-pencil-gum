@@ -113,6 +113,92 @@ export interface FeedbackNote {
   reply: string | null
 }
 
+export type UserModelFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
+export type UserModelFeedbackResolution = 'explicit-feedback' | 'implicitly-accepted'
+
+export interface UserModelFeedbackPoint {
+  x: number
+  y: number
+}
+
+export interface UserModelFeedbackTarget {
+  id: string
+  label: string
+}
+
+interface TargetedUserModelFeedbackSelection {
+  target?: UserModelFeedbackTarget
+}
+
+export type UserModelFeedbackSelection =
+  | { type: 'none' }
+  | ({
+      type: 'region'
+      x: number
+      y: number
+      width: number
+      height: number
+    } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'point'; x: number; y: number } & TargetedUserModelFeedbackSelection)
+  | ({
+      type: 'arrow'
+      start: UserModelFeedbackPoint
+      end: UserModelFeedbackPoint
+    } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'sequence'; points: UserModelFeedbackPoint[] } & TargetedUserModelFeedbackSelection)
+  | ({ type: 'freehand'; points: UserModelFeedbackPoint[] } & TargetedUserModelFeedbackSelection)
+  | {
+      type: 'text'
+      text: string
+      source: 'cue' | 'reasoning' | 'proposition' | 'proposition-rationale'
+      start: number
+      end: number
+    }
+
+export interface UserModelFeedbackItem {
+  id: string
+  selection: UserModelFeedbackSelection
+  feedback: string
+  createdAt: number
+}
+
+export interface UserModelFeedbackNote {
+  noteId: string
+  chunk: number
+  topic: string
+  cue: string
+  representationGoal: string
+  relationship: UserModelFeedbackRelationship
+  reasoningEvidence: string
+  propositionIds: string[]
+  resolution: UserModelFeedbackResolution
+  feedbackItems: UserModelFeedbackItem[]
+}
+
+/** One reviewed step. Notes and the multiple feedback items attached to each
+ * note stay nested so the revision model does not mistake one gesture for
+ * agreement with every other part of the note. */
+export interface UserModelFeedbackBatch {
+  step: number | null
+  notes: UserModelFeedbackNote[]
+}
+
+export interface FeedbackRetrievalCandidate {
+  id: string
+  score: number
+}
+
+export interface FeedbackRetrievalNote {
+  noteId: string
+  directIds: string[]
+  embedding: FeedbackRetrievalCandidate[]
+}
+
+export interface FeedbackRetrievalTrace {
+  notes: FeedbackRetrievalNote[]
+  shownIds: string[]
+}
+
 export interface UserModelOptions {
   deps: UserModelDeps
   /** Frames per batch. Six at a five-second cadence is half a minute of work. */
@@ -140,6 +226,8 @@ export interface UserModelOptions {
   onRationaleDropped?: (reason: string) => void
   /** What was read out of an observation, before any of it was applied. */
   onCandidates?: (candidates: CandidateProposition[]) => void
+  /** Direct citations and embedding neighbours shown to FEEDBACK_SYSTEM. */
+  onFeedbackRetrieval?: (trace: FeedbackRetrievalTrace) => void
   onStage?: (stage: PipelineStage) => void
   /** A batch dropped because the screen had not moved, with how far it did. */
   onIdle?: (pixelChange: number) => void
@@ -161,6 +249,8 @@ export interface UserModel {
   /** Revised straight away, not batched: batching exists for frames on a timer,
    * and this arrives because the person said something. */
   observe(notes: FeedbackNote[]): Promise<void>
+  /** Interactive Feedback Notes in their current Step → Note → item shape. */
+  observeFeedback(batch: UserModelFeedbackBatch): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -210,6 +300,7 @@ interface RawReplyItem {
   confidence?: unknown
   decay?: unknown
   reasoning?: unknown
+  relation?: unknown
 }
 
 function isRawReplyItem(item: unknown): item is RawReplyItem {
@@ -240,25 +331,55 @@ interface RequestedRationale {
 interface RawRationaleItem {
   id?: unknown
   rationale?: unknown
+  purpose_evidence_quote?: unknown
   rationale_grounds?: unknown
   rationale_from?: unknown
 }
 
-function readRequestedRationales(raw: string): RequestedRationale[] {
-  return parseJsonArray(raw)
-    .map((item): RequestedRationale | null => {
-      if (typeof item !== 'object' || item === null) return null
-      const row = item as RawRationaleItem
-      const id = readString(row.id)
-      const rationale = readString(row.rationale)
-      const grounds = readString(row.rationale_grounds)
-      if (!id || !rationale || !grounds) return null
-      const from = Array.isArray(row.rationale_from)
-        ? row.rationale_from.map(readString).filter(Boolean)
-        : []
-      return { id, rationale, grounds, from }
-    })
-    .filter((op): op is RequestedRationale => op !== null)
+interface RequestedRationaleResult {
+  accepted: RequestedRationale[]
+  rejected: string[]
+}
+
+function readRequestedRationales(
+  raw: string,
+  feedback: UserModelFeedbackBatch
+): RequestedRationaleResult {
+  const explicitFeedback = feedback.notes.flatMap((note) =>
+    note.feedbackItems.map((item) => item.feedback)
+  )
+  const accepted: RequestedRationale[] = []
+  const rejected: string[] = []
+  for (const [index, item] of parseJsonArray(raw).entries()) {
+    if (typeof item !== 'object' || item === null) {
+      rejected.push(`entry ${index + 1}: not an object`)
+      continue
+    }
+    const row = item as RawRationaleItem
+    const id = readString(row.id)
+    const rationale = readString(row.rationale)
+    const purposeEvidenceQuote = readString(row.purpose_evidence_quote)
+    const grounds = readString(row.rationale_grounds)
+    const missing = [
+      !id ? 'id' : '',
+      !rationale ? 'rationale' : '',
+      !purposeEvidenceQuote ? 'purpose_evidence_quote' : '',
+      !grounds ? 'rationale_grounds' : ''
+    ].filter(Boolean)
+    if (missing.length > 0) {
+      rejected.push(`entry ${index + 1}: missing ${missing.join(', ')}`)
+      continue
+    }
+    if (!explicitFeedback.some((text) => text.includes(purposeEvidenceQuote))) {
+      rejected.push(`entry ${index + 1}: purpose quote is not an exact feedback substring`)
+      continue
+    }
+    const from = Array.isArray(row.rationale_from)
+      ? row.rationale_from.map(readString).filter(Boolean)
+      : []
+    accepted.push({ id, rationale, grounds, from })
+  }
+  return { accepted, rejected }
 }
 
 function readCandidatePropositions(raw: string): CandidateProposition[] {
@@ -286,7 +407,23 @@ interface RequestedRevision {
   confidence: number
   decay: number
   reasoning: string
+  relation?: FeedbackClaimRelation
 }
+
+type FeedbackClaimRelation =
+  | 'confirmation'
+  | 'same_claim_refinement'
+  | 'contextual_exception'
+  | 'contradiction'
+  | 'new_claim'
+
+const FEEDBACK_CLAIM_RELATIONS = new Set<FeedbackClaimRelation>([
+  'confirmation',
+  'same_claim_refinement',
+  'contextual_exception',
+  'contradiction',
+  'new_claim'
+])
 
 function readRequestedRevisions(raw: string): RequestedRevision[] {
   return parseJsonArray(raw)
@@ -300,10 +437,27 @@ function readRequestedRevisions(raw: string): RequestedRevision[] {
         text,
         confidence: readScore(item.confidence, 0.5),
         decay: readScore(item.decay, 0.5),
-        reasoning: readString(item.reasoning)
+        reasoning: readString(item.reasoning),
+        relation: FEEDBACK_CLAIM_RELATIONS.has(readString(item.relation) as FeedbackClaimRelation)
+          ? (readString(item.relation) as FeedbackClaimRelation)
+          : undefined
       }
     })
     .filter((op): op is RequestedRevision => op !== null)
+}
+
+function validFeedbackRevision(revision: RequestedRevision, propositions: Proposition[]): boolean {
+  const relation = revision.relation
+  if (!relation) return false
+  const existing = revision.id === null ? undefined : propositions.find((p) => p.id === revision.id)
+  if (revision.id !== null && !existing) return false
+  if (relation === 'confirmation') {
+    return existing?.text === revision.text
+  }
+  if (relation === 'same_claim_refinement') return existing !== undefined
+  if (relation === 'new_claim') return revision.id === null
+  if (relation === 'contextual_exception') return revision.id === null
+  return true
 }
 
 // ---------------------------------------------------------------- retrieval
@@ -352,11 +506,16 @@ export function ageInDecayUnits(isoTimestamp: string, now: number): number {
 
 /** Discounted by how stale each expects to be, so tomorrow's candidate is
  * compared against what persists rather than against yesterday's noise. */
-function nearestPropositions(
+interface ScoredProposition {
+  proposition: Proposition
+  score: number
+}
+
+function nearestPropositionScores(
   embedding: number[],
   propositions: Proposition[],
   now: number
-): Proposition[] {
+): ScoredProposition[] {
   return propositions
     .map((proposition) => ({
       proposition,
@@ -367,7 +526,16 @@ function nearestPropositions(
     .filter((scored) => scored.score >= SIMILARITY_FLOOR)
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_NEIGHBOURS)
-    .map((scored) => scored.proposition)
+}
+
+function nearestPropositions(
+  embedding: number[],
+  propositions: Proposition[],
+  now: number
+): Proposition[] {
+  return nearestPropositionScores(embedding, propositions, now).map(
+    (scored) => scored.proposition
+  )
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -384,20 +552,10 @@ export function createUserModel(options: UserModelOptions): UserModel {
   let lastFrameReasonedAbout: Uint8Array | null = null
   /** One batch at a time: revisions mutate the same set, so they cannot race. */
   let running = false
+  let frameRun: Promise<void> | null = null
 
   function stage(next: PipelineStage): void {
     options.onStage?.(next)
-  }
-
-  /** On the feedback path the wording is fixed and only confidence moves: the
-   * sentence is what made the mark fire, so rewording loses the clause it failed
-   * on. Measured, "never a default blue or indigo" was deleted on the evidence of
-   * a terracotta gradient. The frame path still rewrites, which is its point. */
-  function keepWordingOfStanding(revisions: RequestedRevision[]): RequestedRevision[] {
-    return revisions.map((op) => {
-      const held = op.id === null ? undefined : propositions.find((p) => p.id === op.id)
-      return held ? { ...op, text: held.text } : op
-    })
   }
 
   function applyRevisions(revisions: RequestedRevision[], now: string): Proposition[] {
@@ -575,43 +733,68 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
-  /** One call, no propose step, and no retrieval for anything a note already
-   * names by id. Notes citing nothing still get neighbours, or the revision
-   * cannot see it is about to duplicate something already held. */
-  async function observe(notes: FeedbackNote[]): Promise<void> {
-    if (running || notes.length === 0) return
+  /** One call, no propose step. Directly cited propositions establish why a
+   * note was created, while embedding neighbours expose adjacent claims that
+   * may also need refinement and prevent near-duplicate creation. */
+  async function observeFeedback(batch: UserModelFeedbackBatch): Promise<void> {
+    if (batch.notes.length === 0) return
+    // Direct user evidence must not disappear because a timer-driven frame
+    // batch happened to start first.
+    if (frameRun) await frameRun
+    if (running) return
     running = true
     try {
       stage('revising')
       const now = Date.now()
       const shown = new Map<string, Proposition>()
+      const retrievalNotes: FeedbackRetrievalNote[] = batch.notes.map((note) => ({
+        noteId: note.noteId,
+        directIds: [],
+        embedding: []
+      }))
 
-      for (const cited of notes.map((note) => note.citedId)) {
-        if (cited === null) continue
-        const held = propositions.find((p) => p.id === cited)
-        if (held) shown.set(held.id, held)
-      }
-
-      const uncited = notes.filter((note) => note.citedId === null)
-      if (uncited.length > 0) {
-        const vectors = await deps.embed(uncited.map((note) => note.note))
-        for (const [i] of uncited.entries()) {
-          for (const near of nearestPropositions(vectors[i] ?? [], propositions, now)) {
-            shown.set(near.id, near)
-          }
+      for (const [index, note] of batch.notes.entries()) {
+        const trace = retrievalNotes[index]
+        if (!trace) continue
+        for (const cited of note.propositionIds) {
+          const held = propositions.find((p) => p.id === cited)
+          if (!held) continue
+          shown.set(held.id, held)
+          trace.directIds.push(held.id)
         }
       }
+
+      const vectors = await deps.embed(
+        batch.notes.map((note) => {
+          const feedback = note.feedbackItems.map((item) => item.feedback).join('\n')
+          return [note.topic, note.cue, note.reasoningEvidence, feedback].filter(Boolean).join('\n')
+        })
+      )
+      for (const [i] of batch.notes.entries()) {
+        const trace = retrievalNotes[i]
+        if (!trace) continue
+        for (const near of nearestPropositionScores(vectors[i] ?? [], propositions, now)) {
+          shown.set(near.proposition.id, near.proposition)
+          trace.embedding.push({ id: near.proposition.id, score: near.score })
+        }
+      }
+      options.onFeedbackRetrieval?.({ notes: retrievalNotes, shownIds: [...shown.keys()] })
 
       const raw = await deps.revise({
         system: FEEDBACK_SYSTEM,
         purpose: 'revise-from-feedback',
         prompt: feedbackUserPrompt(
-          notes,
+          batch,
           [...shown.values()].map((p) => describe(p, now))
         )
       })
       const stamp = new Date(now).toISOString()
-      const asked = keepWordingOfStanding(readRequestedRevisions(raw))
+      // Explicit feedback may refine the scope or conditions of an existing
+      // proposition. FEEDBACK_SYSTEM keeps implicit acceptance and mere
+      // paraphrases from rewriting it.
+      const asked = readRequestedRevisions(raw).filter((revision) =>
+        validFeedbackRevision(revision, propositions)
+      )
       const changed = applyRevisions(asked, stamp)
       if (changed.length > 0) await reEmbed(changed)
 
@@ -621,16 +804,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
       const rawRationales = await deps.revise({
         system: RATIONALE_SYSTEM,
         purpose: 'revise-from-feedback',
-        prompt: rationaleUserPrompt(notes, changed.map(describeChange), propositions)
+        prompt: rationaleUserPrompt(batch, changed.map(describeChange), propositions)
       })
-      const askedRationales = readRequestedRationales(rawRationales)
-      // Malformed entries are dropped before `applyRationales` can name them,
-      // and this count is the only sign the prompt is not landing.
-      const malformed = parseJsonArray(rawRationales).length - askedRationales.length
-      if (malformed > 0) {
-        options.onRationaleDropped?.(`${malformed} entries missing an id, a rationale or grounds`)
-      }
-      const rationales = applyRationales(askedRationales, stamp)
+      const rationaleResult = readRequestedRationales(rawRationales, batch)
+      for (const reason of rationaleResult.rejected) options.onRationaleDropped?.(reason)
+      const rationales = applyRationales(rationaleResult.accepted, stamp)
 
       // `reEmbed` is what normally saves, and a rationale changes no wording.
       if (rationales.length > 0) options.onChange([...propositions])
@@ -642,12 +820,42 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
+  async function observe(notes: FeedbackNote[]): Promise<void> {
+    const batch: UserModelFeedbackBatch = {
+      step: null,
+      notes: notes.map((note, index) => ({
+        noteId: `legacy-${index + 1}`,
+        chunk: 0,
+        topic: 'legacy-marker-feedback',
+        cue: note.note,
+        representationGoal: '',
+        relationship: note.relation === 'unknown' ? 'uncovered' : note.relation,
+        reasoningEvidence: note.quote,
+        propositionIds: note.citedId === null ? [] : [note.citedId],
+        resolution: note.reply === null ? 'implicitly-accepted' : 'explicit-feedback',
+        feedbackItems:
+          note.reply === null
+            ? []
+            : [
+                {
+                  id: `legacy-${index + 1}-reply`,
+                  selection: { type: 'none' },
+                  feedback: note.reply,
+                  createdAt: Date.now()
+                }
+              ]
+      }))
+    }
+    await observeFeedback(batch)
+  }
+
   return {
     get propositions() {
       return propositions
     },
 
     observe,
+    observeFeedback,
 
     load(saved) {
       // A file predating drift tracking has no original, so take where it is
@@ -705,7 +913,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
         return
       }
       lastFrameReasonedAbout = batchThumbnails.at(-1) ?? lastFrameReasonedAbout
-      void run(batch, batchNotes)
+      const task = run(batch, batchNotes)
+      frameRun = task
+      void task.finally(() => {
+        if (frameRun === task) frameRun = null
+      })
     }
   }
 }

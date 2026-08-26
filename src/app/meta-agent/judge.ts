@@ -136,6 +136,11 @@ export interface JudgeInput {
   canvas: string
   /** Everything the agent has thought this step, oldest first. */
   reasoning: string
+  /** The prefix already judged in this step, retained only to understand what
+   * the newly arrived text refers to. */
+  reasoningContext: string
+  /** Everything appended since the last judgment that actually ran. */
+  newReasoning: string
   /** Mutating calls made so far this run. */
   actions: string[]
   /** The marks standing right now, with their evidence. */
@@ -173,7 +178,10 @@ export interface MetaAgentOptions {
   onSkipped?(reason: 'busy' | 'no-model', input: ConsiderInput): void
 }
 
-export type ConsiderInput = Omit<JudgeInput, 'marks' | 'retired'>
+export type ConsiderInput = Omit<
+  JudgeInput,
+  'marks' | 'retired' | 'reasoningContext' | 'newReasoning'
+>
 
 export interface MetaAgent {
   /** A new turn: nothing carries over, not even what was retired. */
@@ -337,6 +345,8 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
    * give a warning that names no node a window of its own. */
   let step = 0
   let busy = false
+  /** Full reasoning prefix consumed by the last judgment in this step. */
+  let judgedReasoning = ''
   /** Arrived while an answer was in flight; run once that one lands. */
   let pending: ConsiderInput | null = null
   /** Woken when `busy` clears with nothing queued behind it. */
@@ -421,8 +431,14 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
 
   async function run(input: ConsiderInput): Promise<void> {
     const known = new Set(input.propositions.map((p) => p.id))
-    const full: JudgeInput = { ...input, marks, retired }
+    const extendsJudged = input.reasoning.startsWith(judgedReasoning)
+    const reasoningContext = extendsJudged ? judgedReasoning : ''
+    const newReasoning = extendsJudged
+      ? input.reasoning.slice(reasoningContext.length)
+      : input.reasoning
+    const full: JudgeInput = { ...input, reasoningContext, newReasoning, marks, retired }
     const calls = await deps.judge({ system: deps.system, prompt: deps.render(full) })
+    judgedReasoning = input.reasoning
     const markIds = new Set([...marks, ...retired].map((mark) => mark.id))
     const { actions, rejected } = readActions(calls, known, input.reasoning, markIds)
     if (rejected.length > 0) options.onRejectedTools?.(rejected, full)
@@ -464,6 +480,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
       retired = []
       step = 0
       pending = null
+      judgedReasoning = ''
       marks = []
       if (hadState) {
         options.onLifecycle?.('turn reset', marks)
@@ -474,6 +491,7 @@ export function createMetaAgent(options: MetaAgentOptions): MetaAgent {
     beginStep() {
       step += 1
       pending = null
+      judgedReasoning = ''
       // Dropping the queued chunk can leave nothing in flight, and an unwoken
       // waiter holds the run for good.
       wakeSettlers()

@@ -115,8 +115,7 @@ function applyBatchProps(node: FigmaNodeProxy, props: Record<string, unknown>): 
 export const batchUpdate = defineTool({
   name: 'batch_update',
   mutates: true,
-  description:
-    `Execute multiple modifications in one call. Each operation is {id, props}. Props MUST come from this list — anything else is ignored: ${SUPPORTED_PROPS.join(', ')}. Colors, strokes, radius per-corner and text content are NOT here — use set_fill / set_stroke / set_radius / set_text / set_text_properties for those. Runs all updates with one layout recompute.`,
+  description: `Execute multiple modifications in one call. Each operation is {id, props}. Props MUST come from this list — anything else is ignored: ${SUPPORTED_PROPS.join(', ')}. Colors, strokes, radius per-corner and text content are NOT here — use set_fill / set_stroke / set_radius / set_text / set_text_properties for those. Runs all updates with one layout recompute.`,
   params: {
     operations: {
       type: 'string',

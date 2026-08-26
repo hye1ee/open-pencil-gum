@@ -35,6 +35,7 @@ export type ModelSlot =
   | 'user-model-propose'
   | 'user-model-revise'
   | 'feedback'
+  | 'feedback-draft'
   | 'meta-agent'
 
 /** Where a slot's model came from. Reported in the log — see `describeModelRouting`. */
@@ -61,6 +62,7 @@ const SLOT_SPEC: Record<ModelSlot, string> = {
   'user-model-propose': readEnv(import.meta.env.VITE_MODEL_USER_MODEL_PROPOSE),
   'user-model-revise': readEnv(import.meta.env.VITE_MODEL_USER_MODEL_REVISE),
   feedback: readEnv(import.meta.env.VITE_MODEL_FEEDBACK),
+  'feedback-draft': readEnv(import.meta.env.VITE_MODEL_FEEDBACK_DRAFT),
   'meta-agent': readEnv(import.meta.env.VITE_MODEL_META_AGENT)
 }
 
@@ -86,6 +88,10 @@ const BASE_URL_BY_PROVIDER: Partial<Record<AIProviderID, string>> = {
 /** Embeddings are not a slot: the provider is fixed and only the key varies. */
 export function embeddingApiKey(): string {
   return readEnv(import.meta.env.VITE_OPENAI_API_KEY)
+}
+
+export function feedbackImageApiKey(): string {
+  return API_KEY_BY_PROVIDER.openai || settingsKeyFor('openai') || embeddingApiKey()
 }
 
 const KNOWN_PROVIDERS = new Set<string>(AI_PROVIDERS.map((provider) => provider.id))
@@ -215,6 +221,7 @@ const SLOTS: ModelSlot[] = [
   'user-model-propose',
   'user-model-revise',
   'feedback',
+  'feedback-draft',
   'meta-agent'
 ]
 

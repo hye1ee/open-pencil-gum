@@ -9,7 +9,7 @@ import { CORE_TOOLS, toolsToAI } from '@open-pencil/core/tools'
 import type { StepBudget, ToolDef, ToolLogEntry } from '@open-pencil/core/tools'
 import type { SceneNode } from '@open-pencil/scene-graph'
 
-import { previewAgentChange } from '@/app/ai/chat/action-preview'
+import { previewAgentChange, stageAgentChange } from '@/app/ai/chat/action-preview'
 import { setAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logBlocked, logToolCall, logToolError, logToolResult } from '@/app/ai/chat/agent-log'
 import { guardMutation } from '@/app/ai/chat/guard'
@@ -21,7 +21,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 import { ensureGraphFonts } from '@/app/editor/fonts'
 import { notifyMetaAgentNodeReplaced } from '@/app/meta-agent/events'
 
-export const MAX_AGENT_STEPS = 50
+export const MAX_AGENT_STEPS = 30
 
 export interface StepUsage {
   inputTokens: number
@@ -77,6 +77,9 @@ class RunState {
 }
 
 const runStates = new WeakMap<EditorStore, RunState>()
+const MUTATING_AI_TOOL_NAMES = new Set(
+  CORE_TOOLS.filter((definition) => definition.mutates).map((definition) => definition.name)
+)
 
 function getRunState(store?: EditorStore): RunState {
   const target = store ?? getActiveEditorStore()
@@ -136,6 +139,15 @@ export function didHitStepLimit(store?: EditorStore): boolean {
 /** How many steps this run has spent. The step the person interrupted. */
 export function currentRunSteps(store?: EditorStore): number {
   return getRunState(store).currentSteps
+}
+
+/** The active step as shown to a person. `currentRunSteps` is a completed-step count. */
+export function currentRunStepNumber(store?: EditorStore): number {
+  return currentRunSteps(store) + 1
+}
+
+export function isMutatingAITool(toolName: string): boolean {
+  return MUTATING_AI_TOOL_NAMES.has(toolName)
 }
 
 export function clearToolLogEntries(store?: EditorStore): void {
@@ -234,7 +246,7 @@ export function createAITools(store: EditorStore) {
           // The result names what was actually created or changed; prefer it
           // over the guess made from the arguments.
           touched = nodeIds
-          store.aiFlashDone(nodeIds)
+          if (!stageAgentChange(store, nodeIds)) store.aiFlashDone(nodeIds)
           setAgentCursorTarget(store, nodeIds[0])
         }
       },
@@ -242,8 +254,10 @@ export function createAITools(store: EditorStore) {
         runState.toolLog.push(entry)
         logToolCall(entry.tool, entry.args)
         if (entry.error) logToolError(entry.tool, entry.error, entry.durationMs)
-        else if (isSkipped(entry.result)) logBlocked(entry.tool, String(entry.result.reason ?? ''))
-        else logToolResult(entry.tool, entry.result, entry.durationMs)
+        else if (isSkipped(entry.result)) {
+          const reason = entry.result.reason
+          logBlocked(entry.tool, typeof reason === 'string' ? reason : 'blocked')
+        } else logToolResult(entry.tool, entry.result, entry.durationMs)
       },
       getStepBudget: (): StepBudget => ({
         current: runState.currentSteps,

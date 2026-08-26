@@ -97,6 +97,33 @@ function harness(): Harness {
 }
 
 describe('meta-agent mark tools', () => {
+  test('separates previously judged context from newly appended reasoning', async () => {
+    const h = harness()
+    h.queue.push([])
+    await h.run('Considering the card row')
+
+    h.queue.push([])
+    await h.run('Considering the card row with one featured card')
+
+    expect(h.rendered[0]?.reasoningContext).toBe('')
+    expect(h.rendered[0]?.newReasoning).toBe('Considering the card row')
+    expect(h.rendered[1]?.reasoningContext).toBe('Considering the card row')
+    expect(h.rendered[1]?.newReasoning).toBe(' with one featured card')
+  })
+
+  test('starts reasoning context fresh in a new step', async () => {
+    const h = harness()
+    h.queue.push([])
+    await h.run('Considering the card row')
+    h.agent.beginStep()
+
+    h.queue.push([])
+    await h.run('Considering a warm accent')
+
+    expect(h.rendered[1]?.reasoningContext).toBe('')
+    expect(h.rendered[1]?.newReasoning).toBe('Considering a warm accent')
+  })
+
   test('applies conflict and unknown tool calls with distinct semantics', async () => {
     const h = harness()
     const conflict = 'considering a filled star for the icon'

@@ -1,5 +1,5 @@
-import type { FigmaNodeProxy } from '#core/figma-api'
 import { parseColor } from '#core/color'
+import type { FigmaNodeProxy } from '#core/figma-api'
 import { defineTool, nodeToResult } from '#core/tools/schema'
 
 interface StyleArgs {

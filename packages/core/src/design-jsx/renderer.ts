@@ -348,11 +348,7 @@ async function renderInstanceNode(
   return instance
 }
 
-async function renderNode(
-  graph: SceneGraph,
-  tree: TreeNode,
-  parentId: string
-): Promise<SceneNode> {
+async function renderNode(graph: SceneGraph, tree: TreeNode, parentId: string): Promise<SceneNode> {
   if (tree.type === 'icon') return renderIconNode(graph, tree, parentId)
   if (tree.type === 'instance') return renderInstanceNode(graph, tree, parentId)
 

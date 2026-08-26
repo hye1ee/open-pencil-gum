@@ -1,13 +1,22 @@
 import {
   logPropositionChange,
   logRationaleChange,
+  logUserModelFeedback,
   logUserModelStage
 } from '@/app/ai/chat/agent-log'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import { userEditsSince } from '@/app/ai/chat/user-edits'
 import { getToolLogEntries } from '@/app/ai/tools'
 import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
-import { createUserModel, type FeedbackNote, type UserModel } from '@/app/user-model/pipeline'
+import { userModelFixtureEnabled } from '@/app/user-model/fixture'
+import {
+  createUserModel,
+  type FeedbackNote,
+  type SavedProposition,
+  type UserModel,
+  type UserModelDeps,
+  type UserModelFeedbackBatch
+} from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 
@@ -50,6 +59,7 @@ export function frameNote(): string | undefined {
 /** One instance only: two would both write the same file and the second's saves
  * would undo the first's. Built on demand, since feedback outlives capture. */
 let current: UserModel | null = null
+let currentReady: Promise<void> = Promise.resolve()
 
 /** Not gated on capture: this is the only place the person tells us anything in
  * words, and it is the best evidence the model gets. */
@@ -58,24 +68,62 @@ export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
   current ??= createPropositionSink('answers')
   const replied = notes.filter((note) => note.reply !== null).length
   logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
-  pending = current.observe(notes).finally(() => {
-    pending = null
-    logUserModelStage('observed', 'user model up to date')
+  await enqueueObservation(async () => {
+    await currentReady
+    await current?.observe(notes)
   })
-  await pending
 }
 
 let pending: Promise<void> | null = null
 
+async function enqueueObservation(observe: () => Promise<void>): Promise<void> {
+  const before = pending ?? Promise.resolve()
+  const queued = before.catch(() => undefined).then(observe)
+  pending = queued
+  try {
+    await queued
+  } finally {
+    if (pending === queued) {
+      pending = null
+      logUserModelStage('observed', 'user model up to date')
+    }
+  }
+}
+
+export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promise<void> {
+  if (batch.notes.length === 0 || !canBuildUserModel()) return
+  current ??= createPropositionSink('feedback-notes')
+  const explicit = batch.notes.filter((note) => note.resolution === 'explicit-feedback').length
+  const items = batch.notes.reduce((sum, note) => sum + note.feedbackItems.length, 0)
+  logUserModelFeedback(
+    batch.step ?? 0,
+    'queued',
+    `notes=${batch.notes.length} explicit=${explicit} implicit=${batch.notes.length - explicit} items=${items}`
+  )
+  try {
+    await enqueueObservation(async () => {
+      await currentReady
+      await current?.observeFeedback(batch)
+    })
+  } catch (error) {
+    logUserModelFeedback(
+      batch.step ?? 0,
+      'failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
+
 /** The meta-agent reads the model once per turn. A restart after an answer is
  * two model calls ahead of the revision that answer caused. */
 export function awaitUserModelSettled(): Promise<void> {
-  return pending ?? Promise.resolve()
+  return pending ?? currentReady
 }
 
 export function createPropositionSink(sessionId: string): UserModel {
+  const deps = modelCalls()
   const model = createUserModel({
-    deps: modelCalls(),
+    deps,
 
     onStage: (stage) => {
       noteStage(stage)
@@ -90,6 +138,26 @@ export function createPropositionSink(sessionId: string): UserModel {
         const shown = (candidate.confidence * 9 + 1).toFixed(0)
         logUserModelStage('read', `(${shown}/10) ${candidate.text}`)
       }
+    },
+
+    onFeedbackRetrieval: (trace) => {
+      for (const note of trace.notes) {
+        logUserModelStage(
+          'retrieval',
+          `${note.noteId} direct → ${note.directIds.join(', ') || '(none)'}`
+        )
+        logUserModelStage(
+          'retrieval',
+          `${note.noteId} embedding → ${
+            note.embedding.map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`).join(', ') ||
+            '(none above threshold)'
+          }`
+        )
+      }
+      logUserModelStage(
+        'retrieval',
+        `shown-to-feedback-model → ${trace.shownIds.join(', ') || '(none)'}`
+      )
     },
 
     onRevision: logPropositionChange,
@@ -119,15 +187,38 @@ export function createPropositionSink(sessionId: string): UserModel {
     }
   })
 
-  void load().then((saved) => {
+  currentReady = load().then(async (saved) => {
     if (saved.length === 0) return
-    model.load(saved)
+    let hydrated = saved
+    if (userModelFixtureEnabled) {
+      try {
+        hydrated = await hydrateFixtureEmbeddings(saved, deps.embed)
+      } catch (error) {
+        noteError(error)
+      }
+    }
+    model.load(hydrated)
     // Read back, not `saved`: `load` fills in drift fields an older file lacks.
     setPropositions(model.propositions)
   })
 
   current = model
   return model
+}
+
+async function hydrateFixtureEmbeddings(
+  saved: SavedProposition[],
+  embed: UserModelDeps['embed']
+): Promise<SavedProposition[]> {
+  const vectors = await embed(saved.map((proposition) => proposition.text))
+  return saved.map((proposition, index) => {
+    const embedding = vectors.at(index) ?? []
+    return {
+      ...proposition,
+      embedding,
+      originalEmbedding: [...embedding]
+    }
+  })
 }
 
 export { clearSaved }

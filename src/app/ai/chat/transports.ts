@@ -9,6 +9,7 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
   logIntervention,
+  logFeedbackReplay,
   logModelRouting,
   logPlan,
   logRunContinue,
@@ -17,8 +18,7 @@ import {
   logStep,
   logTurnAbandoned,
   logUsage,
-  logUserMessage,
-  logUserModelPropositions
+  logUserMessage
 } from '@/app/ai/chat/agent-log'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
@@ -34,19 +34,22 @@ import {
   clearUserMessages,
   drainUserMessages
 } from '@/app/ai/chat/user-messages'
-import { renderUserModelPropositions } from '@/app/ai/chat/user-model-propositions'
 import { describeModelRouting, modelConfigForSlot } from '@/app/ai/model-routing'
 import {
   MAX_AGENT_STEPS,
   createAITools,
+  currentRunStepNumber,
   currentRunSteps,
+  isMutatingAITool,
   isContinuingRun,
+  recordAuxUsage,
   recordStepUsage,
   resetRunSteps
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
+import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/feedback-note/session'
 import { noteAgentPlan } from '@/app/meta-agent/events'
-import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
+import { startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -213,12 +216,6 @@ export function createToolLoopTransport({
   // into its own transcript, so it can be re-injected every step.
   let plan: string | null = null
 
-  // The user model's propositions as the building side is told them, rebuilt at
-  // each call so a restart after feedback carries the revised ones. Held rather
-  // than recomputed per step: the planning calls want the same text the system
-  // prompt got.
-  let userModelPropositions: string | null = null
-
   const agent = new ToolLoopAgent({
     model,
     instructions: SYSTEM_PROMPT,
@@ -254,22 +251,9 @@ export function createToolLoopTransport({
       clearAgentSpeech()
       await startMetaAgentTurn(store, submittedRequest)
       showAgentCursor(store)
-      // After `startMetaAgentTurn`, which waits for any revision still in flight
-      // and then reads the model once for the whole turn. Rebuilt here on every
-      // call rather than once at construction, so the turn restarted after
-      // someone answers a marker is instructed with the model their answer just
-      // changed — which is the whole reason the answer was worth taking.
-      userModelPropositions = renderUserModelPropositions(runUserModel())
-      if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       return {
         ...options,
-        // Built from the constant rather than from `options.instructions`,
-        // which is typed wide enough to be a message array. Nothing accumulates
-        // either way — what arrives here is the configured value, not what the
-        // last call returned.
-        instructions: userModelPropositions
-          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
-          : SYSTEM_PROMPT,
+        instructions: SYSTEM_PROMPT,
         maxOutputTokens,
         providerOptions: callProviderOptions
       }
@@ -292,13 +276,7 @@ export function createToolLoopTransport({
       for (const text of userMessages) logUserMessage(text)
 
       if (stepNumber === 0) {
-        plan = await runPlan(
-          planningModel,
-          store,
-          lastUserText(messages),
-          image,
-          userModelPropositions
-        )
+        plan = await runPlan(planningModel, store, lastUserText(messages), image, null)
         // The meta-agent needs it to tell a decision the agent made from one the
         // planning call made for it.
         noteAgentPlan(plan)
@@ -311,7 +289,7 @@ export function createToolLoopTransport({
           store,
           plan,
           { edits: diff, messages: userMessages },
-          userModelPropositions
+          null
         )
         noteAgentPlan(plan)
         logPlan(plan, true)
@@ -320,7 +298,7 @@ export function createToolLoopTransport({
       logStep(
         // Ours, not the SDK's, which counts from zero again in the second call
         // of a restarted build and would report step 8 as step 0.
-        currentRunSteps(store),
+        currentRunStepNumber(store),
         [
           image ? '[image]' : '',
           diff ? '[user-edit]' : '',
@@ -343,6 +321,24 @@ export function createToolLoopTransport({
     },
     onStepFinish: (step) => {
       intervention.onStepFinish()
+      const replayedStep = currentFeedbackReplayStep()
+      const mutatingCalls = step.toolCalls.filter((call) => isMutatingAITool(call.toolName))
+      if (mutatingCalls.length > 0 && step.toolResults.length > 0) {
+        const completedReplayStep = completeFeedbackReplay()
+        if (completedReplayStep !== null) {
+          logFeedbackReplay(
+            completedReplayStep,
+            'completed',
+            `mutation-tools=${mutatingCalls.map((call) => call.toolName).join(',')} tool-results=${step.toolResults.length}; interactive notes re-enabled for following steps`
+          )
+        }
+      } else if (step.toolCalls.length > 0 && replayedStep !== null) {
+        logFeedbackReplay(
+          replayedStep,
+          'waiting',
+          `read-only-tools=${step.toolCalls.map((call) => call.toolName).join(',')}; same retry step and suppression remain active`
+        )
+      }
       // The log line and the canvas bubble are both driven from the stream tap
       // in `model-trace.ts` — doing it here would put them after the tool calls
       // they came before.
@@ -355,6 +351,21 @@ export function createToolLoopTransport({
         timestamp: Date.now()
       }
       logUsage(recorded)
+      const wasAbortedBeforeCompletion =
+        step.finishReason === 'other' &&
+        step.toolResults.length === 0 &&
+        recorded.inputTokens === 0 &&
+        recorded.outputTokens === 0 &&
+        recorded.cacheReadTokens === 0 &&
+        recorded.cacheWriteTokens === 0
+      if (wasAbortedBeforeCompletion) {
+        logTurnAbandoned('aborted zero-usage step excluded from progress count')
+        return
+      }
+      if (replayedStep !== null && mutatingCalls.length === 0) {
+        recordAuxUsage(recorded, store)
+        return
+      }
       recordStepUsage(recorded, store)
     },
     onFinish: ({ finishReason, steps }) => {

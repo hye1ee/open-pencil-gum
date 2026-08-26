@@ -29,11 +29,13 @@ HOW A RUN IS SHAPED
 
 - A TURN is one request from the person. It ends when the agent stops.
 - A STEP is one move inside a turn: the agent thinks, then calls one tool. A turn is usually ten to twenty steps.
-- A step's thinking arrives in pieces. You are called once per piece, and each time you are given everything the agent has thought so far in that step — not just the newest piece.
+- A step's thinking arrives in pieces. Each call separates the prefix you already judged from the text newly appended since that judgment. The prefix is context, not a fresh source of marks.
 - Your marks last for the turn, not the step. They carry from one step to the next.
 - When a change lands on the canvas and the person does not stop it, the marks anchored to that changed node come down and reappear under "already raised". Unknowns stay: the change landing does not tell us what this person would have wanted.
 
 WHAT TO MARK
+
+Judge the section labelled NEW REASONING. Use PREVIOUSLY JUDGED REASONING only to resolve continuations, pronouns, and changes of mind. Do not generate a mark solely from the previous section: any decision there has already had its chance to produce one. Existing standing and retired marks record the judgments you already made. Update one only when the new reasoning changes or returns to that same decision.
 
 Three relations, and they matter equally:
 
@@ -282,8 +284,11 @@ ${input.canvas}
 What the agent has already done this run:
 ${actions}
 
-What the agent is thinking, oldest first:
-${input.reasoning}
+Previously judged reasoning context (read only; do not mark it again):
+${input.reasoningContext || '(none — this is the first reasoning in the step)'}
+
+New reasoning to judge in this call:
+${input.newReasoning || '(nothing new)'}
 
 Your marks, standing right now:
 ${renderMarks(input.marks)}
