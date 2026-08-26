@@ -1,4 +1,9 @@
-import { getApiKey, setApiKey } from './user-model/calls.js'
+import {
+  getGoogleApiKey,
+  getOpenaiApiKey,
+  setGoogleApiKey,
+  setOpenaiApiKey
+} from './user-model/calls.js'
 import { getPid, setPid } from './user-model/storage.js'
 
 /** Flip to false to let the digit suffix be edited; everything else already
@@ -14,10 +19,17 @@ const STATUS_LABELS = {
   'proceed-data-request': 'proceed data request'
 }
 
+const mainView = document.getElementById('main-view')
+const settingsView = document.getElementById('settings-view')
+const openSettingsButton = document.getElementById('open-settings')
+const closeSettingsButton = document.getElementById('close-settings')
+
 const statusEl = document.getElementById('status')
+const dataLabelEl = document.getElementById('data-label')
 const dataEl = document.getElementById('data')
 const pidSuffixInput = document.getElementById('pid-suffix')
-const apiKeyInput = document.getElementById('api-key')
+const googleApiKeyInput = document.getElementById('google-api-key')
+const openaiApiKeyInput = document.getElementById('openai-api-key')
 const calibrationHint = document.getElementById('calibration-hint')
 const calibrationStateEl = document.getElementById('calibration-state')
 const startButton = document.getElementById('start-calibration')
@@ -26,6 +38,20 @@ const exportButton = document.getElementById('export')
 const restartButton = document.getElementById('restart')
 
 let calibrating = false
+
+function openSettings() {
+  mainView.hidden = true
+  settingsView.hidden = false
+}
+
+function closeSettings() {
+  settingsView.hidden = true
+  mainView.hidden = false
+}
+
+openSettingsButton.addEventListener('click', openSettings)
+closeSettingsButton.addEventListener('click', closeSettings)
+calibrationHint.addEventListener('click', openSettings)
 
 // Anything reserved (`__`-prefixed) is internal state, not site data.
 function siteData(items) {
@@ -43,11 +69,18 @@ function fullPid() {
   return `P${pidSuffixInput.value.trim() || '0'}`
 }
 
-/** Both fields have to be filled before calibration can start. Called on
+function updateDataLabel() {
+  dataLabelEl.textContent = `${fullPid()}'s user model`
+}
+
+/** All three fields have to be filled before calibration can start. Called on
  * every keystroke as well as on storage updates, since `render` alone would
  * only react after a field is committed. */
 function updateButtons() {
-  const ready = pidSuffixInput.value.trim() !== '' && apiKeyInput.value.trim() !== ''
+  const ready =
+    pidSuffixInput.value.trim() !== '' &&
+    googleApiKeyInput.value.trim() !== '' &&
+    openaiApiKeyInput.value.trim() !== ''
   calibrationHint.hidden = ready
   startButton.disabled = calibrating || !ready
   stopButton.disabled = !calibrating
@@ -59,9 +92,10 @@ function render(items) {
   statusEl.textContent = STATUS_LABELS[status] || status
 
   const data = siteData(items)
-  for (const key of Object.keys(data)) {
-    if (key.startsWith('user_model_') && Array.isArray(data[key])) {
-      data[key] = data[key].map(withoutEmbeddings)
+  if (Array.isArray(data.user_model?.propositions)) {
+    data.user_model = {
+      ...data.user_model,
+      propositions: data.user_model.propositions.map(withoutEmbeddings)
     }
   }
   dataEl.textContent = JSON.stringify(data, null, 2)
@@ -77,11 +111,17 @@ chrome.storage.local.get(null, render)
 void getPid().then((pid) => {
   pidSuffixInput.value = pid.replace(/^P/, '')
   pidSuffixInput.disabled = PID_LOCKED
+  updateDataLabel()
   updateButtons()
 })
 
-void getApiKey().then((key) => {
-  apiKeyInput.value = key
+void getGoogleApiKey().then((key) => {
+  googleApiKeyInput.value = key
+  updateButtons()
+})
+
+void getOpenaiApiKey().then((key) => {
+  openaiApiKeyInput.value = key
   updateButtons()
 })
 
@@ -95,6 +135,7 @@ chrome.storage.onChanged.addListener((_changes, area) => {
 pidSuffixInput.addEventListener('input', () => {
   // Digits only — the "P" prefix is fixed, this is just what follows it.
   pidSuffixInput.value = pidSuffixInput.value.replace(/\D/g, '')
+  updateDataLabel()
   updateButtons()
 })
 
@@ -102,10 +143,14 @@ pidSuffixInput.addEventListener('change', () => {
   void setPid(fullPid())
 })
 
-apiKeyInput.addEventListener('input', updateButtons)
+googleApiKeyInput.addEventListener('input', updateButtons)
+googleApiKeyInput.addEventListener('change', () => {
+  void setGoogleApiKey(googleApiKeyInput.value.trim())
+})
 
-apiKeyInput.addEventListener('change', () => {
-  void setApiKey(apiKeyInput.value.trim())
+openaiApiKeyInput.addEventListener('input', updateButtons)
+openaiApiKeyInput.addEventListener('change', () => {
+  void setOpenaiApiKey(openaiApiKeyInput.value.trim())
 })
 
 startButton.addEventListener('click', () => {

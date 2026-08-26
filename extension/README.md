@@ -52,31 +52,49 @@ window.addEventListener('message', (event) => {
 
 ## Popup
 
-Click the toolbar icon for a status view:
+Click the toolbar icon. The main view has three header icons plus the
+calibration controls; Settings is a separate view within the same popup, not
+a new page.
+
+**Header icons:**
+
+- **Download** — exports the current data as `usermodel-<pid>-<timestamp>.json`.
+- **Restart** (red) — exports the current data, stops calibration if running,
+  then clears all data (the API keys, Participant ID, and calibration state
+  are preserved) and resets status to `idle`.
+- **Settings (gear)** — opens the Settings view; the back arrow there returns
+  to the main view.
+
+**Main view:**
 
 - **status** — `idle`, `received data`, `received data request`, or
   `proceed data request`. Set by the background worker as it handles each
   `GET_DATA`/`SET_DATA` message from the site; there's no auto-return to
-  `idle`. Calibration (below) doesn't touch this — it's a separate concern.
-- **Current data** — everything in `chrome.storage.local` except internal
-  (`__`-prefixed) keys, as JSON. This includes the `user_model_<pid>` key that
-  calibration writes to.
+  `idle`. Calibration doesn't touch this — it's a separate concern.
+- **`<pid>'s user model`** (label above the data box) — everything in
+  `chrome.storage.local` except internal (`__`-prefixed) keys, as JSON. This
+  includes the `user_model` key that calibration writes to, in the same
+  `{ updatedAt, propositions }` shape as `captures/user-model.json` in the
+  main app. The participant id is not part of the stored structure — only the
+  label above it and the export filename carry it.
+- A "Go to settings and fill these in first." link, shown until both API keys
+  and the Participant ID are set — clicking it opens Settings directly.
+- **Start calibration / Stop calibration** — Start stays disabled until the
+  Participant ID and both API keys are filled in. See below for what
+  calibration does.
+
+**Settings view:**
+
 - **Participant ID** — a fixed `P` prefix plus a digit suffix (`P0`, `P1`, …).
   Currently frozen to `0` — the digit input is `disabled` in `popup.html` and
   `PID_LOCKED` in `popup.js` is what's gating it; flip that to `false` to let
-  it be edited. Stored under `__pid`, and used to scope where the captured
-  model lives (`user_model_<pid>`) so different participants' data doesn't
-  mix, and in the export filename.
-- **OpenAI API key** — required before calibration can start, alongside the
-  Participant ID. Stored under the reserved `__openai_api_key` key, so it's
-  excluded from "Current data" and survives a Restart.
-- **Start calibration / Stop calibration** — disabled until both the
-  Participant ID and API key are filled in. See below for what calibration
-  does.
-- **Export** — downloads the current data as `usermodel-<pid>-<timestamp>.json`.
-- **Restart** — exports the current data, stops calibration if running, then
-  clears all data (the API key, Participant ID, and calibration state are
-  preserved) and resets status to `idle`.
+  it be edited. Stored under `__pid`; shown in the "Current data" label above
+  and in the export filename, but not inside the stored `user_model` value
+  itself (see Calibration below).
+- **Google API key** / **OpenAI API key** — both required before calibration
+  can start (see Calibration below for why there are two). Stored under
+  `__google_api_key`/`__openai_api_key`, so excluded from "Current data" and
+  preserved across a Restart.
 
 The popup only exists while open, so it re-reads storage on open and then
 listens for `chrome.storage.onChanged` to stay live.
@@ -91,14 +109,23 @@ platform doesn't offer what the app's versions rely on:
 
 - **`calls.js`** — the app calls a model through the `ai` npm package; this
   extension has no build step, so there's no bundler to pull that package in.
-  This is plain `fetch` against the OpenAI REST API instead, using the API key
-  entered in the popup. `CHAT_MODEL`/`EMBEDDING_MODEL` are constants at the
-  top of the file if you want to point it elsewhere.
+  This is plain `fetch` against provider REST APIs instead, using the two keys
+  entered in Settings. The split matches what the app actually runs, not a
+  simplification: `user-model-propose`/`user-model-revise` are
+  provider-configurable (`.env`), and in this repo's actual `.env` they're
+  unset and fall back to `VITE_MODEL_DEFAULT=google:gemini-3.5-flash` — so
+  propose/revise really are Gemini calls (`CHAT_MODEL` constant). Embeddings
+  are hardcoded to OpenAI on the app's side too (`embeddingApiKey()` in
+  `model-routing.ts` — "the provider is fixed"), so this does the same
+  (`EMBEDDING_MODEL` constant, `text-embedding-3-small`).
 - **`storage.js`** — the app POSTs to a Vite dev-server endpoint; there is no
   server here, so this reads/writes `chrome.storage.local` under a
-  `user_model_<pid>` key instead (see Participant ID above). There's no
-  per-session audit log for the same reason (nowhere to append it to) — only
-  the current state persists.
+  `user_model` key instead, holding the same `{ updatedAt, propositions }`
+  shape as `captures/user-model.json`. Not scoped by participant id — that's
+  carried in the popup label and the export filename only (see Participant ID
+  above), not in this structure. There's no per-session audit log for the
+  same reason as the dev server: nowhere to append it to — only the current
+  state persists.
 
 **What "Start calibration" actually does**, and why it differs from the app:
 
@@ -107,11 +134,14 @@ platform doesn't offer what the app's versions rely on:
   is why the extension asks for the `<all_urls>` host permission — without
   it, capture would only work while a `localhost:1420` tab happened to be the
   visible one.
-- The capture cadence is one frame per minute (`chrome.alarms`' documented
-  minimum for a repeating alarm), not every 5 seconds. A Manifest V3 service
-  worker's own `setInterval` doesn't reliably survive being suspended between
-  ticks; alarms do. A batch is still 6 frames (unchanged), so it now takes
-  about 6 minutes instead of 30 seconds.
+- The capture cadence is driven by `chrome.alarms` instead of a plain
+  `setInterval`, since a Manifest V3 service worker's own timers don't
+  reliably survive being suspended between ticks. `chrome.alarms` normally
+  floors the period at 30s (or 1 minute pre-Chrome 120), but that floor is
+  lifted entirely for an extension loaded unpacked in developer mode — the
+  only way this one is loaded — so it's set to match the app's 5-second
+  cadence. Load this from the Chrome Web Store and it would silently clamp
+  to 30s instead.
 - No `note` on captured frames (what an agent/the user were doing at that
   moment) — there's no agent or tool history in this extension to read that
   from. The field is optional in `pipeline.js` for exactly this reason, so
@@ -120,8 +150,8 @@ platform doesn't offer what the app's versions rely on:
   pipeline) are carried over for fidelity but never called — there's no
   meta-agent here producing that feedback yet.
 
-Click **Start calibration**: it checks for an API key, then captures once
-immediately and every minute after via a `chrome.alarms` alarm, feeding
+Click **Start calibration**: it checks for both API keys, then captures once
+immediately and every 5 seconds after via a `chrome.alarms` alarm, feeding
 `pipeline.js` until you click **Stop calibration**. Calibration state
 (`__calibrating`) is in `chrome.storage.local` so it's correct on reopening
 the popup even if calibration kept running while it was closed.

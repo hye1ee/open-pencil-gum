@@ -9,12 +9,15 @@
  *    currently visible, not a shared-tab MediaStream pinned to one tab. This
  *    needs the `<all_urls>` host permission (see manifest.json) — without it,
  *    capture would only work on tabs the extension already has access to.
- * 2. The capture cadence is driven by `chrome.alarms` at its documented
- *    one-minute minimum, not a 5-second interval. A Manifest V3 service
- *    worker's own timers do not survive being suspended, and alarms are the
- *    supported way to get a callback that does — at the cost of a batch
- *    (6 frames, unchanged from the app) taking about 6 minutes instead of 30
- *    seconds.
+ * 2. The capture cadence is driven by `chrome.alarms` rather than a plain
+ *    `setInterval` — a Manifest V3 service worker's own timers do not
+ *    reliably survive being suspended, and alarms are the supported way to
+ *    get a callback that does. `chrome.alarms` normally floors the period at
+ *    30s (packed) or 1 minute (pre-Chrome 120), but Chrome lifts that floor
+ *    entirely for an extension loaded unpacked in developer mode — which is
+ *    the only way this one is loaded (see README) — so the period below can
+ *    match the app's 5-second cadence. Load this from the Chrome Web Store
+ *    instead and it would silently clamp to 30s.
  *
  * No `note` on captured frames yet — there is no agent/tool history to read
  * in this extension, and the field is optional in `pipeline.js` for exactly
@@ -28,7 +31,9 @@ import { clearSaved, load, save } from './storage.js'
 export { canBuildUserModel, clearSaved }
 
 const CAPTURE_ALARM = 'user-model-capture'
-const CAPTURE_PERIOD_MINUTES = 1
+/** Matches the app's cadence — only possible because this extension is
+ * always loaded unpacked; see the file header. */
+const CAPTURE_PERIOD_SECONDS = 5
 export const CALIBRATING_KEY = '__calibrating'
 
 let model = null
@@ -82,13 +87,13 @@ async function captureTick() {
 export async function startCalibration() {
   if (calibrating) return { ok: true }
   if (!(await canBuildUserModel())) {
-    return { ok: false, error: 'No OpenAI API key set' }
+    return { ok: false, error: 'Missing Google/OpenAI API key — set both in Settings' }
   }
   ensureModel()
   setCalibrating(true)
-  chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: CAPTURE_PERIOD_MINUTES })
+  chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: CAPTURE_PERIOD_SECONDS / 60 })
   // The alarm's first firing is a full period away; capture once now so
-  // starting calibration doesn't feel like it did nothing for a minute.
+  // starting calibration doesn't feel like it did nothing at first.
   void captureTick()
   return { ok: true }
 }
