@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ScrollAreaRoot, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport } from 'reka-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { propositions, resetUserModel, userModel } from '@/app/user-model/store'
+import { importUserModel } from '@/app/user-model/use'
 import AppTextButton from '@/components/ui/AppTextButton.vue'
 
-import type { PipelineStage } from '@/app/user-model/pipeline'
+import type { PipelineStage, SavedProposition } from '@/app/user-model/pipeline'
 import type { UserModelStatus } from '@/app/user-model/store'
 
 /**
@@ -26,7 +27,8 @@ const STATUS_TEXT: Record<UserModelStatus, string> = {
 const STAGE_TEXT: Record<PipelineStage, string> = {
   idle: '',
   proposing: 'reading frames…',
-  revising: 'revising…'
+  revising: 'revising…',
+  reasoning: 'working out why…'
 }
 
 const status = computed(() => STAGE_TEXT[userModel.stage] || STATUS_TEXT[userModel.status])
@@ -44,6 +46,57 @@ function outOfTen(value: number): number {
 
 function onReset() {
   resetUserModel()
+}
+
+/**
+ * The extension's own postMessage protocol — see extension/README.md and
+ * extension/content-script.js. The extension shows its own confirm dialog
+ * before it hands anything over, so a decline arrives as a normal response
+ * rather than the request just going unanswered.
+ */
+interface ExtensionUserModelResponse {
+  source: 'open-pencil-extension'
+  type: 'USER_MODEL_RESPONSE'
+  requestId: string
+  declined: boolean
+  payload: { updatedAt: string; propositions: SavedProposition[] } | null
+  error?: string | null
+}
+
+const importNote = ref('')
+
+function requestUserModelFromExtension(): void {
+  const requestId = crypto.randomUUID()
+  importNote.value = 'Waiting for the extension…'
+
+  function onMessage(event: MessageEvent): void {
+    if (event.source !== window || event.origin !== window.location.origin) return
+    const data = event.data as Partial<ExtensionUserModelResponse> | null
+    if (!data || data.source !== 'open-pencil-extension') return
+    if (data.type !== 'USER_MODEL_RESPONSE' || data.requestId !== requestId) return
+    window.removeEventListener('message', onMessage)
+
+    if (data.declined) {
+      importNote.value = 'Declined in the extension.'
+      return
+    }
+    if (data.error) {
+      importNote.value = `Extension error: ${data.error}`
+      return
+    }
+    if (!data.payload || data.payload.propositions.length === 0) {
+      importNote.value = 'The extension has nothing captured yet.'
+      return
+    }
+    void importUserModel(data.payload.propositions)
+    importNote.value = ''
+  }
+
+  window.addEventListener('message', onMessage)
+  window.postMessage(
+    { source: 'open-pencil-site', type: 'REQUEST_USER_MODEL', requestId },
+    window.location.origin
+  )
 }
 </script>
 
@@ -99,6 +152,14 @@ function onReset() {
         The screen is read every 5s; every 6 frames become propositions, which are then merged into
         the ones already here.
       </span>
+      <AppTextButton
+        test-id="user-model-panel-import-from-extension"
+        :ui="{ base: 'mt-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-hover' }"
+        @click="requestUserModelFromExtension"
+      >
+        Load user model from extension
+      </AppTextButton>
+      <span v-if="importNote" class="text-[11px] text-muted/60">{{ importNote }}</span>
     </div>
 
     <ScrollAreaRoot v-else data-test-id="user-model-panel" class="min-h-0 flex-1">

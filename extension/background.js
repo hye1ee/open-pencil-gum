@@ -67,6 +67,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
 
+  if (message.type === 'GET_USER_MODEL') {
+    // Flat `{ updatedAt, propositions }`, same shape the site's own
+    // `captures/user-model.json` uses — see user-model/storage.js.
+    chrome.storage.local.get('user_model', (result) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
+        return
+      }
+      const value = result.user_model
+      const payload = value && Array.isArray(value.propositions) ? value : null
+      sendResponse({ ok: true, payload })
+    })
+    return true
+  }
+
   if (message.type === 'START_CALIBRATION') {
     startCalibration().then(sendResponse)
     return true

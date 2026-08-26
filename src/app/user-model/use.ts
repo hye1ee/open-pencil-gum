@@ -206,6 +206,20 @@ export function createPropositionSink(sessionId: string): UserModel {
   return model
 }
 
+/** Fed by the browser extension's own capture — a second observer of the same
+ * screen, run outside this tab (see extension/README.md). Goes through the
+ * same `load` a file predating a field would, so an extension-captured
+ * proposition is never trusted to already have every field this version
+ * expects. Awaits any hydration already in flight first, so this always wins
+ * over whatever happened to be on disk when it arrives. */
+export async function importUserModel(saved: SavedProposition[]): Promise<void> {
+  const model = current ?? createPropositionSink('extension-import')
+  await currentReady
+  model.load(saved)
+  setPropositions(model.propositions)
+  void save(model.propositions)
+}
+
 async function hydrateFixtureEmbeddings(
   saved: SavedProposition[],
   embed: UserModelDeps['embed']

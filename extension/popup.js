@@ -53,9 +53,11 @@ openSettingsButton.addEventListener('click', openSettings)
 closeSettingsButton.addEventListener('click', closeSettings)
 calibrationHint.addEventListener('click', openSettings)
 
-// Anything reserved (`__`-prefixed) is internal state, not site data.
-function siteData(items) {
-  return Object.fromEntries(Object.entries(items).filter(([key]) => !key.startsWith('__')))
+/** Flat `{ updatedAt, propositions }`, same shape as `captures/user-model.json`
+ * in the main app — never wrapped under a `user_model` key. */
+function userModel(items) {
+  const value = items.user_model
+  return value && Array.isArray(value.propositions) ? value : { updatedAt: null, propositions: [] }
 }
 
 /** A proposition's embeddings are 512 floats each — real ones would flood this
@@ -91,14 +93,12 @@ function render(items) {
   statusEl.dataset.status = status
   statusEl.textContent = STATUS_LABELS[status] || status
 
-  const data = siteData(items)
-  if (Array.isArray(data.user_model?.propositions)) {
-    data.user_model = {
-      ...data.user_model,
-      propositions: data.user_model.propositions.map(withoutEmbeddings)
-    }
-  }
-  dataEl.textContent = JSON.stringify(data, null, 2)
+  const model = userModel(items)
+  dataEl.textContent = JSON.stringify(
+    { ...model, propositions: model.propositions.map(withoutEmbeddings) },
+    null,
+    2
+  )
 
   calibrating = items[CALIBRATING_KEY] === true
   calibrationStateEl.textContent = calibrating ? 'running' : 'off'
@@ -173,9 +173,10 @@ function timestamp() {
 
 async function exportData(items) {
   // Full fidelity here, embeddings included — unlike the in-popup preview,
-  // this is meant to be a real backup of what was captured.
+  // this is meant to be a real backup of what was captured. Flat, matching
+  // `captures/user-model.json` — not wrapped under a `user_model` key.
   const pid = await getPid()
-  const blob = new Blob([JSON.stringify(siteData(items), null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(userModel(items), null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

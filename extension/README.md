@@ -50,6 +50,35 @@ window.addEventListener('message', (event) => {
 
 `key` is optional on both — omitted, it falls back to `'default'`.
 
+**Site asks for the captured user model** (used by `src/components/UserModelPanel.vue`'s
+"Load user model from extension" button):
+
+```js
+window.postMessage(
+  { source: 'open-pencil-site', type: 'REQUEST_USER_MODEL', requestId: 'r3' },
+  'http://localhost:1420'
+)
+
+window.addEventListener('message', (event) => {
+  if (event.data?.source !== 'open-pencil-extension') return
+  if (event.data.type !== 'USER_MODEL_RESPONSE' || event.data.requestId !== 'r3') return
+  if (event.data.declined) return // person said no in the extension's confirm dialog
+  console.log(event.data.payload) // { updatedAt, propositions } or null if nothing captured yet
+})
+```
+
+Unlike `REQUEST_DATA`/`SEND_DATA`, this one shows a `confirm()` dialog in the
+content script before answering.
+
+### Confirm before handing anything over
+
+`content-script.js` runs in the page, so it's the one place in the extension
+with a `window` to show a dialog in — that's why the confirm lives there
+rather than in the background worker or the popup. On `REQUEST_USER_MODEL` it
+calls `window.confirm(...)` before asking the background for anything; a
+decline never reaches `chrome.runtime` at all, and the site gets back
+`{ declined: true, payload: null }` either way, never silence.
+
 ## Popup
 
 Click the toolbar icon. The main view has three header icons plus the
@@ -71,12 +100,14 @@ a new page.
   `proceed data request`. Set by the background worker as it handles each
   `GET_DATA`/`SET_DATA` message from the site; there's no auto-return to
   `idle`. Calibration doesn't touch this — it's a separate concern.
-- **`<pid>'s user model`** (label above the data box) — everything in
-  `chrome.storage.local` except internal (`__`-prefixed) keys, as JSON. This
-  includes the `user_model` key that calibration writes to, in the same
-  `{ updatedAt, propositions }` shape as `captures/user-model.json` in the
-  main app. The participant id is not part of the stored structure — only the
-  label above it and the export filename carry it.
+- **`<pid>'s user model`** (label above the data box) — the `user_model`
+  value from `chrome.storage.local`, flat and unwrapped: `{ updatedAt,
+  propositions }`, the same shape as `captures/user-model.json` in the main
+  app (never `{ "user_model": { ... } }`). The participant id is not part of
+  this structure — only the label above it and the export filename carry it.
+  This is specifically the captured model, not a dump of everything in
+  storage — arbitrary keys the site sets via `SEND_DATA` (see Protocol above)
+  aren't shown here.
 - A "Go to settings and fill these in first." link, shown until both API keys
   and the Participant ID are set — clicking it opens Settings directly.
 - **Start calibration / Stop calibration** — Start stays disabled until the
