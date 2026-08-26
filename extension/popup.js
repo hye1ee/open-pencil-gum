@@ -1,4 +1,12 @@
+import { getApiKey, setApiKey } from './user-model/calls.js'
+import { getPid, setPid } from './user-model/storage.js'
+
+/** Flip to false to let the digit suffix be edited; everything else already
+ * treats the id as ordinary input. */
+const PID_LOCKED = true
+
 const STATUS_KEY = '__status'
+const CALIBRATING_KEY = '__calibrating'
 const STATUS_LABELS = {
   idle: 'idle',
   'received-data': 'received data',
@@ -8,22 +16,74 @@ const STATUS_LABELS = {
 
 const statusEl = document.getElementById('status')
 const dataEl = document.getElementById('data')
-const generateInitialButton = document.getElementById('generate-initial')
+const pidSuffixInput = document.getElementById('pid-suffix')
+const apiKeyInput = document.getElementById('api-key')
+const calibrationHint = document.getElementById('calibration-hint')
+const calibrationStateEl = document.getElementById('calibration-state')
+const startButton = document.getElementById('start-calibration')
+const stopButton = document.getElementById('stop-calibration')
 const exportButton = document.getElementById('export')
 const restartButton = document.getElementById('restart')
+
+let calibrating = false
+
+// Anything reserved (`__`-prefixed) is internal state, not site data.
+function siteData(items) {
+  return Object.fromEntries(Object.entries(items).filter(([key]) => !key.startsWith('__')))
+}
+
+/** A proposition's embeddings are 512 floats each — real ones would flood this
+ * small preview. Display-only: the export and the stored data keep them. */
+function withoutEmbeddings(proposition) {
+  const { embedding: _embedding, originalEmbedding: _originalEmbedding, ...rest } = proposition
+  return rest
+}
+
+function fullPid() {
+  return `P${pidSuffixInput.value.trim() || '0'}`
+}
+
+/** Both fields have to be filled before calibration can start. Called on
+ * every keystroke as well as on storage updates, since `render` alone would
+ * only react after a field is committed. */
+function updateButtons() {
+  const ready = pidSuffixInput.value.trim() !== '' && apiKeyInput.value.trim() !== ''
+  calibrationHint.hidden = ready
+  startButton.disabled = calibrating || !ready
+  stopButton.disabled = !calibrating
+}
 
 function render(items) {
   const status = items[STATUS_KEY] || 'idle'
   statusEl.dataset.status = status
   statusEl.textContent = STATUS_LABELS[status] || status
 
-  // Everything but the reserved key is the actual data the site has stored.
-  const data = { ...items }
-  delete data[STATUS_KEY]
+  const data = siteData(items)
+  for (const key of Object.keys(data)) {
+    if (key.startsWith('user_model_') && Array.isArray(data[key])) {
+      data[key] = data[key].map(withoutEmbeddings)
+    }
+  }
   dataEl.textContent = JSON.stringify(data, null, 2)
+
+  calibrating = items[CALIBRATING_KEY] === true
+  calibrationStateEl.textContent = calibrating ? 'running' : 'off'
+  calibrationStateEl.dataset.calibrating = String(calibrating)
+  updateButtons()
 }
 
 chrome.storage.local.get(null, render)
+
+void getPid().then((pid) => {
+  pidSuffixInput.value = pid.replace(/^P/, '')
+  pidSuffixInput.disabled = PID_LOCKED
+  updateButtons()
+})
+
+void getApiKey().then((key) => {
+  apiKeyInput.value = key
+  updateButtons()
+})
 
 // The popup only exists while open, so live updates matter here in a way they
 // wouldn't for a persistent page.
@@ -32,37 +92,65 @@ chrome.storage.onChanged.addListener((_changes, area) => {
   chrome.storage.local.get(null, render)
 })
 
+pidSuffixInput.addEventListener('input', () => {
+  // Digits only — the "P" prefix is fixed, this is just what follows it.
+  pidSuffixInput.value = pidSuffixInput.value.replace(/\D/g, '')
+  updateButtons()
+})
+
+pidSuffixInput.addEventListener('change', () => {
+  void setPid(fullPid())
+})
+
+apiKeyInput.addEventListener('input', updateButtons)
+
+apiKeyInput.addEventListener('change', () => {
+  void setApiKey(apiKeyInput.value.trim())
+})
+
+startButton.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'START_CALIBRATION' }, (result) => {
+    if (result && result.ok === false) {
+      calibrationStateEl.textContent = result.error ?? 'failed to start'
+    }
+  })
+})
+
+stopButton.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'STOP_CALIBRATION' })
+})
+
 // Colon-free, so the filename is valid on every OS, not just the ones that
 // allow it in a name.
 function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, '-')
 }
 
-function exportData(items) {
-  const data = { ...items }
-  delete data[STATUS_KEY]
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+async function exportData(items) {
+  // Full fidelity here, embeddings included — unlike the in-popup preview,
+  // this is meant to be a real backup of what was captured.
+  const pid = await getPid()
+  const blob = new Blob([JSON.stringify(siteData(items), null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `usermodel-${timestamp()}.json`
+  link.download = `usermodel-${pid}-${timestamp()}.json`
   link.click()
   URL.revokeObjectURL(url)
 }
 
-generateInitialButton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'GENERATE_INITIAL' })
-})
-
 exportButton.addEventListener('click', () => {
-  chrome.storage.local.get(null, exportData)
+  chrome.storage.local.get(null, (items) => {
+    void exportData(items)
+  })
 })
 
 // Export first: a restart clears the data being exported, so the order can't
 // flip without losing what was there.
 restartButton.addEventListener('click', () => {
   chrome.storage.local.get(null, (items) => {
-    exportData(items)
-    chrome.runtime.sendMessage({ type: 'RESET' })
+    void exportData(items).then(() => {
+      chrome.runtime.sendMessage({ type: 'RESET' })
+    })
   })
 })

@@ -2,7 +2,10 @@
 // a page directly, since it only ever hears from its own content script.
 //
 // `__status` lives in the same storage.local as the data, under a reserved
-// key, so the popup can watch both with one `storage.onChanged` listener.
+// key, so the popup can watch both with one `storage.onChanged` listener. Any
+// key starting with `__` is internal state, not site data — see popup.js.
+
+import { CALIBRATING_KEY, startCalibration, stopCalibration } from './user-model/use.js'
 
 const DEFAULT_KEY = 'default'
 const STATUS_KEY = '__status'
@@ -44,34 +47,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'RESET') {
-    chrome.storage.local.clear(() => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
-        return
-      }
-      setStatus('idle')
-      sendResponse({ ok: true })
-    })
-    return true
-  }
-
-  if (message.type === 'GENERATE_INITIAL') {
-    // Cleared first, so the current data ends up as exactly this shape rather
-    // than this key alongside whatever was already stored.
-    chrome.storage.local.clear(() => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
-        return
-      }
-      chrome.storage.local.set({ user_model: null }, () => {
+    // Internal (`__`-prefixed) keys — the API key, calibration state — survive
+    // a restart of the data; only what the site/calibration produced is wiped.
+    stopCalibration()
+    chrome.storage.local.get(null, (all) => {
+      const preserved = Object.fromEntries(
+        Object.entries(all).filter(([key]) => key.startsWith('__'))
+      )
+      chrome.storage.local.clear(() => {
         if (chrome.runtime.lastError) {
           sendResponse({ ok: false, error: chrome.runtime.lastError.message })
           return
         }
-        sendResponse({ ok: true })
+        chrome.storage.local.set({ ...preserved, [STATUS_KEY]: 'idle', [CALIBRATING_KEY]: false }, () => {
+          sendResponse({ ok: true })
+        })
       })
     })
     return true
+  }
+
+  if (message.type === 'START_CALIBRATION') {
+    startCalibration().then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'STOP_CALIBRATION') {
+    sendResponse(stopCalibration())
+    return false
   }
 
   return false

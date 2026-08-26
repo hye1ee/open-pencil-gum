@@ -42,6 +42,12 @@
         color: #777;
         margin: 10px 0 4px;
       }
+      .label .state {
+        font-weight: 600;
+      }
+      .label .state[data-calibrating='true'] {
+        color: #1a7d3a;
+      }
       pre {
         margin: 0;
         max-height: 200px;
@@ -53,6 +59,47 @@
         font-size: 11px;
         white-space: pre-wrap;
         word-break: break-all;
+      }
+      input[type='password'],
+      input[type='text'] {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #d8d8d8;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      .pid-field {
+        display: flex;
+        align-items: stretch;
+        border: 1px solid #d8d8d8;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .pid-field .prefix {
+        padding: 6px 8px;
+        background: #f0f0f0;
+        color: #666;
+        font-weight: 600;
+        font-size: 12px;
+        border-right: 1px solid #d8d8d8;
+      }
+      .pid-field input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        border-radius: 0;
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      .pid-field input:disabled {
+        background: #fafafa;
+        color: #999;
+      }
+      .hint {
+        margin: 8px 0 0;
+        font-size: 11px;
+        color: #9a6b00;
       }
       button {
         width: 100%;
@@ -67,12 +114,17 @@
       button:hover {
         background: #f2f2f2;
       }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        background: #fff;
+      }
       button#restart {
         margin-top: 12px;
         border-color: #e3b3ad;
         color: #a3382c;
       }
-      button#restart:hover {
+      button#restart:hover:not(:disabled) {
         background: #fdecea;
       }
     </style>
@@ -84,10 +136,24 @@
     <div class="label">Current data</div>
     <pre id="data">{}</pre>
 
-    <button id="generate-initial">Generate initial user model</button>
+    <div class="label">Participant ID</div>
+    <div class="pid-field">
+      <span class="prefix">P</span>
+      <input type="text" id="pid-suffix" inputmode="numeric" autocomplete="off" />
+    </div>
+
+    <div class="label">OpenAI API key</div>
+    <input type="password" id="api-key" placeholder="sk-..." autocomplete="off" />
+
+    <p class="hint" id="calibration-hint">Fill in the Participant ID and OpenAI API key above to enable calibration.</p>
+
+    <div class="label">Calibration — <span class="state" id="calibration-state">off</span></div>
+    <button id="start-calibration">Start calibration</button>
+    <button id="stop-calibration">Stop calibration</button>
+
     <button id="export">Export</button>
     <button id="restart">Restart</button>
 
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>
