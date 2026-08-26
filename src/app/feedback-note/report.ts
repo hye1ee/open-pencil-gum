@@ -1,5 +1,12 @@
 import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
+import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
 import type { StepFeedbackResult } from '@/app/feedback-note/session'
+
+function selectedAlternative(item: ConfirmedFeedback): { id: string; label: string } | null {
+  const { selection } = item
+  if (selection.type === 'none' || selection.type === 'text') return null
+  return selection.target ?? null
+}
 
 export function renderStepFeedbackReport(result: StepFeedbackResult, request: string): string {
   const lines = [
@@ -31,9 +38,18 @@ export function renderStepFeedbackReport(result: StepFeedbackResult, request: st
       lines.push('   The user reviewed this note and accepted it without correction.')
     } else {
       for (const item of outcome.feedbackItems) {
-        lines.push(
-          `   On ${feedbackSelectionLabel(item.selection)}, the user said: "${item.feedback}"`
-        )
+        const target = selectedAlternative(item)
+        if (target) {
+          lines.push(`   AUTHORITATIVE CHOICE: ${target.label} (id: ${target.id})`)
+          lines.push(`   Supporting explanation: "${item.feedback}"`)
+          lines.push(
+            '   Interpretation rule: carry out the authoritative choice. Use the explanation only to understand or refine that choice; never use it to reverse the selected alternative.'
+          )
+        } else {
+          lines.push(
+            `   On ${feedbackSelectionLabel(item.selection)}, the user said: "${item.feedback}"`
+          )
+        }
       }
     }
   }

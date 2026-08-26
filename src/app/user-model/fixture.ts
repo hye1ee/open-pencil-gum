@@ -4,39 +4,104 @@ const AT = '2026-01-01T00:00:00.000Z'
 
 const ITEMS = [
   [
-    'Uses one warm amber accent while keeping secondary and tertiary controls neutral.',
-    0.87,
-    'Concentrating color on one control makes the primary action immediately identifiable.'
+    'Arranges comparable cards in a compact three-column row on wide canvases.',
+    0.83,
+    ''
   ],
   [
-    'Keeps button hierarchy explicit with a filled primary, outlined secondary, and text-only tertiary style.',
-    0.86,
-    'Distinct treatments let people compare action importance without reading every label first.'
+    'Keeps comparable cards equal in width and consistent in their internal information structure.',
+    0.89,
+    ''
   ],
   [
-    'Uses concise explicit action labels rather than icon-only buttons.',
-    0.82,
-    'Text labels make each action understandable without requiring familiarity with an icon.'
+    'Allows repeated components to hug their content instead of forcing equal height when their content differs.',
+    0.67,
+    ''
   ],
   [
-    'Arranges related button variants in a compact horizontal row.',
+    'Uses thin borders rather than heavy shadows to separate cards from the canvas.',
+    0.74,
+    ''
+  ],
+  [
+    'Uses one warm amber accent for the most important action in an interface.',
+    0.91,
+    ''
+  ],
+  [
+    'Keeps most surfaces and secondary actions visually neutral.',
     0.78,
-    'Placing variants together makes their hierarchy and differences easier to compare.'
+    ''
   ],
   [
-    'Prefers moderately rounded button corners over pill shapes or sharp rectangles.',
-    0.75,
-    'Moderate rounding keeps controls approachable without making them resemble tags or chips.'
+    'Prefers moderately rounded corners over sharp rectangles or highly rounded panels.',
+    0.54,
+    ''
   ],
   [
-    'Avoids gradients and decorative shadows on functional controls.',
+    'Avoids gradients and decorative effects on functional interfaces.',
+    0.69,
+    ''
+  ],
+  [
+    'Presents the important conclusion before supporting details.',
+    0.87,
+    ''
+  ],
+  [
+    'Prefers everyday language over unexplained professional terminology.',
     0.72,
-    'Simple surfaces keep button states visually stable and easy to distinguish.'
+    ''
   ],
   [
-    'Keeps button padding generous enough to create comfortable interaction targets.',
+    'Keeps explanations concise without omitting the reason behind a decision.',
+    0.85,
+    ''
+  ],
+  [
+    'Establishes structure and information hierarchy before refining color and decoration.',
+    0.88,
+    ''
+  ],
+  [
+    'Prefers seeing a small representative example before expanding work across the full task.',
+    0.63,
+    ''
+  ],
+  [
+    'Prefers incremental revisions that preserve working parts instead of rebuilding the whole result.',
+    0.81,
+    ''
+  ],
+  [
+    'Wants the agent to surface consequential assumptions before committing to them.',
     0.76,
-    'Comfortable targets reduce accidental activation without making the control visually oversized.'
+    ''
+  ],
+  [
+    'Allows the agent to make minor, reversible decisions without requesting approval.',
+    0.58,
+    ''
+  ],
+  [
+    'Wants alternatives with similar value explained through their trade-offs rather than presented as an arbitrary binary choice.',
+    0.71,
+    ''
+  ],
+  [
+    'Does not rely on color alone to communicate an important state or distinction.',
+    0.66,
+    ''
+  ],
+  [
+    'Prioritizes stable responsive behavior before visual polish.',
+    0.43,
+    ''
+  ],
+  [
+    'Checks the source and publication date when evaluating information found through web search.',
+    0.94,
+    ''
   ]
 ] as const
 
@@ -51,7 +116,7 @@ export const USER_MODEL_FIXTURE: Proposition[] = ITEMS.map(
       decay: 0,
       reasoning: 'Stable test proposition for feedback-note evaluation.',
       rationale,
-      rationaleGrounds: 'Seeded test rationale for the three-button feedback scenario.',
+      rationaleGrounds: '',
       rationaleFrom: [],
       createdAt: AT,
       updatedAt: AT,

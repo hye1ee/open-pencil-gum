@@ -21,6 +21,7 @@ const CHOICE_CUE_PATTERN =
   /\b(?:choose|select|pick|which|prefer(?:red)?|decide|confirm|resolve|mark)\b/i
 
 function selectionText(note: FeedbackNote, selection: FeedbackSelection): string {
+  if (selection.type === 'none') return 'General feedback about the entire note.'
   if (selection.type === 'text') return `Selected text: ${selection.text}`
   if (selection.target) {
     const target = `"${selection.target.label}" (id: ${selection.target.id})`

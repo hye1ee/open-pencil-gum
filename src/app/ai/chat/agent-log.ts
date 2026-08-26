@@ -232,7 +232,7 @@ export function logFeedbackNoteCode(
  */
 export function logFeedbackStep(
   step: number,
-  event: 'note' | 'proceed' | 'retry' | 'report',
+  event: 'note' | 'waiting' | 'proceed' | 'retry' | 'report',
   detail: string
 ): void {
   write('NOTE-STEP', `step ${step} ${event} → ${detail}`)

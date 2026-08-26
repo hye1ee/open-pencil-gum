@@ -140,6 +140,26 @@ export function createPropositionSink(sessionId: string): UserModel {
       }
     },
 
+    onFeedbackRetrieval: (trace) => {
+      for (const note of trace.notes) {
+        logUserModelStage(
+          'retrieval',
+          `${note.noteId} direct → ${note.directIds.join(', ') || '(none)'}`
+        )
+        logUserModelStage(
+          'retrieval',
+          `${note.noteId} embedding → ${
+            note.embedding.map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`).join(', ') ||
+            '(none above threshold)'
+          }`
+        )
+      }
+      logUserModelStage(
+        'retrieval',
+        `shown-to-feedback-model → ${trace.shownIds.join(', ') || '(none)'}`
+      )
+    },
+
     onRevision: logPropositionChange,
 
     onRationale: logRationaleChange,

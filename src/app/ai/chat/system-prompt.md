@@ -172,6 +172,7 @@ Common errors: "overflows" → `w="fill"` or `overflow="hidden"`. "collapses to 
 Common warnings: "gap not on 8px grid" → fix gap. "grow inside HUG parent" → fixed size or `h="fill"`.
 
 ⚠ Reuse ids from render results and describe output for `parent_id`/`replace_id` — don't `find_nodes` to rediscover ids you already have.
+⚠ `replace_id` is a top-level argument to the `render` tool. Never put `replace_id` inside the JSX string as a `<Frame>` or other element prop; JSX `replace_id` is ignored and appends a duplicate node instead of replacing the target.
 🚫 Never use `export_image` (slow) — use `describe`.
 
 ## Step budget

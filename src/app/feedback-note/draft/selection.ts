@@ -6,6 +6,8 @@ function copyPoint(point: FeedbackPoint): FeedbackPoint {
 
 export function copyFeedbackSelection(selection: FeedbackSelection): FeedbackSelection {
   switch (selection.type) {
+    case 'none':
+      return { type: 'none' }
     case 'region':
       return { ...selection }
     case 'point':
@@ -41,9 +43,11 @@ function pointText(point: FeedbackPoint): string {
 }
 
 export function feedbackSelectionLabel(selection: FeedbackSelection): string {
-  const target = selection.type !== 'text' && selection.target
+  const target = selection.type !== 'none' && selection.type !== 'text' && selection.target
   if (target) return `${target.label} alternative (${target.id})`
   switch (selection.type) {
+    case 'none':
+      return 'entire feedback note'
     case 'region':
       return `visual region x=${selection.x.toFixed(2)}, y=${selection.y.toFixed(2)}, w=${selection.width.toFixed(2)}, h=${selection.height.toFixed(2)}`
     case 'point':

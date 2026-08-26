@@ -15,6 +15,7 @@ interface TargetedVisualSelection {
 }
 
 export type FeedbackSelection =
+  | { type: 'none' }
   | ({
       type: 'region'
       x: number

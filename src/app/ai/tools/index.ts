@@ -21,7 +21,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 import { ensureGraphFonts } from '@/app/editor/fonts'
 import { notifyMetaAgentNodeReplaced } from '@/app/meta-agent/events'
 
-export const MAX_AGENT_STEPS = 10
+export const MAX_AGENT_STEPS = 30
 
 export interface StepUsage {
   inputTokens: number

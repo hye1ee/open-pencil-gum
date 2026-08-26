@@ -44,7 +44,7 @@ function drawArrowHead(
 }
 
 function drawAnnotation(canvas: HTMLCanvasElement, selection: FeedbackSelection) {
-  if (selection.type === 'text') return
+  if (selection.type === 'none' || selection.type === 'text') return
   const context = canvas.getContext('2d')
   if (!context) return
   const scale = Math.max(1, Math.min(canvas.width, canvas.height) / 360)
@@ -126,7 +126,7 @@ export async function annotateFeedbackCanvas(
 ): Promise<{ overviewImage: Uint8Array; annotatedImage?: Uint8Array }> {
   const overview = scaledCanvas(sourceCanvas)
   const overviewImage = await canvasBytes(overview)
-  if (selection.type === 'text') return { overviewImage }
+  if (selection.type === 'none' || selection.type === 'text') return { overviewImage }
   const annotated = scaledCanvas(sourceCanvas)
   drawAnnotation(annotated, selection)
   return { overviewImage, annotatedImage: await canvasBytes(annotated) }

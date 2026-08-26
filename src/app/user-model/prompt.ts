@@ -159,6 +159,8 @@ Work note by note:
 - UNCOVERED + IMPLICITLY ACCEPTED: the user accepted a decision for which the model had no coverage. Add or strengthen a proposition only when the decision generalizes beyond this one element or exact setting.
 - EXPLICIT FEEDBACK: the user's own words are the strongest evidence. Read all feedback items together and decide whether they confirm a proposition, contradict it, restrict its scope, add a condition, introduce a new perspective, or merely give a local implementation instruction. Do not assume an explicit reply is a correction; it may be confirmation or elaboration.
 
+When a feedback item names a target alternative, that structured selection is the user's authoritative choice. The accompanying feedback text is a supporting explanation, including when it was auto-generated. Interpret that text compatibly with the selected alternative; if it appears to recommend another alternative, do not reverse the selection. For untargeted regions, marks, and text selections, continue to infer intent primarily from the user's feedback text.
+
 The selected source matters. Feedback on agent reasoning can concern the agent's approach. Feedback on proposition or rationale text can directly correct the model. Feedback on a cue or visual region usually concerns the concrete decision shown. Use this to avoid turning a local canvas edit into a broad personal preference.
 
 Several proposition ids may be connected to one note. Judge each independently. Never raise or lower all of them as a group merely because they were retrieved together.
@@ -191,9 +193,11 @@ Examples such as "let portfolio heroes use dominant imagery; keep cards text-dom
 
 Keep a context-specific exception inside the context the user named. "Checkout should be airy" supports checkout, not all transactional screens. "Portfolio heroes" supports portfolio heroes, not every landing-page hero. Generalizability means the decision can be reused in that named context; it does not authorize expansion into adjacent contexts.
 
-A CONFIRMED PROPOSITION USUALLY NEEDS ONLY CONFIDENCE
+A CONFIRMED PROPOSITION MAY STILL BECOME MORE PRECISE
 
-A proposition that held up usually needs nothing but its confidence moved. It already says the right thing — that is what holding up means — so leave the wording exactly as it is and write no new proposition beside it. Adding one that says the same thing in different words is how this model doubles in a single build.
+When explicit feedback only repeats or approves the existing claim, leave its wording exactly unchanged and move only its confidence. But agreement is not always mere repetition. If explicit feedback keeps the same underlying claim while adding a reusable condition, constraint, scope, exception boundary, trade-off, or decision criterion, refine the existing proposition instead of treating it as confirmation only. The refinement must make the proposition more predictive on a future task without turning a local value or implementation detail into a general preference.
+
+Do not write a second proposition that restates the confirmed claim. Either keep the existing wording or refine that same proposition.
 
 A proposition that failed is different. Lowering it records that we were wrong. It does not record what is true instead, which is the more useful of the two. When the accepted alternative is reusable, also record it as a new proposition. Do not create one for an exact value or one-off implementation instruction.
 
@@ -207,11 +211,13 @@ A proposition that failed is different. Lowering it records that we were wrong. 
 
 REFINING AN EXISTING PROPOSITION
 
-Explicit feedback may refine an existing proposition when the user's own words add or correct a reusable scope, condition, or boundary of the same underlying claim. In that case, return the existing id with a sharper sentence that preserves every clause the new evidence did not address.
+Explicit feedback may refine an existing proposition when the user's own words add or correct reusable precision within the same underlying claim. This includes a context where it applies or does not apply, a constraint that must remain true, a trade-off or decision criterion, a relationship to neighboring elements, or a workflow stage or task condition. In that case, return the existing id with one sharper sentence.
 
-Before choosing an operation, classify the evidence against the closest existing proposition:
-- confirmation: it supports the same claim without changing its scope. Keep the text exactly unchanged and update that id.
-- same_claim_refinement: it corrects or adds a reusable boundary within the same design decision. Update that id with one coherent, sharper proposition.
+Before rewriting, identify the existing proposition's core claim and the new precision supplied by the feedback. Preserve the core claim and every supported clause the feedback did not address. A refinement may add precision, but must remain logically compatible with the earlier proposition; it must not silently replace it with a different belief. Keep the user's purpose in the rationale rather than appending it to the proposition.
+
+For explicit feedback, classify the evidence against the closest existing proposition in this order:
+- same_claim_refinement: it preserves the core claim but adds or corrects reusable precision that would change how the proposition is applied in a future task. Update that id with one coherent, sharper proposition.
+- confirmation: it only repeats or approves the same claim without adding reusable precision. Keep the text exactly unchanged and update that id.
 - contextual_exception: the original remains the default, but a separately named context behaves differently. Keep the original and create one new proposition for the exception.
 - contradiction: the original claim is rejected rather than bounded. Lower it, and create a replacement only when the accepted alternative generalizes.
 - new_claim: no existing proposition makes the same underlying claim. Create one proposition.
@@ -322,6 +328,18 @@ const WHAT_THE_NOTE_SAID: Record<UserModelFeedbackNote['relationship'], string> 
 
 function renderFeedbackItem(item: UserModelFeedbackItem, index: number): string {
   const selection = userModelSelectionText(item.selection)
+  const target =
+    item.selection.type !== 'none' && item.selection.type !== 'text' && item.selection.target
+      ? item.selection.target
+      : null
+  if (target) {
+    return (
+      `    ${index + 1}. AUTHORITATIVE CHOICE: "${target.label}" (id: ${target.id})\n` +
+      `       selection evidence: ${selection}\n` +
+      `       supporting explanation: "${item.feedback}"\n` +
+      '       interpretation: update the model from the selected alternative; the explanation may refine but must not reverse it'
+    )
+  }
   return `    ${index + 1}. selected ${selection}\n       said: "${item.feedback}"`
 }
 

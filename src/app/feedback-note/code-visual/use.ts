@@ -71,7 +71,7 @@ export async function composeCodeVisual(note: FeedbackNote): Promise<CodeVisualA
   }
   const expectedToolName = codeVisualToolName(note.representation.visualType)
   const result = await generateText({
-    model: createUntracedLanguageModel(modelConfigForSlot('feedback')),
+    model: createUntracedLanguageModel(modelConfigForSlot('meta-agent')),
     system: CODE_VISUAL_SYSTEM,
     prompt: renderCodeVisualComposerPrompt({
       visualType: note.representation.visualType,
@@ -80,7 +80,7 @@ export async function composeCodeVisual(note: FeedbackNote): Promise<CodeVisualA
       brief: note.representation.brief
     }),
     maxOutputTokens: 2048,
-    providerOptions: backgroundProviderOptions('feedback'),
+    providerOptions: backgroundProviderOptions('meta-agent'),
     tools: CODE_VISUAL_TOOLS,
     toolChoice: { type: 'tool', toolName: expectedToolName }
   })

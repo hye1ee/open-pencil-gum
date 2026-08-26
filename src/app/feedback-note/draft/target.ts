@@ -42,6 +42,8 @@ function pointBounds(points: FeedbackPoint[]): NormalizedRect | null {
 
 function selectionPoints(selection: FeedbackSelection): FeedbackPoint[] {
   switch (selection.type) {
+    case 'none':
+      return []
     case 'point':
       return [selection]
     case 'arrow':
@@ -61,6 +63,8 @@ function selectionPoints(selection: FeedbackSelection): FeedbackPoint[] {
 
 function selectionBounds(selection: FeedbackSelection): NormalizedRect | null {
   switch (selection.type) {
+    case 'none':
+      return null
     case 'region':
       return selection
     case 'arrow':
@@ -126,7 +130,7 @@ export function resolveCodeVisualTarget(input: {
   targets: CodeVisualTarget[]
   selection: FeedbackSelection
 }): FeedbackVisualTarget | null {
-  if (input.selection.type === 'text') return null
+  if (input.selection.type === 'none' || input.selection.type === 'text') return null
   const ranked = positionedTargets(input.frame, input.container, input.targets)
     .map((target) => ({ target, score: targetScore(target, input.selection) }))
     .filter((candidate) => candidate.score > 0)

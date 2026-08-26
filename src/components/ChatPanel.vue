@@ -31,7 +31,6 @@ import {
   type StepFeedbackResult
 } from '@/app/feedback-note/session'
 import {
-  MAX_AGENT_STEPS,
   clearToolLogEntries,
   continueRunSteps,
   currentRunStepNumber,
@@ -99,10 +98,9 @@ const queuedMessages = computed<UIMessage[]>(() =>
   }))
 )
 // Counted off the run rather than off the last assistant message. A build
-// restarted after marker feedback writes a second assistant message, so
-// counting `step-start` parts there would send the bar back to zero half way
-// through — the restart is an implementation detail and must not show.
-const currentStep = computed(() => Math.min(currentRunStepNumber(), MAX_AGENT_STEPS))
+// restarted after marker feedback writes a second assistant message, so the
+// restart remains an implementation detail and does not reset the visible step.
+const currentStep = computed(() => currentRunStepNumber())
 
 const activityText = computed(() => {
   if (agentActivity.metaAgentTasks > 0) return "Reviewing the current agent's reasoning…"
@@ -436,21 +434,15 @@ function handleClearChat() {
     <ProviderSetup v-if="!isConfigured" />
 
     <template v-else>
-      <!-- Agent loop progress — pinned above the scrollable messages -->
+      <!-- Agent loop step — pinned above the scrollable messages -->
       <div
         v-if="showStepBar"
         data-test-id="chat-step-bar"
-        class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+        class="flex shrink-0 items-center border-b border-border px-3 py-1.5"
       >
         <span class="shrink-0 text-[10px] tabular-nums text-muted">
-          Step {{ currentStep }} / {{ MAX_AGENT_STEPS }}
+          Step {{ currentStep }}
         </span>
-        <div class="h-1 flex-1 overflow-hidden rounded-full bg-hover">
-          <div
-            class="h-full rounded-full bg-accent transition-[width] duration-300"
-            :style="{ width: `${Math.min(100, (currentStep / MAX_AGENT_STEPS) * 100)}%` }"
-          />
-        </div>
       </div>
 
       <ScrollAreaRoot class="min-h-0 flex-1">

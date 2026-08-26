@@ -183,6 +183,22 @@ export interface UserModelFeedbackBatch {
   notes: UserModelFeedbackNote[]
 }
 
+export interface FeedbackRetrievalCandidate {
+  id: string
+  score: number
+}
+
+export interface FeedbackRetrievalNote {
+  noteId: string
+  directIds: string[]
+  embedding: FeedbackRetrievalCandidate[]
+}
+
+export interface FeedbackRetrievalTrace {
+  notes: FeedbackRetrievalNote[]
+  shownIds: string[]
+}
+
 export interface UserModelOptions {
   deps: UserModelDeps
   /** Frames per batch. Six at a five-second cadence is half a minute of work. */
@@ -210,6 +226,8 @@ export interface UserModelOptions {
   onRationaleDropped?: (reason: string) => void
   /** What was read out of an observation, before any of it was applied. */
   onCandidates?: (candidates: CandidateProposition[]) => void
+  /** Direct citations and embedding neighbours shown to FEEDBACK_SYSTEM. */
+  onFeedbackRetrieval?: (trace: FeedbackRetrievalTrace) => void
   onStage?: (stage: PipelineStage) => void
   /** A batch dropped because the screen had not moved, with how far it did. */
   onIdle?: (pixelChange: number) => void
@@ -488,11 +506,16 @@ export function ageInDecayUnits(isoTimestamp: string, now: number): number {
 
 /** Discounted by how stale each expects to be, so tomorrow's candidate is
  * compared against what persists rather than against yesterday's noise. */
-function nearestPropositions(
+interface ScoredProposition {
+  proposition: Proposition
+  score: number
+}
+
+function nearestPropositionScores(
   embedding: number[],
   propositions: Proposition[],
   now: number
-): Proposition[] {
+): ScoredProposition[] {
   return propositions
     .map((proposition) => ({
       proposition,
@@ -503,7 +526,16 @@ function nearestPropositions(
     .filter((scored) => scored.score >= SIMILARITY_FLOOR)
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_NEIGHBOURS)
-    .map((scored) => scored.proposition)
+}
+
+function nearestPropositions(
+  embedding: number[],
+  propositions: Proposition[],
+  now: number
+): Proposition[] {
+  return nearestPropositionScores(embedding, propositions, now).map(
+    (scored) => scored.proposition
+  )
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -715,10 +747,21 @@ export function createUserModel(options: UserModelOptions): UserModel {
       stage('revising')
       const now = Date.now()
       const shown = new Map<string, Proposition>()
+      const retrievalNotes: FeedbackRetrievalNote[] = batch.notes.map((note) => ({
+        noteId: note.noteId,
+        directIds: [],
+        embedding: []
+      }))
 
-      for (const cited of batch.notes.flatMap((note) => note.propositionIds)) {
-        const held = propositions.find((p) => p.id === cited)
-        if (held) shown.set(held.id, held)
+      for (const [index, note] of batch.notes.entries()) {
+        const trace = retrievalNotes[index]
+        if (!trace) continue
+        for (const cited of note.propositionIds) {
+          const held = propositions.find((p) => p.id === cited)
+          if (!held) continue
+          shown.set(held.id, held)
+          trace.directIds.push(held.id)
+        }
       }
 
       const vectors = await deps.embed(
@@ -728,10 +771,14 @@ export function createUserModel(options: UserModelOptions): UserModel {
         })
       )
       for (const [i] of batch.notes.entries()) {
-        for (const near of nearestPropositions(vectors[i] ?? [], propositions, now)) {
-          shown.set(near.id, near)
+        const trace = retrievalNotes[i]
+        if (!trace) continue
+        for (const near of nearestPropositionScores(vectors[i] ?? [], propositions, now)) {
+          shown.set(near.proposition.id, near.proposition)
+          trace.embedding.push({ id: near.proposition.id, score: near.score })
         }
       }
+      options.onFeedbackRetrieval?.({ notes: retrievalNotes, shownIds: [...shown.keys()] })
 
       const raw = await deps.revise({
         system: FEEDBACK_SYSTEM,

@@ -98,7 +98,13 @@ function withCodeVisualTarget(
   container: HTMLElement
 ): NoteSelection {
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
-  if (selection.type === 'text' || note?.representation.type !== 'code-visual') return selection
+  if (
+    selection.type === 'none' ||
+    selection.type === 'text' ||
+    note?.representation.type !== 'code-visual'
+  ) {
+    return selection
+  }
   const artifact = note.representation.artifact
   const frame = codeVisualFrames.value?.find((candidate) => candidate.dataset.noteId === noteId)
   if (!artifact || !frame) return selection
@@ -383,6 +389,7 @@ function feedbackCount(noteId: string): number {
 }
 
 function feedbackTargetLabel(selection: NoteSelection): string {
+  if (selection.type === 'none') return 'Entire feedback note'
   if (selection.type === 'region') return 'Selected visual region'
   if (selection.type === 'point') return 'Selected position'
   if (selection.type === 'arrow') return 'Selected direction'
@@ -390,6 +397,12 @@ function feedbackTargetLabel(selection: NoteSelection): string {
   if (selection.type === 'freehand') return 'Selected freehand path'
   const compact = selection.text.replaceAll(/\s+/g, ' ').trim()
   return compact.length > 56 ? `“${compact.slice(0, 56)}…”` : `“${compact}”`
+}
+
+function openGeneralFeedback(noteId: string) {
+  beginSuggestionRequest(noteId)
+  selections[noteId] = { type: 'none' }
+  feedbackDrafts[noteId] = ''
 }
 
 function removeFeedback(noteId: string, index: number) {
@@ -697,7 +710,7 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
           @pointerdown="openFeedbackNote(note.id)"
         >
           <div
-            class="relative min-h-36 w-80 max-w-[min(80vw,52rem)] min-w-72 resize-x overflow-auto rounded-xl bg-panel p-4 shadow-xl ring-1 ring-border h-auto!"
+            class="relative min-h-36 w-80 max-w-[min(80vw,52rem)] min-w-72 resize overflow-auto rounded-xl bg-panel p-4 shadow-xl ring-1 ring-border"
           >
             <p class="mb-2 pr-10 text-xs font-semibold tracking-wide text-muted">
               Note from Step {{ note.originStep }} · Chunk {{ note.originChunk }}
@@ -953,6 +966,16 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
               </div>
             </div>
             <button
+              v-if="!hasAnnotation(note.id)"
+              type="button"
+              class="mt-3 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted ring-1 ring-border transition hover:bg-hover hover:text-surface"
+              aria-label="Write feedback about this note"
+              @click="openGeneralFeedback(note.id)"
+            >
+              <icon-lucide-message-square-plus class="size-3.5" />
+              Add feedback
+            </button>
+            <button
               type="button"
               class="absolute top-2 right-2 flex size-7 items-center justify-center rounded-md bg-surface text-panel shadow-sm transition hover:translate-x-0.5 hover:opacity-90"
               :class="{ 'bg-violet-600': hasFeedbackDraft(note.id) || feedbackCount(note.id) > 0 }"
@@ -1058,9 +1081,15 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
                   :placeholder="
                     feedbackSuggestions[note.id] || suggestionLoading[note.id]
                       ? ''
-                      : 'Explain this selection…'
+                      : selections[note.id]?.type === 'none'
+                        ? 'Share feedback about this note…'
+                        : 'Explain this selection…'
                   "
-                  aria-label="Feedback about selected area"
+                  :aria-label="
+                    selections[note.id]?.type === 'none'
+                      ? 'Feedback about this note'
+                      : 'Feedback about selected area'
+                  "
                   @input="feedbackSuggestions[note.id] = undefined"
                   @keydown.tab="acceptSuggestionOnTab(note.id, $event)"
                   @keydown.meta.enter.prevent="continueFeedbackNote(note.id)"

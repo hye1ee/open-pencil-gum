@@ -2,7 +2,7 @@ import { generateText } from 'ai'
 import { reactive } from 'vue'
 
 import { beginMetaAgentActivity } from '@/app/ai/chat/agent-activity'
-import { logFeedbackNoteCode, logFeedbackNoteImage } from '@/app/ai/chat/agent-log'
+import { logFeedbackNoteCode, logFeedbackNoteImage, logFeedbackStep } from '@/app/ai/chat/agent-log'
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
@@ -38,9 +38,17 @@ let nextId = 1
 const NOTE_HISTORY_LIMIT = 15
 let feedbackNoteHistory: FeedbackNoteHistoryItem[] = []
 let generation = 1
+const openFeedbackNoteSteps = new Map<number, number>()
 
 export function currentFeedbackNoteGeneration(): number {
   return generation
+}
+
+// A visible Note can precede later Notes from the same reasoning block.
+export function beginFeedbackNoteStep(originStep: number, generationAtStart: number): void {
+  if (isCurrentGeneration(generationAtStart)) {
+    openFeedbackNoteSteps.set(originStep, generationAtStart)
+  }
 }
 
 function isCurrentGeneration(value: number): boolean {
@@ -82,6 +90,7 @@ export function resetFeedbackNoteHistory(): void {
 
 export function resetFeedbackNotes(): void {
   generation++
+  openFeedbackNoteSteps.clear()
   for (const note of feedbackNoteState.notes) setHistoryStatus(note.id, 'continued')
   feedbackNoteState.notes = []
   feedbackNoteState.activeId = null
@@ -100,10 +109,32 @@ export async function settleFeedbackNoteStep(
     await generationTask
   } finally {
     if (isCurrentGeneration(generationAtStart)) {
-      const hasStepNote = feedbackNoteState.notes.some((note) => note.originStep === originStep)
-      if (!hasStepNote && feedbackNoteState.notes.length === 0) resumeTurn('feedback-note')
+      if (openFeedbackNoteSteps.get(originStep) === generationAtStart) {
+        openFeedbackNoteSteps.delete(originStep)
+      }
+      await finalizeFeedbackNoteStep(originStep)
     }
   }
+}
+
+async function finalizeFeedbackNoteStep(originStep: number): Promise<void> {
+  if (openFeedbackNoteSteps.has(originStep)) {
+    logFeedbackStep(
+      originStep,
+      'waiting',
+      'visible notes resolved, but later reasoning chunks are still being reviewed'
+    )
+    return
+  }
+  if (feedbackNoteState.notes.some((note) => note.originStep === originStep)) return
+
+  const result = takeStepFeedbackResult(originStep)
+  if (result.outcomes.length === 0) {
+    resumeTurn('feedback-note')
+    return
+  }
+  const handled = await submitStepFeedback(result)
+  if (!handled) resumeTurn('feedback-note')
 }
 
 export async function createFeedbackNotes(input: {
@@ -220,7 +251,5 @@ export async function resolveFeedbackNote(id: string): Promise<void> {
   const wasActive = feedbackNoteState.activeId === id
   feedbackNoteState.notes = feedbackNoteState.notes.filter((note) => note.id !== id)
   if (wasActive) feedbackNoteState.activeId = feedbackNoteState.notes[0]?.id ?? null
-  if (feedbackNoteState.notes.length > 0) return
-  const handled = await submitStepFeedback(takeStepFeedbackResult(note.originStep))
-  if (!handled) resumeTurn('feedback-note')
+  await finalizeFeedbackNoteStep(note.originStep)
 }

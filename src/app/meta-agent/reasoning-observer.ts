@@ -3,7 +3,11 @@ import { currentRunStepNumber } from '@/app/ai/tools'
 import type { EditorStore } from '@/app/editor/active-store'
 import { considerFeedbackNotesForStep } from '@/app/feedback-note/meta'
 import { interactiveFeedbackStep, recordFeedbackReasoning } from '@/app/feedback-note/session'
-import { currentFeedbackNoteGeneration, settleFeedbackNoteStep } from '@/app/feedback-note/use'
+import {
+  beginFeedbackNoteStep,
+  currentFeedbackNoteGeneration,
+  settleFeedbackNoteStep
+} from '@/app/feedback-note/use'
 import type { Proposition } from '@/app/meta-agent/judge'
 
 interface FeedbackNoteStreamState {
@@ -71,6 +75,7 @@ export function installReasoningObserver(options: ReasoningObserverOptions): voi
       const originStep = state.step ?? currentRunStepNumber(store)
       const originChunk = state.chunk
       if (!recordFeedbackReasoning(originStep, originChunk, reasoningChunk)) return
+      beginFeedbackNoteStep(originStep, state.generation)
       state.task = state.task.then(() =>
         considerFeedbackNotesForStep({
           store,
