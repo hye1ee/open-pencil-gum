@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>User model manager</title>
+    <style>
+      body {
+        width: 280px;
+        margin: 0;
+        padding: 12px;
+        font: 13px system-ui, sans-serif;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 13px;
+        margin: 0 0 10px;
+      }
+      .status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        background: #eee;
+        color: #666;
+      }
+      .status[data-status='received-data'] {
+        background: #dcf5e3;
+        color: #1a7d3a;
+      }
+      .status[data-status='received-data-request'] {
+        background: #fef3d5;
+        color: #9a6b00;
+      }
+      .status[data-status='proceed-data-request'] {
+        background: #dde8fd;
+        color: #2554c7;
+      }
+      .label {
+        font-size: 11px;
+        color: #777;
+        margin: 10px 0 4px;
+      }
+      pre {
+        margin: 0;
+        max-height: 200px;
+        overflow: auto;
+        padding: 8px;
+        background: #f6f6f7;
+        border: 1px solid #e2e2e2;
+        border-radius: 6px;
+        font-size: 11px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      button {
+        width: 100%;
+        margin-top: 8px;
+        padding: 6px 0;
+        border: 1px solid #d8d8d8;
+        border-radius: 6px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover {
+        background: #f2f2f2;
+      }
+      button#restart {
+        margin-top: 12px;
+        border-color: #e3b3ad;
+        color: #a3382c;
+      }
+      button#restart:hover {
+        background: #fdecea;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>User model manager</h1>
+    <span class="status" id="status" data-status="idle">idle</span>
+
+    <div class="label">Current data</div>
+    <pre id="data">{}</pre>
+
+    <button id="generate-initial">Generate initial user model</button>
+    <button id="export">Export</button>
+    <button id="restart">Restart</button>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
