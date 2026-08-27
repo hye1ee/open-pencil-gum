@@ -3,8 +3,6 @@ import { isTextUIPart } from 'ai'
 import type { ChatStatus, UIMessage } from 'ai'
 import { computed, markRaw, ref, shallowRef } from 'vue'
 
-import { ConversationTurnGate } from '@/app/conversation/gate'
-import { createConversationMonitor } from '@/app/conversation/monitor'
 import type { ConversationToolId } from '@/app/conversation/settings'
 import {
   deleteConversation,
@@ -16,9 +14,11 @@ import {
 } from '@/app/conversation/storage'
 import { createConversationTransport } from '@/app/conversation/transport'
 import type { ConversationFeedbackNote, ConversationRecord } from '@/app/conversation/types'
-import { learnConversationPreferences } from '@/app/conversation/user-model'
-import { createChatContext } from '@/app/meta-agent/context/chat'
-import type { Proposition } from '@/app/user-model/pipeline'
+import { createChatContext } from '@/app/meta-agent-chat/context'
+import { ChatTurnGate } from '@/app/meta-agent-chat/gate'
+import { createChatMonitor } from '@/app/meta-agent-chat/monitor'
+import { learnConversationPreferences } from '@/app/user-model-chat/pipeline'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 interface ConversationStoreOptions {
   apiKey(): string
@@ -51,7 +51,7 @@ function lastUserRequest(messages: readonly UIMessage[]): string {
 export class ConversationStore {
   private readonly options: ConversationStoreOptions
   private readonly chatRef = shallowRef<Chat<UIMessage> | null>(null)
-  private gate = new ConversationTurnGate()
+  private gate = new ChatTurnGate()
   private revisionFeedback: string | null = null
   private revisionRun = 0
   private preferenceUpdate: Promise<void> = Promise.resolve()
@@ -61,7 +61,7 @@ export class ConversationStore {
   readonly history = shallowRef<ConversationRecord[]>([])
   readonly currentId = ref<string>(crypto.randomUUID())
   readonly feedback = shallowRef<ConversationFeedbackNote | null>(null)
-  readonly propositions = shallowRef<Proposition[]>([])
+  readonly propositions = shallowRef<ChatProposition[]>([])
   readonly monitorActive = ref(false)
   readonly learning = ref(false)
   readonly revising = ref(false)
@@ -220,8 +220,8 @@ export class ConversationStore {
     this.revisionRun += 1
     this.revising.value = false
     this.gate.abandon()
-    this.gate = new ConversationTurnGate()
-    const observer = createConversationMonitor({
+    this.gate = new ChatTurnGate()
+    const observer = createChatMonitor({
       apiKey: this.options.apiKey(),
       modelId: this.options.modelId(),
       getContext: () =>

@@ -1,8 +1,8 @@
 import { isTextUIPart } from 'ai'
 import type { UIMessage } from 'ai'
 
-import type { MonitoredDomainContext } from '@/app/meta-agent/context/types'
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { ChatMonitoredContext } from '@/app/meta-agent-chat/types'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 function messageText(message: UIMessage): string {
   return message.parts
@@ -23,13 +23,12 @@ export function summarizeConversation(messages: readonly UIMessage[]): string {
 export function createChatContext(input: {
   messages: readonly UIMessage[]
   userRequest: string
-  propositions: readonly Proposition[]
+  propositions: readonly ChatProposition[]
   actions: readonly string[]
-}): MonitoredDomainContext {
+}): ChatMonitoredContext {
   return {
     domain: 'chat',
     userRequest: input.userRequest,
-    plan: null,
     propositions: input.propositions,
     summarizeState: () => summarizeConversation(input.messages),
     actionsSoFar: () => input.actions

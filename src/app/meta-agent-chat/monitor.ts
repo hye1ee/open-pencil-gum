@@ -3,10 +3,9 @@ import { valibotSchema } from '@ai-sdk/valibot'
 import { generateText, tool } from 'ai'
 import * as v from 'valibot'
 
-import type { ReasoningObserver } from '@/app/ai/chat/model-trace'
 import type { ConversationFeedbackNote } from '@/app/conversation/types'
-import type { MonitoredDomainContext } from '@/app/meta-agent/context/types'
-import { CHAT_MONITOR_SYSTEM, renderChatMonitorPrompt } from '@/app/meta-agent/prompts/chat'
+import { CHAT_MONITOR_SYSTEM, renderChatMonitorPrompt } from '@/app/meta-agent-chat/prompt'
+import type { ChatMonitoredContext, ChatReasoningObserver } from '@/app/meta-agent-chat/types'
 
 const monitorTools = {
   record_feedback_note: tool({
@@ -23,10 +22,10 @@ const monitorTools = {
   })
 }
 
-interface ConversationMonitorOptions {
+interface ChatMonitorOptions {
   apiKey: string
   modelId: string
-  getContext(): MonitoredDomainContext
+  getContext(): ChatMonitoredContext
   getMessageId(): string | null
   onActivity(active: boolean): void
   onReasoningChunk(chunk: string): void
@@ -38,7 +37,7 @@ function exactEvidence(reasoning: string, evidence: string): boolean {
   return evidence.trim() !== '' && flat(reasoning).includes(flat(evidence))
 }
 
-export function createConversationMonitor(options: ConversationMonitorOptions): ReasoningObserver {
+export function createChatMonitor(options: ChatMonitorOptions): ChatReasoningObserver {
   const tasks = new Map<number, Promise<void>>()
 
   async function review(reasoning: string): Promise<void> {
@@ -70,7 +69,7 @@ export function createConversationMonitor(options: ConversationMonitorOptions): 
         createdAt: Date.now()
       })
     } catch (error) {
-      console.warn('[conversation-monitor] review failed:', error)
+      console.warn('[meta-agent-chat] review failed:', error)
     } finally {
       options.onActivity(false)
     }

@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ConversationTurnGate } from '@/app/conversation/gate'
+import { ChatTurnGate } from '@/app/meta-agent-chat/gate'
 
-describe('ConversationTurnGate', () => {
+describe('ChatTurnGate', () => {
   test('holds provider actions and final output, but not incomplete thought', async () => {
-    const gate = new ConversationTurnGate()
+    const gate = new ChatTurnGate()
     gate.hold()
 
     expect(await gate.awaitResume('mid-thought')).toBe(true)
@@ -19,7 +19,7 @@ describe('ConversationTurnGate', () => {
   })
 
   test('abandons a pending tool call when feedback requests a revision', async () => {
-    const gate = new ConversationTurnGate()
+    const gate = new ChatTurnGate()
     gate.hold()
 
     const pending = gate.awaitResume('before-action')
@@ -28,7 +28,7 @@ describe('ConversationTurnGate', () => {
   })
 
   test('abandons pending final output when feedback requests a revision', async () => {
-    const gate = new ConversationTurnGate()
+    const gate = new ChatTurnGate()
     gate.hold()
 
     const pending = gate.awaitResume('before-final-response')

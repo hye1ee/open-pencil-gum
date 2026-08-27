@@ -19,7 +19,7 @@ import {
   propositionsForRun,
   summariseCanvas,
   withAncestors
-} from '@/app/meta-agent/context/design'
+} from '@/app/meta-agent/context'
 import {
   currentPlan,
   noteAgentPlan,
@@ -34,7 +34,7 @@ import {
   type Proposition,
   type SettledNote
 } from '@/app/meta-agent/judge'
-import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompts/design'
+import { JUDGE_SYSTEM, renderJudgePrompt } from '@/app/meta-agent/prompt'
 import {
   installReasoningObserver,
   resetFeedbackNoteStreams

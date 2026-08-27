@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai'
 
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 export type ConversationFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
 export type ConversationToolState = 'running' | 'complete' | 'failed'
@@ -36,6 +36,6 @@ export interface ConversationRecord {
 
 export interface ConversationPreferencesRecord {
   id: 'chat'
-  propositions: Proposition[]
+  propositions: ChatProposition[]
   updatedAt: number
 }

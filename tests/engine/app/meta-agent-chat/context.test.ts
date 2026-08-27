@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import type { UIMessage } from 'ai'
 
-import { createChatContext, summarizeConversation } from '@/app/meta-agent/context/chat'
+import { createChatContext, summarizeConversation } from '@/app/meta-agent-chat/context'
 
 const messages: UIMessage[] = [
   { id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Compare these approaches.' }] },

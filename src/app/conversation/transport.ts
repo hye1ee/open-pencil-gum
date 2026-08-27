@@ -2,25 +2,25 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
 import type { ChatTransport, ModelMessage, UIMessage } from 'ai'
 
-import { withModelTrace } from '@/app/ai/chat/model-trace'
-import type { ReasoningObserver } from '@/app/ai/chat/model-trace'
-import type { ConversationTurnGate } from '@/app/conversation/gate'
+import { CHAT_TASK_SYSTEM } from '@/app/conversation/prompt'
 import type { ConversationToolId } from '@/app/conversation/settings'
-import { CHAT_TASK_SYSTEM } from '@/app/meta-agent/prompts/chat'
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { ChatTurnGate } from '@/app/meta-agent-chat/gate'
+import { withChatModelTrace } from '@/app/meta-agent-chat/model-trace'
+import type { ChatReasoningObserver } from '@/app/meta-agent-chat/types'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 interface ConversationTransportOptions {
   apiKey: string
   modelId: string
   enabledTools: readonly ConversationToolId[]
-  observer: ReasoningObserver
-  gate: ConversationTurnGate
-  getPropositions(): readonly Proposition[]
+  observer: ChatReasoningObserver
+  gate: ChatTurnGate
+  getPropositions(): readonly ChatProposition[]
   takeRevisionFeedback(): string | null
   onActions(actions: string[]): void
 }
 
-function preferenceInstructions(propositions: readonly Proposition[]): string {
+function preferenceInstructions(propositions: readonly ChatProposition[]): string {
   if (propositions.length === 0) return ''
   const lines = propositions
     .filter((item) => item.confidence >= 0.35)
@@ -33,11 +33,9 @@ export function createConversationTransport(
   options: ConversationTransportOptions
 ): ChatTransport<UIMessage> {
   const google = createGoogleGenerativeAI({ apiKey: options.apiKey })
-  const model = withModelTrace(google(options.modelId), {
-    mode: 'conversation',
-    reasoningObserver: options.observer,
-    awaitResume: (point) => options.gate.awaitResume(point),
-    gateOutput: true
+  const model = withChatModelTrace(google(options.modelId), {
+    observer: options.observer,
+    awaitResume: (point) => options.gate.awaitResume(point)
   })
   const enabledTools = new Set(options.enabledTools)
   const tools = {

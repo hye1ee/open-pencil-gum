@@ -1,5 +1,5 @@
 import type { ConversationPreferencesRecord, ConversationRecord } from '@/app/conversation/types'
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 const DATABASE_NAME = 'open-pencil-chat'
 const DATABASE_VERSION = 1
@@ -106,7 +106,7 @@ export async function deleteConversation(id: string): Promise<void> {
   }
 }
 
-export async function loadConversationPreferences(): Promise<Proposition[]> {
+export async function loadConversationPreferences(): Promise<ChatProposition[]> {
   const database = await openDatabase()
   if (!database) return []
   try {
@@ -122,7 +122,7 @@ export async function loadConversationPreferences(): Promise<Proposition[]> {
   }
 }
 
-export async function saveConversationPreferences(propositions: Proposition[]): Promise<void> {
+export async function saveConversationPreferences(propositions: ChatProposition[]): Promise<void> {
   const database = await openDatabase()
   if (!database) return
   try {

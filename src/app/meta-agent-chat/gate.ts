@@ -1,4 +1,6 @@
-export class ConversationTurnGate {
+export type ChatGatePoint = 'mid-thought' | 'before-action' | 'before-final-response'
+
+export class ChatTurnGate {
   private blocked = false
   private resolver: ((resume: boolean) => void) | null = null
   private result: Promise<boolean> | null = null
@@ -11,7 +13,7 @@ export class ConversationTurnGate {
     })
   }
 
-  async awaitResume(point: 'mid-thought' | 'before-action' | 'before-final-response') {
+  async awaitResume(point: ChatGatePoint): Promise<boolean> {
     if (point === 'mid-thought' || !this.blocked || !this.result) return true
     return this.result
   }

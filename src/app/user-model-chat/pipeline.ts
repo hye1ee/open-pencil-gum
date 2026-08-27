@@ -5,8 +5,8 @@ import * as v from 'valibot'
 
 import { saveConversationPreferences } from '@/app/conversation/storage'
 import type { ConversationFeedbackNote } from '@/app/conversation/types'
-import { CHAT_USER_MODEL_SYSTEM } from '@/app/meta-agent/prompts/chat'
-import type { Proposition } from '@/app/user-model/pipeline'
+import { CHAT_USER_MODEL_SYSTEM } from '@/app/user-model-chat/prompt'
+import type { ChatProposition } from '@/app/user-model-chat/types'
 
 const updateTools = {
   update_conversation_user_model: tool({
@@ -26,7 +26,7 @@ const updateTools = {
   })
 }
 
-function renderExisting(propositions: readonly Proposition[]): string {
+function renderExisting(propositions: readonly ChatProposition[]): string {
   if (propositions.length === 0) return '(empty)'
   return propositions
     .map(
@@ -41,10 +41,12 @@ interface LearnOptions {
   modelId: string
   note: ConversationFeedbackNote
   reply: string | null
-  propositions: readonly Proposition[]
+  propositions: readonly ChatProposition[]
 }
 
-export async function learnConversationPreferences(options: LearnOptions): Promise<Proposition[]> {
+export async function learnConversationPreferences(
+  options: LearnOptions
+): Promise<ChatProposition[]> {
   const google = createGoogleGenerativeAI({ apiKey: options.apiKey })
   const outcome = options.reply
     ? `EXPLICIT FEEDBACK\n${options.reply}`
