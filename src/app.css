@@ -109,6 +109,41 @@ body {
   -webkit-user-select: none;
 }
 
+.conversation-markdown .stream-markdown [data-stream-markdown='thematic-break'] {
+  border-color: #cbd5e1;
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table-inner-wrapper'] {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table'] {
+  border-width: 0;
+  border-color: transparent;
+  border-radius: 0;
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table-header'] {
+  background: rgb(241 245 249 / 80%);
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table-body'] {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  font-weight: 400;
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table'] tr {
+  border-color: #e2e8f0;
+}
+
+.conversation-markdown .stream-markdown [data-stream-markdown='table'] tbody tr:last-child {
+  border-bottom: 0;
+}
+
 .code-highlight .token.tag {
   color: var(--color-code-tag);
 }

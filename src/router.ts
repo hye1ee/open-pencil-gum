@@ -1,13 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-import EditorView from './views/EditorView.vue'
-
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', component: EditorView },
-    { path: '/demo', component: EditorView, meta: { demo: true } },
-    { path: '/share/:roomId', component: EditorView }
+    { path: '/', redirect: '/canvas' },
+    { path: '/canvas', component: () => import('./views/EditorView.vue') },
+    { path: '/chat', component: () => import('./views/ChatView.vue') },
+    { path: '/demo', component: () => import('./views/EditorView.vue'), meta: { demo: true } },
+    { path: '/share/:roomId', component: () => import('./views/EditorView.vue') }
   ]
 })
 
