@@ -1,4 +1,4 @@
-import { normalizePath, type ServerOptions } from 'vite'
+import { normalizePath, type Plugin, type ServerOptions } from 'vite'
 
 const WATCHED_MARKDOWN_ROOTS = ['/src/', '/packages/core/src/', '/packages/vue/src/']
 
@@ -37,6 +37,26 @@ export function createDevServerOptions(host: string | undefined): ServerOptions 
       : undefined,
     watch: {
       ignored: WATCH_IGNORED
+    }
+  }
+}
+
+export function devRouteLinksPlugin(): Plugin {
+  return {
+    name: 'open-pencil-dev-route-links',
+    apply: 'serve',
+    configureServer(server) {
+      const printUrls = server.printUrls.bind(server)
+
+      server.printUrls = () => {
+        printUrls()
+
+        const rootUrl = server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0]
+        if (!rootUrl) return
+
+        server.config.logger.info(`  ➜  Chat:   ${new URL('/chat', rootUrl).href}`)
+        server.config.logger.info(`  ➜  Canvas: ${new URL('/canvas', rootUrl).href}`)
+      }
     }
   }
 }

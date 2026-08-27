@@ -44,13 +44,6 @@ interface RawFeedbackCueSegment {
   proposition_id?: unknown
 }
 
-export function feedbackNoteRelationship(toolName: string): FeedbackNoteRelationship | null {
-  if (toolName === 'create_alignment_feedback_note') return 'alignment'
-  if (toolName === 'create_conflict_feedback_note') return 'conflict'
-  if (toolName === 'create_uncovered_feedback_note') return 'uncovered'
-  return null
-}
-
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }

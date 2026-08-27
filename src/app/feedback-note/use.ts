@@ -1,27 +1,24 @@
-import { generateText } from 'ai'
 import { reactive } from 'vue'
 
 import { beginMetaAgentActivity } from '@/app/ai/chat/agent-activity'
 import { logFeedbackNoteCode, logFeedbackNoteImage, logFeedbackStep } from '@/app/ai/chat/agent-log'
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
-import { createUntracedLanguageModel } from '@/app/ai/chat/model'
-import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
 import {
   confirmedFeedbackForNote,
   resetConfirmedFeedbackHistory
 } from '@/app/feedback-note/draft/history'
 import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
 import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
-import { feedbackNoteRelationship, readFeedbackNote } from '@/app/feedback-note/parse'
+import { readFeedbackNote } from '@/app/feedback-note/parse'
 import {
   recordFeedbackOutcome,
   resetStepFeedbackSession,
   submitStepFeedback,
   takeStepFeedbackResult
 } from '@/app/feedback-note/session'
-import { FEEDBACK_NOTE_TOOLS } from '@/app/feedback-note/tools'
 import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/feedback-note/types'
 import type { FeedbackNoteRepresentationProvider } from '@/app/meta-agent/core/representation'
+import { runMetaAgent } from '@/app/meta-agent/core/runtime'
 import {
   DESIGN_FEEDBACK_NOTE_SYSTEM,
   renderDesignFeedbackNotePrompt
@@ -160,24 +157,17 @@ export async function createFeedbackNotes(
   const finishActivity = beginMetaAgentActivity()
   feedbackNoteState.pending = true
   try {
-    const result = await generateText({
-      model: createUntracedLanguageModel(modelConfigForSlot('meta-agent')),
+    const decisions = await runMetaAgent({
       system: DESIGN_FEEDBACK_NOTE_SYSTEM,
-      prompt: renderDesignFeedbackNotePrompt({ ...input, previousNotes: feedbackNoteHistory }),
-      maxOutputTokens: 2048,
-      providerOptions: backgroundProviderOptions('meta-agent'),
-      tools: FEEDBACK_NOTE_TOOLS,
-      toolChoice: 'auto'
+      prompt: renderDesignFeedbackNotePrompt({ ...input, previousNotes: feedbackNoteHistory })
     })
     if (!isCurrentGeneration(input.generation)) return []
     const knownTopics = new Set(feedbackNoteHistory.map((note) => note.topic.toLowerCase()))
-    const notes = result.staticToolCalls.slice(0, 1).flatMap((call) => {
-      const relation = feedbackNoteRelationship(call.toolName)
-      if (!relation) return []
+    const notes = decisions.flatMap((decision) => {
       const note = readFeedbackNote({
         id: `n${nextId++}`,
-        value: call.input,
-        relation,
+        value: decision.payload,
+        relation: decision.relationship,
         reasoning: input.reasoning,
         propositions: input.propositions,
         originStep: input.originStep,

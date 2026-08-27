@@ -15,7 +15,7 @@ import { copyCanvasKitAssetsPlugin } from './vite/canvaskit-assets'
 import { pageCapturePlugin } from './vite/page-capture'
 import { openPencilPwaPlugin } from './vite/pwa'
 import { rawMarkdownPlugin } from './vite/raw-markdown'
-import { createDevServerOptions } from './vite/server'
+import { createDevServerOptions, devRouteLinksPlugin } from './vite/server'
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -28,6 +28,7 @@ export default defineConfig(async ({ command }) => ({
     __OPENPENCIL_LOCAL_AUTOMATION_TOKEN__: JSON.stringify(localAutomationToken(command))
   },
   plugins: [
+    devRouteLinksPlugin(),
     agentLogPlugin(__dirname),
     pageCapturePlugin(__dirname),
     rawMarkdownPlugin(),
