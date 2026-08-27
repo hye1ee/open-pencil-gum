@@ -8,7 +8,7 @@ import type {
   FeedbackNoteRelationship,
   FeedbackNoteRepresentation
 } from '@/app/feedback-note/types'
-import type { Proposition } from '@/app/meta-agent/judge'
+import type { Proposition } from '@/app/meta-agent/core/types'
 
 interface RawFeedbackNote {
   topic?: unknown

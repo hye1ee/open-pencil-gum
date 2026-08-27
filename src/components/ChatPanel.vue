@@ -6,21 +6,10 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { agentActivity } from '@/app/ai/chat/agent-activity'
-import { logFeedbackStep, logMarkAnswer, logUserMessage } from '@/app/ai/chat/agent-log'
-import {
-  abandonTurn,
-  agentTurn,
-  forgetAbandonedTurn,
-  resumeTurn,
-  setTurnRunning
-} from '@/app/ai/chat/agent-turn'
-import {
-  clearMarks,
-  releaseAnswerHold,
-  setMarkResumeHandler,
-  takeAnswers
-} from '@/app/ai/chat/mismatch'
+import { logFeedbackAnswer, logFeedbackStep, logUserMessage } from '@/app/ai/chat/agent-log'
+import { abandonTurn, agentTurn, resumeTurn, setTurnRunning } from '@/app/ai/chat/agent-turn'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
+import { withoutDanglingToolCalls } from '@/app/ai/chat/transcript'
 import { copyChatLog } from '@/app/ai/debug'
 import { renderStepFeedbackReport } from '@/app/feedback-note/report'
 import { userModelFeedbackBatch } from '@/app/feedback-note/user-model'
@@ -36,16 +25,8 @@ import {
   currentRunStepNumber,
   didHitStepLimit
 } from '@/app/ai/tools'
-import { currentMetaRequest, marksAwaitingAnswer, noteSettledMarks } from '@/app/meta-agent/use'
-import {
-  buildMarkReport,
-  feedbackNotes,
-  hasContent,
-  renderReportForAgent,
-  takeUnreportedMarks,
-  withoutDanglingToolCalls
-} from '@/app/meta-agent/report'
-import { observeFeedbackNotes, observeMarkNotes } from '@/app/user-model/use'
+import { currentMetaRequest } from '@/app/meta-agent/use'
+import { observeFeedbackNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
@@ -85,7 +66,9 @@ const status = computed(() => chat.value?.status ?? 'ready')
 const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
 const retryHandoffToken = ref<number | null>(null)
 let nextRetryHandoffToken = 1
-const logicallyRunning = computed(() => isRunning.value || retryHandoffToken.value !== null)
+const logicallyRunning = computed(
+  () => isRunning.value || retryHandoffToken.value !== null || agentTurn.paused
+)
 
 // Messages the user typed while a run was in progress. They're injected into the
 // running loop (not the persisted history), so we echo them here optimistically.
@@ -98,8 +81,8 @@ const queuedMessages = computed<UIMessage[]>(() =>
   }))
 )
 // Counted off the run rather than off the last assistant message. A build
-// restarted after marker feedback writes a second assistant message, so the
-// restart remains an implementation detail and does not reset the visible step.
+// restarted after Feedback Note input writes a second assistant message, so
+// the retry remains an implementation detail and does not reset the visible step.
 const currentStep = computed(() => currentRunStepNumber())
 
 const activityText = computed(() => {
@@ -164,12 +147,6 @@ watch(
   (running) => {
     if (!running && retryHandoffToken.value !== null) return
     setTurnRunning(running)
-    if (running) return
-    reportPassedMarks()
-    // A mark says the agent is about to do something. Once it has stopped that
-    // is no longer true, and a warning left standing over a finished canvas
-    // reads as a defect in the result rather than a chance to catch one.
-    clearMarks(getActiveEditorStore())
   },
   { immediate: true }
 )
@@ -200,9 +177,6 @@ async function handleSubmit(text: string) {
     return
   }
   noteUserRequest(text)
-  // A turn abandoned and never replaced would otherwise still be marked as
-  // thrown away, and this one would die on its first chunk.
-  forgetAbandonedTurn()
   chat.value?.sendMessage({ text }).catch((e: unknown) => {
     console.error('Chat error:', e)
     toast.error(e instanceof Error ? e.message : String(e))
@@ -212,120 +186,13 @@ async function handleSubmit(text: string) {
 /**
  * Stop, from the button.
  *
- * `abandonTurn` first, for the same reason the marker resume needs it: aborting
- * the request does not reach a step parked at a hold point, and marks now hold
- * the run on their own, so pressing stop while one is up did nothing visible —
- * the held tool call went through as soon as the hold lifted. Also lets go of
- * every hold, so a run stopped mid-hold cannot leave the app paused forever.
+ * `abandonTurn` first so a tool call already parked at a Feedback Note hold is
+ * invalidated before the provider request is stopped.
  */
 function handleStop() {
   abandonTurn('stop button')
   void chat.value?.stop()
-  releaseAnswerHold()
 }
-
-/**
- * The run is over and nobody said anything about the marks still on screen.
- *
- * Leaving a mark alone is agreement, and agreement is evidence about this person
- * — the cheapest evidence there is, since it costs them no gesture. But until
- * the run stops there is no telling "they let it stand" apart from "they have
- * not got to it yet", so the silence is only final here. Answered marks have
- * already gone with the resume and do not come again.
- */
-function reportPassedMarks() {
-  const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), [])
-  if (!hasContent(report)) return
-  logMarkAnswer('passed', `${report.agreed.length} left alone`)
-  void observeMarkNotes(feedbackNotes(report))
-}
-
-/**
- * They answered some markers, went quiet, and pressed continue.
- *
- * The step they interrupted is abandoned and done again. There is no way to
- * rewind one step inside a run — the steps live inside a single streaming call
- * — so this stops the turn and starts a new one whose first message says what
- * happened. To the person it is the same build carrying on, which is why the
- * step budget carries over and the original request is kept.
- */
-async function handleMarkResume() {
-  const store = getActiveEditorStore()
-  const wasRunning = isRunning.value
-  const request = currentMetaRequest()
-  const step = currentRunStepNumber(store)
-  const report = buildMarkReport(takeUnreportedMarks(marksAwaitingAnswer()), takeAnswers(store))
-
-  // `abandonTurn` before the stop, not after. Aborting the request does not
-  // reach the held tool call — that is sitting in the stream transform waiting
-  // for the hold to lift, and lifting it is what sends it through. This says the
-  // turn is being thrown away, so the transform drops it instead.
-  if (wasRunning && hasContent(report)) {
-    const handoffToken = beginRetryHandoff()
-    abandonTurn('marker feedback restart')
-    await chat.value?.stop()
-    if (!chat.value) finishRetryHandoff(handoffToken)
-  }
-  releaseAnswerHold()
-
-  if (!hasContent(report)) return
-  logMarkAnswer('resumed', `${report.answered.length} answered, ${report.agreed.length} passed`)
-
-  // First, and not awaited. This is the durable half — what they said is worth
-  // keeping whatever happens to the run — and the revision is two model calls,
-  // which is far too long to make them watch before the canvas moves again.
-  void observeMarkNotes(feedbackNotes(report))
-
-  // Answered after the run had already finished: the user model still wants it,
-  // but there is no step to redo and nothing to restart.
-  if (!wasRunning) return
-
-  // So the redone step is not marked all over again for the thing they just
-  // answered. Outlives the turn boundary the restart crosses.
-  noteSettledMarks(report.answered.map((a) => ({ note: a.note, reply: a.text })))
-
-  await chat.value?.stop()
-  // Before anything is sent. The abort above cut a tool call in half, and the
-  // provider refuses a transcript that carries one.
-  if (chat.value) chat.value.messages = withoutDanglingToolCalls(chat.value.messages)
-  continueRunSteps(store)
-  // Kept, so the meta-agent judges the next steps against what they actually
-  // asked for rather than against the note about being interrupted.
-  noteUserRequest(request)
-  // The replacement turn is about to go out, so the abandoned one is over.
-  // Explicitly, not via the running-state watch: `stop()` above returned on the
-  // abort signal, not on the run winding down, so `status` can still say
-  // 'streaming' here and the watch never fires between the two turns.
-  forgetAbandonedTurn()
-  const text = renderReportForAgent(report, step, request)
-  // `prepareStep` only logs messages sent mid-run, and this one arrives as the
-  // opening message of the restarted turn — so without this the one thing the
-  // agent is told about the interruption never appears on the timeline.
-  logUserMessage(text)
-  const activeChat = chat.value
-  if (!activeChat) {
-    const token = retryHandoffToken.value
-    if (token !== null) finishRetryHandoff(token)
-    return
-  }
-  const handoffToken = retryHandoffToken.value
-  const retry = activeChat.sendMessage({ text })
-  if (handoffToken !== null) {
-    void retry.then(
-      () => finishRetryHandoff(handoffToken),
-      () => undefined
-    )
-  }
-  retry.catch((e: unknown) => {
-    if (handoffToken !== null) finishRetryHandoff(handoffToken)
-    console.error('Chat error:', e)
-    toast.error(e instanceof Error ? e.message : String(e))
-  })
-}
-
-setMarkResumeHandler(() => {
-  void handleMarkResume()
-})
 
 async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
   // Durable and independent from the task-agent branch below: implicit notes
@@ -338,13 +205,13 @@ async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
       'proceed',
       `notes=${result.outcomes.length} implicit=${result.outcomes.length} explicit=0; releasing held tool stream`
     )
-    logMarkAnswer('passed', `${result.outcomes.length} feedback notes implicitly accepted`)
+    logFeedbackAnswer('passed', `${result.outcomes.length} feedback notes implicitly accepted`)
     resumeTurn('feedback-note')
     return
   }
 
   const store = getActiveEditorStore()
-  const wasRunning = isRunning.value
+  const wasRunning = isRunning.value || agentTurn.paused
   const request = currentMetaRequest()
   if (!wasRunning) {
     logFeedbackStep(
@@ -376,7 +243,6 @@ async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
   continueRunSteps(store)
   noteUserRequest(request)
   beginFeedbackReplay(result.step)
-  forgetAbandonedTurn()
 
   const text = renderStepFeedbackReport(result, request)
   logFeedbackStep(
@@ -384,7 +250,7 @@ async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
     'report',
     `reasoning-chunks=${result.reasoningChunks.length} notes=${result.outcomes.length} feedback-items=${feedbackItems} chars=${text.length}; sending retry context`
   )
-  logMarkAnswer(
+  logFeedbackAnswer(
     'resumed',
     `${explicitOutcomes.length} corrected, step ${result.step} retrying without notes`
   )
@@ -440,9 +306,7 @@ function handleClearChat() {
         data-test-id="chat-step-bar"
         class="flex shrink-0 items-center border-b border-border px-3 py-1.5"
       >
-        <span class="shrink-0 text-[10px] tabular-nums text-muted">
-          Step {{ currentStep }}
-        </span>
+        <span class="shrink-0 text-[10px] tabular-nums text-muted"> Step {{ currentStep }} </span>
       </div>
 
       <ScrollAreaRoot class="min-h-0 flex-1">

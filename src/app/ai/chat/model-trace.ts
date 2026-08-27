@@ -1,19 +1,17 @@
 /**
  * Taps the provider stream so the model's own output is observable as it is
  * produced — the reasoning summary, then the assistant text, then the tool
- * calls those led to. Three consumers: the run log (`agent-log.txt`, dev only),
- * the speech bubble on the canvas, and the meta-agent, which reads the thinking
- * as it forms and says where it runs against what we know about the user.
+ * calls those led to. The run log (`agent-log.txt`, dev only) records it, while
+ * the meta-agent reads the reasoning as it forms and compares it with what we
+ * know about the user.
  *
  * The meta-agent's own calls go through `createUntracedLanguageModel`, so they
  * never come back through here — a judge that judged itself would not stop.
  *
  * Why here and not `onStepFinish`: that callback fires after the step's tools
  * have already run, so anything driven from it lands *after* the tool calls it
- * came before — the log read out of order, and the bubble said "now adding the
- * logo" once the logo was already there. A middleware sees each block as it
- * closes, and each reasoning delta as it arrives, which is what makes the
- * thinking bubble stream at all.
+ * came before — the log read out of order. A middleware sees each block as it
+ * closes and each reasoning delta as it arrives.
  *
  * Thinking itself is opt-in — Anthropic returns no reasoning blocks unless
  * asked, and it costs tokens — so it needs `VITE_AI_THINKING=true` (see
@@ -30,8 +28,7 @@ import {
   logThinking,
   logTurnAbandoned
 } from '@/app/ai/chat/agent-log'
-import { awaitSpeechDrained, sayAgent } from '@/app/ai/chat/agent-speech'
-import { awaitTurnResume } from '@/app/ai/chat/agent-turn'
+import { awaitTurnResume, currentTurnGeneration } from '@/app/ai/chat/agent-turn'
 
 /** Provider model / stream part types, taken off the SDK's own signatures so
  * this file doesn't have to import `@ai-sdk/provider` (a transitive dep). */
@@ -85,35 +82,6 @@ export const googleThinkingOptions = THINKING_REQUESTED
   ? ({ thinkingConfig: { includeThoughts: true } } as const)
   : undefined
 
-/**
- * Beats between the three things that happen in a step. Without them the model
- * thinks, speaks and edits the canvas in the same instant and the user sees
- * only the result. Holding a chunk here holds everything downstream of it —
- * the SSE body just buffers — so these are real pauses in the run, not just in
- * the animation. Keep them short; they multiply by step count.
- */
-const AFTER_THINKING_MS = 500
-const BEFORE_ACTION_MS = 900
-
-/**
- * Held after every block of thinking the model emits.
- *
- * The meta-agent answers once per block, so without this its marks appear and
- * disappear at whatever rate the provider happens to stream at — measured at a
- * mark every one to two seconds, which is faster than anyone can move a pointer
- * to one. Slowing the source is the honest way to buy that time: everything on
- * screen is still the model's current answer, and the run really is where the
- * canvas says it is. Making the mark outlive the answer instead would have put
- * a stale warning on a canvas that had already moved past it.
- */
-const BETWEEN_THOUGHTS_MS = 2500
-
-function beat(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
 let lastSystem: string | null = null
 
 function traceSystemPrompt(params: CallParams): void {
@@ -133,6 +101,10 @@ const middleware: LanguageModelMiddleware = {
 
   wrapStream: async ({ doStream, params }) => {
     traceSystemPrompt(params)
+    // Capture before starting the provider call. If feedback abandons this
+    // turn while its reasoning is still being reviewed, every later gate in
+    // this stream must remain stale even after the replacement turn begins.
+    const turnGeneration = currentTurnGeneration()
     const { stream, ...rest } = await doStream()
     const streamId = nextStreamId++
 
@@ -178,7 +150,7 @@ const middleware: LanguageModelMiddleware = {
       if (sawToolInput || finalReviewSettled) return true
       if (thinking.trim() !== '') closeReasoning()
       if (observeReasoning) await observeReasoning.settled(streamId)
-      if (!(await awaitTurnResume('before-final-response'))) {
+      if (!(await awaitTurnResume('before-final-response', turnGeneration))) {
         dropped = true
         logTurnAbandoned('stream dropped before final response — response not shown')
         return false
@@ -198,15 +170,14 @@ const middleware: LanguageModelMiddleware = {
         } else if (chunk.type === 'reasoning-delta') {
           thinking += chunk.delta
           // Everything so far, not the delta: a watcher judging where the
-          // thought has arrived cannot do it from half a sentence. Not awaited
-          // — it answers on its own clock, and the beat below is what gives it
-          // room, not this call.
+          // thought has arrived cannot do it from half a sentence. The observer
+          // answers on its own clock; this stream only blocks for a real
+          // Feedback Note hold.
           observeReasoning?.chunk(streamId, chunk.delta, thinking)
-          await beat(BETWEEN_THOUGHTS_MS)
           // The step boundary is the other place the turn can be held, and it
-          // can be twenty seconds away. Someone who points at a marker while the
-          // agent is mid-thought means now.
-          if (!(await awaitTurnResume('mid-thought'))) {
+          // can be twenty seconds away. Feedback submitted while the agent is
+          // mid-thought must take effect immediately.
+          if (!(await awaitTurnResume('mid-thought', turnGeneration))) {
             dropped = true
             logTurnAbandoned('stream dropped at mid-thought')
             controller.terminate()
@@ -214,9 +185,6 @@ const middleware: LanguageModelMiddleware = {
           }
         } else if (chunk.type === 'reasoning-end') {
           closeReasoning()
-          // Keep a short beat before the agent switches from thinking to
-          // speaking, without waiting on a hidden bubble animation.
-          await beat(AFTER_THINKING_MS)
         } else if (chunk.type === 'text-start') {
           if (!(await awaitFinalReview())) {
             controller.terminate()
@@ -226,28 +194,20 @@ const middleware: LanguageModelMiddleware = {
         } else if (chunk.type === 'text-delta') text += chunk.delta
         else if (chunk.type === 'text-end') {
           logAgentText(text)
-          // Replaces the muted thinking line with what the agent actually
-          // wants to say.
-          sayAgent(text)
           text = ''
         } else if (chunk.type === 'tool-input-start') {
           sawToolInput = true
           if (thinking.trim() !== '') closeReasoning()
-          // Nothing downstream has run yet — holding the chunk here holds the
-          // tool call itself, so the canvas doesn't change until the line
-          // announcing it has been up long enough to read.
-          await awaitSpeechDrained()
-          await beat(BEFORE_ACTION_MS)
-          // Then for the watcher's verdict on the thinking that led here, so
-          // its marks are up before the thing they are about lands.
+          // Wait only for the meta-agent's verdict. There is no artificial
+          // pacing or speech-animation delay before the action.
           if (observeReasoning) {
             await observeReasoning.settled(streamId)
           }
           // Last point at which the canvas is still untouched by this step.
-          // After the wait above, so a mark that only just appeared still gets
-          // the chance to hold the run.
+          // After the wait above, so a Feedback Note that only just appeared
+          // still gets the chance to hold the run.
           // This is the one that matters: the chunk in hand is the tool call.
-          if (!(await awaitTurnResume('before-action'))) {
+          if (!(await awaitTurnResume('before-action', turnGeneration))) {
             dropped = true
             logTurnAbandoned('stream dropped at before-action — tool call not run')
             controller.terminate()

@@ -16,16 +16,6 @@ import type { EditorStore } from '@/app/editor/active-store'
  * previous agent's before/after LLM diff, minus the extra model calls.
  */
 
-/** Fixed pause before each step (2nd onward): paces the build and widens the
- * user's edit window. Detection doesn't depend on it — edits are caught anytime. */
-export const STEP_DELAY_MS = 2000
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
 function formatValue(value: unknown): string {
   if (value === undefined || value === null) return 'none'
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1)
@@ -421,10 +411,8 @@ export function createInterventionTracker(store: EditorStore): InterventionTrack
       state.currentStep++
     },
     async prepareStep() {
-      // First step: nothing built yet, no pacing needed.
+      // First step: nothing has been built yet, so there cannot be an edit diff.
       if (state.currentStep === 0) return null
-
-      await sleep(STEP_DELAY_MS)
 
       expireProtections(state)
 

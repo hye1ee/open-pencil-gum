@@ -396,7 +396,7 @@ export function feedbackUserPrompt(
       ? '(none — the user model is empty)'
       : propositions.map(renderNeighbour).join('\n')
 
-  return `Reviewed step: ${batch.step ?? 'legacy marker feedback'}
+  return `Reviewed step: ${batch.step ?? 'unscoped feedback'}
 
 The propositions these notes touch:
 ${held}

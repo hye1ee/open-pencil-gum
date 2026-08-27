@@ -11,7 +11,6 @@ import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
 import { userModelFixtureEnabled } from '@/app/user-model/fixture'
 import {
   createUserModel,
-  type FeedbackNote,
   type SavedProposition,
   type UserModel,
   type UserModelDeps,
@@ -60,19 +59,6 @@ export function frameNote(): string | undefined {
  * would undo the first's. Built on demand, since feedback outlives capture. */
 let current: UserModel | null = null
 let currentReady: Promise<void> = Promise.resolve()
-
-/** Not gated on capture: this is the only place the person tells us anything in
- * words, and it is the best evidence the model gets. */
-export async function observeMarkNotes(notes: FeedbackNote[]): Promise<void> {
-  if (notes.length === 0 || !canBuildUserModel()) return
-  current ??= createPropositionSink('answers')
-  const replied = notes.filter((note) => note.reply !== null).length
-  logUserModelStage('observing', `${replied} answered, ${notes.length - replied} left alone`)
-  await enqueueObservation(async () => {
-    await currentReady
-    await current?.observe(notes)
-  })
-}
 
 let pending: Promise<void> | null = null
 
@@ -149,8 +135,9 @@ export function createPropositionSink(sessionId: string): UserModel {
         logUserModelStage(
           'retrieval',
           `${note.noteId} embedding → ${
-            note.embedding.map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`).join(', ') ||
-            '(none above threshold)'
+            note.embedding
+              .map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`)
+              .join(', ') || '(none above threshold)'
           }`
         )
       }

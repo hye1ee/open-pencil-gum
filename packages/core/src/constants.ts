@@ -134,35 +134,23 @@ export const AI_DONE_COLOR = { r: 0.16, g: 0.73, b: 0.36 }
 export const AI_PULSE_PERIOD_MS = 1500
 export const AI_DONE_DURATION_MS = 800
 
-/** Nodes where what the agent is about to do looks unlike what the user model
- * says this person wants. Red, and deliberately not the agent's own blue/green:
- * this is the one glow that is not the agent reporting on itself. */
-export const AI_MISMATCH_COLOR = { r: 0.94, g: 0.27, b: 0.27 }
-/** Nodes where it looks like what the user model says they want. The other end
- * of the same scale, so it shares every other constant here — only the hue says
- * which way the mark points. Distinct from AI_DONE_COLOR, which flashes once
- * when the agent finishes a node; this one stands while the mark does. */
-export const AI_ALIGNMENT_COLOR = { r: 0.13, g: 0.72, b: 0.51 }
-/** Nodes the agent is deciding something about that the user model says nothing
- * on. Rated zero because it is off the red-to-green scale rather than in the
- * middle of it, and grey for the same reason — it is not a mild version of
- * either end. Matches the badge these glow with. */
-export const AI_QUESTION_COLOR = { r: 0.56, g: 0.58, b: 0.62 }
-/** Blur sigma of the outer glow, in screen px (kept constant across zoom). */
-export const AI_MISMATCH_BLUR_SIGMA = 7
-export const AI_MISMATCH_GLOW_WIDTH = 10
-export const AI_MISMATCH_EDGE_WIDTH = 1.5
-export const AI_MISMATCH_PADDING = 3
-/** The meta-agent rates a mark −5…+5. The sign picks the colour and this is the
- * magnitude at which the glow is as loud as the canvas can take without
- * drowning the design underneath; 1 is the faintest it gets. */
-export const AI_MISMATCH_MAX_SEVERITY = 5
-/** Slower than the agent's own flashes: this marker stands until the user
- * answers it, and a fast blink on something that is not going away nags. */
-export const AI_MISMATCH_PULSE_MS = 2400
-/** How far the pulse dips. Shallow, so the hit count stays the louder signal —
- * a pulsing one-hit node must never read brighter than a steady four-hit one. */
-export const AI_MISMATCH_PULSE_DEPTH = 0.35
+/** Canvas node linked to a conflict Feedback Note. */
+export const AI_FEEDBACK_HIGHLIGHT_CONFLICT_COLOR = { r: 0.94, g: 0.27, b: 0.27 }
+/** Canvas node linked to an alignment Feedback Note. */
+export const AI_FEEDBACK_HIGHLIGHT_ALIGNMENT_COLOR = { r: 0.13, g: 0.72, b: 0.51 }
+/** Canvas node linked to an uncovered Feedback Note. */
+export const AI_FEEDBACK_HIGHLIGHT_UNCOVERED_COLOR = { r: 0.56, g: 0.58, b: 0.62 }
+/** Outer glow geometry in screen pixels, kept constant across zoom. */
+export const AI_FEEDBACK_HIGHLIGHT_BLUR_SIGMA = 7
+export const AI_FEEDBACK_HIGHLIGHT_GLOW_WIDTH = 10
+export const AI_FEEDBACK_HIGHLIGHT_EDGE_WIDTH = 1.5
+export const AI_FEEDBACK_HIGHLIGHT_PADDING = 3
+/** Largest relationship magnitude accepted by the highlight opacity scale. */
+export const AI_FEEDBACK_HIGHLIGHT_MAX_STRENGTH = 5
+/** Feedback Note highlights pulse more slowly than transient agent flashes. */
+export const AI_FEEDBACK_HIGHLIGHT_PULSE_MS = 2400
+/** Keeps the pulse visible without overpowering the linked canvas content. */
+export const AI_FEEDBACK_HIGHLIGHT_PULSE_DEPTH = 0.35
 
 export const TEXT_SELECTION_COLOR = { r: 0.26, g: 0.52, b: 0.96, a: 0.3 }
 export const TEXT_CARET_COLOR = BLACK

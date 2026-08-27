@@ -6,19 +6,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 const REVEAL_MS = 2000
 const REVEAL_START = 0
 
-/**
- * Told when a preview has run its course and the change stood.
- *
- * Registered rather than imported: the only listener is the meta-agent, and it
- * reads the tool log, so calling it from the tool loop directly would close the
- * ring `tools → meta-agent → tools`. Same reason as `setReasoningObserver`.
- */
-let onSettled: ((nodeIds: readonly string[]) => void) | null = null
 const stagedOriginals = new WeakMap<EditorStore, Map<string, number>>()
-
-export function setPreviewSettledObserver(observer: (nodeIds: readonly string[]) => void): void {
-  onSettled = observer
-}
 
 /** Hide a just-created result before its first paint. The tool only learns a
  * created node's id after execution, so this is called as soon as that result
@@ -57,7 +45,6 @@ export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promi
     store.requestRepaint()
   }
 
-  const previewIds = [...original.keys()]
   const started = performance.now()
   return new Promise((resolve) => {
     let lastFrame = started
@@ -72,7 +59,6 @@ export function previewAgentChange(store: EditorStore, nodeIds: string[]): Promi
       if (progress < 1) requestAnimationFrame(frame)
       else {
         if (held > 0) logTurnHeld('preview', held)
-        onSettled?.(previewIds)
         resolve()
       }
     }

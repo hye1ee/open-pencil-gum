@@ -95,24 +95,6 @@ export interface UserModelDeps {
   embed(texts: string[]): Promise<number[][]>
 }
 
-/** Carried through intact rather than flattened into prose: `citedId` is an
- * exact answer, and recovering it later by similarity is guessing at it. */
-export type FeedbackRelation = 'conflict' | 'alignment' | 'unknown'
-
-export interface FeedbackNote {
-  /** What the person read, in the words they read it in. */
-  note: string
-  /** The agent's own words the note was drawn from. */
-  quote: string
-  /** The proposition the note rested on, or null if none covered it. */
-  citedId: string | null
-  /** Letting a conflict stand agrees the belief failed; letting an alignment
-   * stand agrees it held. Opposite readings of the same silence. */
-  relation: FeedbackRelation
-  /** What they typed back, or null if they saw it and let it stand. */
-  reply: string | null
-}
-
 export type UserModelFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
 export type UserModelFeedbackResolution = 'explicit-feedback' | 'implicitly-accepted'
 
@@ -246,9 +228,6 @@ export interface FrameMeta {
 
 export interface UserModel {
   addFrame(frame: Blob, meta?: FrameMeta): void
-  /** Revised straight away, not batched: batching exists for frames on a timer,
-   * and this arrives because the person said something. */
-  observe(notes: FeedbackNote[]): Promise<void>
   /** Interactive Feedback Notes in their current Step → Note → item shape. */
   observeFeedback(batch: UserModelFeedbackBatch): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
@@ -533,9 +512,7 @@ function nearestPropositions(
   propositions: Proposition[],
   now: number
 ): Proposition[] {
-  return nearestPropositionScores(embedding, propositions, now).map(
-    (scored) => scored.proposition
-  )
+  return nearestPropositionScores(embedding, propositions, now).map((scored) => scored.proposition)
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -820,41 +797,11 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
-  async function observe(notes: FeedbackNote[]): Promise<void> {
-    const batch: UserModelFeedbackBatch = {
-      step: null,
-      notes: notes.map((note, index) => ({
-        noteId: `legacy-${index + 1}`,
-        chunk: 0,
-        topic: 'legacy-marker-feedback',
-        cue: note.note,
-        representationGoal: '',
-        relationship: note.relation === 'unknown' ? 'uncovered' : note.relation,
-        reasoningEvidence: note.quote,
-        propositionIds: note.citedId === null ? [] : [note.citedId],
-        resolution: note.reply === null ? 'implicitly-accepted' : 'explicit-feedback',
-        feedbackItems:
-          note.reply === null
-            ? []
-            : [
-                {
-                  id: `legacy-${index + 1}-reply`,
-                  selection: { type: 'none' },
-                  feedback: note.reply,
-                  createdAt: Date.now()
-                }
-              ]
-      }))
-    }
-    await observeFeedback(batch)
-  }
-
   return {
     get propositions() {
       return propositions
     },
 
-    observe,
     observeFeedback,
 
     load(saved) {

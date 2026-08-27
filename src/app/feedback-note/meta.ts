@@ -1,38 +1,22 @@
 import { focusAgentCursorTarget } from '@/app/ai/chat/agent-cursor'
 import { logFeedbackNote } from '@/app/ai/chat/agent-log'
-import type { EditorStore } from '@/app/editor/active-store'
 import { createFeedbackNotes } from '@/app/feedback-note/use'
-import { actionsSoFar, summariseCanvas } from '@/app/meta-agent/context'
-import type { Proposition } from '@/app/meta-agent/judge'
-
-interface FeedbackNoteJudgmentInput {
-  store: EditorStore
-  request: string
-  plan: string | null
-  reasoning: string
-  originStep: number
-  originChunk: number
-  propositions: Proposition[]
-  generation: number
-}
+import {
+  buildOpenPencilFeedbackNoteInput,
+  type OpenPencilFeedbackNoteSource
+} from '@/app/meta-agent/hosts/open-pencil/input'
+import { OPEN_PENCIL_REPRESENTATION_PROVIDER } from '@/app/meta-agent/hosts/open-pencil/representation'
 
 export async function considerFeedbackNotesForStep(
-  input: FeedbackNoteJudgmentInput
+  input: OpenPencilFeedbackNoteSource
 ): Promise<void> {
   if (input.reasoning.trim() === '') return
 
   const { store } = input
-  const notes = await createFeedbackNotes({
-    request: input.request,
-    plan: input.plan,
-    reasoning: input.reasoning,
-    originStep: input.originStep,
-    originChunk: input.originChunk,
-    propositions: input.propositions,
-    canvas: summariseCanvas(store),
-    actions: actionsSoFar(store),
-    generation: input.generation
-  })
+  const notes = await createFeedbackNotes(
+    buildOpenPencilFeedbackNoteInput(input),
+    OPEN_PENCIL_REPRESENTATION_PROVIDER
+  )
 
   if (notes.length === 0) {
     logFeedbackNote(input.originStep, 0, null, null, null, `chunk=${input.originChunk}`)

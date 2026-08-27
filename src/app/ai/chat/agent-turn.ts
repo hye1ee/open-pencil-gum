@@ -3,13 +3,13 @@ import { reactive } from 'vue'
 import { logTurnAbandoned, logTurnHeld } from '@/app/ai/chat/agent-log'
 
 /**
- * Pause/resume gate for the agent's turn, held while the user is reading a
- * mismatch marker. A real pause, not an abort: the run stays alive and picks up
+ * Pause/resume gate for the agent's turn, held while the user reviews a
+ * Feedback Note. A real pause, not an abort: the run stays alive and picks up
  * where it stopped. Single active agent assumed.
  *
  * It is honoured wherever the run can be held without leaving something half
  * done — between blocks of thinking, before a tool call, at a step boundary, and
- * while a change is still shown faint. A marker is a chance to catch something
+ * while a change is still shown faint. A note is a chance to catch something
  * before it lands, which is worth nothing if the canvas moves while it is being
  * read.
  */
@@ -29,60 +29,41 @@ let resolvers: Array<() => void> = []
 
 /**
  * What is holding the turn still. A set rather than a flag because whoever
- * holds has to be the one who lets go: pointing at one marker while composing
- * feedback about another is ordinary, and the pointer leaving must not release
- * the composer's hold.
- *
- * - `new-mark` — a mark has just appeared and nobody has had a chance to read
- *   it yet. Held without anyone doing anything, because the alternative is that
- *   catching a mistake depends on getting a pointer onto a 16px badge before
- *   the tool call goes out.
- * - `marker` — a pointer is resting on a badge. Released when it leaves.
- * - `feedback` — the chat input is open against a mark. Released when that
- *   feedback is sent or dismissed, which can be a minute later.
+ * holds has to be the one who lets go. The Feedback Note session owns this hold
+ * from note creation until every note in the step has been resolved.
  */
-export type TurnHold = 'new-mark' | 'marker' | 'feedback' | 'feedback-note'
+export type TurnHold = 'feedback-note'
 
 const holds = new Set<TurnHold>()
 
 /**
- * Set when the turn is being thrown away rather than carried on.
- *
- * A hold sits inside the stream transform, downstream of the request being
- * aborted. Stopping the run cuts the connection, but the parts already received
- * are still in the transform waiting for the hold to lift — so lifting it sends
- * the held tool call on its way as if nothing had happened, which is the one
- * thing answering a marker is supposed to prevent. Measured: an answer landed,
- * the run was stopped, and the render it warned about went through in the same
- * tick. Whoever ends a held turn says so here, and the stream drops what it was
- * holding instead of forwarding it.
+ * Every task-agent stream captures this value when it starts. Abandoning a turn
+ * advances it, permanently making every stream from the previous generation
+ * stale. Unlike an `abandoned` boolean, a generation cannot be cleared too soon
+ * when the replacement turn starts while the old stream is still unwinding.
  */
-let abandoned = false
+export type TurnGeneration = number
+
+let generation: TurnGeneration = 0
+
+export function currentTurnGeneration(): TurnGeneration {
+  return generation
+}
 
 export function abandonTurn(reason = 'unknown source'): void {
-  abandoned = true
+  generation += 1
   logTurnAbandoned(`turn abandoned by ${reason} — the stream drops whatever it was holding`)
   resumeTurn()
 }
 
 /**
- * A replacement turn is being sent, so the abandoned one is over.
- *
- * Called at the send rather than from the running-state watch. `stop()` returns
- * once the abort is signalled, not once the run has wound down: measured, the
- * old turn's `END` arrived 1.1s after the new one had already started, so
- * `status` never left 'streaming' and the watch never fired between the two.
- * The new turn then read the flag and killed itself on its first chunk.
+ * Mirror the chat's running state without treating a transient ready state as
+ * user consent. An active hold owns its own lifetime and must be released by
+ * the feature that created it.
  */
-export function forgetAbandonedTurn(): void {
-  abandoned = false
-}
-
-/** Mirror the chat's running state; clearing it also lifts any pause. */
 export function setTurnRunning(running: boolean): void {
   agentTurn.running = running
-  if (running) abandoned = false
-  else resumeTurn()
+  if (!running && !agentTurn.paused) resumeTurn()
 }
 
 export function pauseTurn(hold: TurnHold): void {
@@ -117,14 +98,17 @@ export function isTurnPaused(): boolean {
  * reached — which is the difference between a paused run and a run that only
  * looks paused because the canvas has nothing left to draw.
  */
-export function awaitTurnResume(where: string): Promise<boolean> {
-  if (abandoned) return Promise.resolve(false)
+export function awaitTurnResume(
+  where: string,
+  expectedGeneration: TurnGeneration
+): Promise<boolean> {
+  if (expectedGeneration !== generation) return Promise.resolve(false)
   if (!agentTurn.paused) return Promise.resolve(true)
   const since = Date.now()
   return new Promise((resolve) => {
     resolvers.push(() => {
       logTurnHeld(where, Date.now() - since)
-      resolve(!abandoned)
+      resolve(expectedGeneration === generation)
     })
   })
 }

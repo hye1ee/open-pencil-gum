@@ -19,7 +19,6 @@ import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import type { EditorStore } from '@/app/editor/active-store'
 import { ensureGraphFonts } from '@/app/editor/fonts'
-import { notifyMetaAgentNodeReplaced } from '@/app/meta-agent/events'
 
 export const MAX_AGENT_STEPS = 30
 
@@ -109,7 +108,7 @@ export function recordAuxUsage(usage: StepUsage, store?: EditorStore): void {
 /**
  * Set when the next turn is really the same piece of work carrying on.
  *
- * Answering a marker stops the turn and starts a new one from the same request,
+ * Answering a Feedback Note stops the turn and starts a new one from the same request,
  * because there is no way to rewind a single step inside a run. That is an
  * implementation detail: to the person it is one build that paused, so the step
  * budget has to carry over. Otherwise every answer buys another fifty steps and
@@ -160,11 +159,6 @@ function isSkipped(result: unknown): result is { skipped: true; reason?: unknown
   return typeof result === 'object' && result !== null && 'skipped' in result
 }
 
-function resultNodeId(result: unknown): string | null {
-  if (typeof result !== 'object' || result === null || !('id' in result)) return null
-  return typeof result.id === 'string' ? result.id : null
-}
-
 export function createAITools(store: EditorStore) {
   let beforeSnapshot: Map<string, SceneNode> | null = null
   /** Nodes this tool call is about, for the preview to fade. Read off the
@@ -189,13 +183,7 @@ export function createAITools(store: EditorStore) {
             // After the guard, so a trimmed batch never previews a node it was
             // refused.
             touched = targetNodeIds(def.name, effective)
-            const result = await def.execute(figma, effective)
-            const replacedId = def.name === 'render' ? effective.replace_id : undefined
-            const createdId = resultNodeId(result)
-            if (typeof replacedId === 'string' && createdId) {
-              notifyMetaAgentNodeReplaced(replacedId, createdId)
-            }
-            return result
+            return def.execute(figma, effective)
           }
         }
       : def

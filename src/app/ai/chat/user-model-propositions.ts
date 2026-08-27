@@ -4,12 +4,12 @@
  *
  * The judge has had this list since the meta-agent existed; the design agent
  * never did. So the judge knew a decision would go against this person while the
- * agent making that decision had no idea, and the marker only ever arrived after
- * the fact. This is the same list, addressed to the side that can still act on
+ * agent making that decision had no idea, and the Feedback Note only arrived
+ * after the fact. This is the same list, addressed to the side that can still act on
  * it.
  *
  * Deliberately not the judge's rendering. That one carries proposition ids so a
- * mark can cite one; nothing here cites anything, and an id in text a person may
+ * Feedback Note can cite one; nothing here cites anything, and an id in text a person may
  * end up reading is noise.
  */
 
@@ -37,7 +37,7 @@ const SHOWN_TO_AGENT_MIN = 5
  * complies, nobody objects, and the confidence rises on the strength of our own
  * sentence. Below the line the agent decides for itself, and what it decides is
  * evidence — it either reaches for the thing we believe, or it does not and the
- * person gets a marker to disagree with.
+ * person gets a Feedback Note to disagree with.
  *
  * The cost is paid on those builds. A withheld belief that happens to be right
  * produces a worse result until the person says so, and saying so is the

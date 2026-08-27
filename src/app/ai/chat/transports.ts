@@ -21,8 +21,7 @@ import {
   logUserModelPropositions,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
-import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
-import { awaitTurnResume, resumeTurn } from '@/app/ai/chat/agent-turn'
+import { awaitTurnResume, currentTurnGeneration, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createCanvasVision } from '@/app/ai/chat/canvas-vision'
 import { createInterventionTracker } from '@/app/ai/chat/intervention'
 import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/chat/model'
@@ -223,9 +222,9 @@ export function createToolLoopTransport({
     instructions: SYSTEM_PROMPT,
     tools,
     // Our own counter, not the SDK's: `stepCountIs` counts steps inside one
-    // streaming call, and a build restarted after marker feedback is a second
-    // call. Counting there would hand out a fresh fifty every time someone
-    // answered a marker, which makes the ceiling mean nothing.
+    // streaming call, and a build restarted after Feedback Note input is a second
+    // call. Counting there would hand out a fresh limit every time someone
+    // answered a Feedback Note, which makes the ceiling mean nothing.
     stopWhen: () => currentRunSteps(store) >= MAX_AGENT_STEPS,
     maxOutputTokens,
     providerOptions: callProviderOptions,
@@ -250,7 +249,6 @@ export function createToolLoopTransport({
       clearUserMessages(store)
       plan = null
       resumeTurn()
-      clearAgentSpeech()
       await startMetaAgentTurn(store, submittedRequest)
       const userModelPropositions = renderUserModelPropositions(runUserModel())
       if (userModelPropositions) logUserModelPropositions(userModelPropositions)
@@ -265,10 +263,11 @@ export function createToolLoopTransport({
       }
     },
     prepareStep: async ({ messages, stepNumber }) => {
-      // Block here while the user is reading a marker. If the turn was thrown
+      const turnGeneration = currentTurnGeneration()
+      // Block here while the user is reviewing a Feedback Note. If the turn was thrown
       // away while held, everything below is work for a step that will never
       // run — including a planning call, which is billed.
-      if (!(await awaitTurnResume('step-boundary'))) {
+      if (!(await awaitTurnResume('step-boundary', turnGeneration))) {
         logTurnAbandoned('step skipped at step-boundary')
         return {}
       }

@@ -22,7 +22,7 @@ const MAX_VALUE = 200
  * They were cut at 120, which stopped one character into the body of a `render`
  * — enough to see that a frame was made and not what was in it. That is the
  * difference between a log you can check a judgment against and one you can
- * only read the judgment in: a mark saying the agent put a border on an input
+ * only read the judgment in: a Feedback Note saying the agent put a border on an input
  * could not be confirmed or refuted from this file. Only the payload arguments
  * are ever near this long; ids and names are short whatever the ceiling is.
  */
@@ -103,11 +103,11 @@ export function logRunStart(request: string): void {
 
 /**
  * A turn that is the same piece of work carrying on — the build restarted after
- * someone answered a marker.
+ * someone answered a Feedback Note.
  *
  * Appends where `logRunStart` truncates, and keeps the clock running. Wiping
- * here would throw away the whole first half of the build, including the marks
- * and the answers that caused the restart, which is precisely the part anyone
+ * here would throw away the whole first half of the build, including the Notes
+ * and the feedback that caused the restart, which is precisely the part anyone
  * reading this file afterwards needs.
  */
 export function logRunContinue(request: string): void {
@@ -134,7 +134,7 @@ export function logModelRouting(lines: string[]): void {
  * The user model's propositions as the building side was told them.
  *
  * The whole block, not a count, and written on a restart as well as a start.
- * Half of what this feature promises is that answering a marker changes what the
+ * Half of what this feature promises is that answering a Feedback Note changes what the
  * agent is told next — and the only way to see that is two blocks in one run
  * that differ. A line saying "9 propositions" both times would look identical
  * whether or not the answer landed.
@@ -168,29 +168,6 @@ export function logAgentText(text: string): void {
  * step is still running, before the tool calls it led to. */
 export function logThinking(text: string): void {
   writeBlock('THINK', text)
-}
-
-/** One line, not the prompt itself: it is ~10k chars and identical every step,
- * so the full text goes to the console once instead of burying the timeline. */
-/**
- * One line per meta-agent judgment, on the same timeline as the thinking it was
- * made about — which is the only way to tell a mark that answers the reasoning
- * from one that answers the canvas. `chars` says how much of the thought had
- * arrived when the judgment was made; a short number next to a long THINK block
- * means it judged half a sentence.
- */
-export function logJudgment(chars: number, marks: string[]): void {
-  if (!enabled) return
-  if (marks.length === 0) {
-    write('META', `${chars} chars → silent`)
-    return
-  }
-  writeBlock('META', `${chars} chars →\n${marks.join('\n')}`)
-}
-
-/** Shadow analysis only: it never creates a mark or changes the active turn. */
-export function logPropositionComparison(chars: number, detail: string): void {
-  writeBlock('META-GRAPH', `${chars} chars →\n${detail}`)
 }
 
 export function logFeedbackNote(
@@ -255,47 +232,14 @@ export function logUserModelFeedback(
   write('UM-FEEDBACK', `step ${step} ${event} → ${detail}`)
 }
 
-export function logJudgeSkip(chars: number): void {
-  write('META', `${chars} chars → skipped, a judgment was already running`)
-}
-
-export function logMarkTool(chars: number, detail: string): void {
-  write('META-TOOL', `${chars} chars → ${detail}`)
-}
-
-export function logJudgeRejected(chars: number, tools: string[]): void {
-  write('META-DROP', `${chars} chars → rejected ${tools.join(', ')}`)
-}
-
-export function logJudgeLifecycle(event: string): void {
+export function logMetaAgentLifecycle(event: string): void {
   write('META-LIFE', event)
 }
 
-export function logJudgeError(error: unknown): void {
-  write('META-ERR', error instanceof Error ? error.message : truncate(error))
-}
-
 /**
- * The pointer went onto or off a marker. Paired with the HELD lines below, this
- * is the only way to tell a run that really stopped from one that carried on
- * behind a frozen-looking canvas — everything else in this file is written by
- * the agent, so a hold leaves no trace of its own.
+ * What happened after the person reviewed the Feedback Notes for a step.
  */
-export function logMarkHover(id: string, held: boolean): void {
-  write('HOVER', held ? `${id} → holding the turn` : `${id} → nothing to hold, turn not running`)
-}
-
-export function logMarkRelease(id: string, ms: number): void {
-  write('HOVER', `${id} released after ${(ms / 1000).toFixed(1)}s → turn resumes`)
-}
-
-/**
- * The person clicked a mark to answer it, and what became of that. Leaving a
- * mark alone counts as agreement, so these lines are the disagreements — and
- * the gap between the last `answered` line and `quiet` is the pause they took
- * before the run offered to carry on.
- */
-export function logMarkAnswer(
+export function logFeedbackAnswer(
   event: 'opened' | 'answered' | 'dismissed' | 'removed' | 'quiet' | 'resumed' | 'passed',
   detail: string
 ): void {

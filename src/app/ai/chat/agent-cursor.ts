@@ -2,7 +2,6 @@ import { AI_PULSE_PERIOD_MS } from '@open-pencil/core/constants'
 import type { Color, Vector } from '@open-pencil/scene-graph/primitives'
 
 import { metaAgentIsWorking } from '@/app/ai/chat/agent-activity'
-import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
 import { agentTurn } from '@/app/ai/chat/agent-turn'
 import type { EditorStore } from '@/app/editor/active-store'
 
@@ -22,9 +21,8 @@ import type { EditorStore } from '@/app/editor/active-store'
  * keeps its resting violet and its position stays honest — it points where the
  * work is, and stands still when there is none.
  *
- * Nothing here answers the pointer. The cursor used to be draggable, and
- * grabbing it paused the turn; pointing at a mismatch marker does that now, and
- * does it at every point in a run rather than only at a step boundary.
+ * Nothing here handles Feedback Note interaction; the note session owns the
+ * intervention hold independently from this visual presence.
  *
  * Each frame we call store.requestRepaint() (an overlay-only repaint that emits
  * the render event the loop actually listens to — bumping renderVersion alone is
@@ -39,7 +37,7 @@ const FOLLOW = 0.08 // easing toward the goal per frame
  * How fast the working state arrives and fades, per frame.
  *
  * Deliberately slow (~2s either way). A turn restarted after someone answered a
- * marker stops and starts again within a second or so, and a signal that snapped
+ * Feedback Note stops and starts again within a second or so, and a signal that snapped
  * off and back on would flash at exactly the moment the person is reading. At
  * this rate the pulse only dims through the handover.
  */
@@ -184,7 +182,6 @@ export function hideAgentCursor(store: EditorStore): void {
   state.cur = null
   state.energy = 0
   store.state.agentCursor = null
-  clearAgentSpeech() // no bubble floating where the cursor used to be
   store.requestRepaint()
   if (shownStore === store) shownStore = null
 }

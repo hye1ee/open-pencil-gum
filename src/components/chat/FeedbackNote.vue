@@ -69,7 +69,7 @@ const suggestionVersions = new Map<string, number>()
 
 const NOTE_COLUMN_WIDTH = 344
 const NOTE_EDGE_GAP = 16
-const NOTE_MARKER_WIDTH = 40
+const COLLAPSED_NOTE_WIDTH = 40
 
 function relativePoint(event: PointerEvent): Vector | null {
   const target = event.currentTarget
@@ -523,7 +523,7 @@ function position(note: (typeof feedbackNoteState.notes)[number], index: number)
   const origin = queueOriginPosition(note)
   const canvasWidth = canvasEl?.clientWidth ?? NOTE_COLUMN_WIDTH
   const noteWidth = (candidate: (typeof feedbackNoteState.notes)[number]) =>
-    feedbackNoteState.activeId === candidate.id ? NOTE_COLUMN_WIDTH : NOTE_MARKER_WIDTH
+    feedbackNoteState.activeId === candidate.id ? NOTE_COLUMN_WIDTH : COLLAPSED_NOTE_WIDTH
   const offsetX = feedbackNoteState.notes
     .slice(0, index)
     .reduce((width, candidate) => width + noteWidth(candidate), 0)
@@ -619,10 +619,10 @@ function syncHighlights() {
 
   if (entries.length > 0) {
     ownsHighlight = true
-    store.aiSetMismatch(entries)
+    store.aiSetFeedbackHighlights(entries)
   } else if (ownsHighlight) {
     ownsHighlight = false
-    store.aiClearMismatch()
+    store.aiClearFeedbackHighlights()
   }
 }
 
@@ -658,7 +658,7 @@ watch(
 
 onBeforeUnmount(() => {
   for (const timer of introTimers.values()) clearTimeout(timer)
-  if (ownsHighlight) store.aiClearMismatch()
+  if (ownsHighlight) store.aiClearFeedbackHighlights()
 })
 
 function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationship']) {
@@ -1006,7 +1006,7 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
           <div
             v-if="hasVisualArtifact(note)"
             class="absolute top-12 left-full ml-2 flex w-8 flex-col gap-1 rounded-xl bg-panel p-1.5 shadow-lg ring-1 ring-border"
-            aria-label="Visual feedback marker tools"
+            aria-label="Visual feedback annotation tools"
           >
             <button
               v-for="tool in VISUAL_TOOLS"
@@ -1018,7 +1018,7 @@ function tone(relationship: (typeof feedbackNoteState.notes)[number]['relationsh
                   ? 'bg-violet-600 text-white shadow-sm'
                   : 'text-muted hover:bg-hover hover:text-surface'
               "
-              :aria-label="`Use ${tool} marker`"
+              :aria-label="`Use ${tool} annotation`"
               :title="
                 tool === 'region'
                   ? 'Select region'

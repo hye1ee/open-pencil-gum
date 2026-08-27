@@ -8,7 +8,7 @@ import {
   currentFeedbackNoteGeneration,
   settleFeedbackNoteStep
 } from '@/app/feedback-note/use'
-import type { Proposition } from '@/app/meta-agent/judge'
+import type { Proposition } from '@/app/meta-agent/core/types'
 
 interface FeedbackNoteStreamState {
   chunk: number
@@ -23,15 +23,10 @@ interface FeedbackNoteStreamState {
 }
 
 interface ReasoningObserverOptions {
-  feedbackNotesEnabled: boolean
   getStore(): EditorStore | null
   getRequest(): string
   getPlan(): string | null
   getPropositions(): Proposition[]
-  onOrdinaryStart(): void
-  onOrdinaryChunk(reasoning: string): void
-  onReasoningEnd(reasoning: string): void
-  ordinarySettled(): Promise<void>
 }
 
 const streams = new Map<number, FeedbackNoteStreamState>()
@@ -46,28 +41,20 @@ export function installReasoningObserver(options: ReasoningObserverOptions): voi
   setReasoningObserver({
     start: (streamId) => {
       if (invalidatedStreams.has(streamId)) return
-      if (options.feedbackNotesEnabled) {
-        const store = options.getStore()
-        streams.set(streamId, {
-          chunk: 0,
-          step: store ? interactiveFeedbackStep(currentRunStepNumber(store)) : null,
-          settled: false,
-          task: Promise.resolve(),
-          generation: currentFeedbackNoteGeneration(),
-          store,
-          request: options.getRequest(),
-          plan: options.getPlan(),
-          propositions: options.getPropositions()
-        })
-      } else {
-        options.onOrdinaryStart()
-      }
+      const store = options.getStore()
+      streams.set(streamId, {
+        chunk: 0,
+        step: store ? interactiveFeedbackStep(currentRunStepNumber(store)) : null,
+        settled: false,
+        task: Promise.resolve(),
+        generation: currentFeedbackNoteGeneration(),
+        store,
+        request: options.getRequest(),
+        plan: options.getPlan(),
+        propositions: options.getPropositions()
+      })
     },
-    chunk: (streamId, reasoningChunk, reasoningSoFar) => {
-      if (!options.feedbackNotesEnabled) {
-        options.onOrdinaryChunk(reasoningSoFar)
-        return
-      }
+    chunk: (streamId, reasoningChunk) => {
       const state = streams.get(streamId)
       const store = state?.store
       if (!state || !store || reasoningChunk.trim() === '') return
@@ -89,23 +76,12 @@ export function installReasoningObserver(options: ReasoningObserverOptions): voi
         })
       )
     },
-    end: (streamId, reasoning) => {
-      options.onReasoningEnd(reasoning)
+    end: (streamId) => {
       const state = streams.get(streamId)
-      if (
-        !options.feedbackNotesEnabled ||
-        !state ||
-        state.chunk === 0 ||
-        state.step === null ||
-        state.settled
-      )
-        return
+      if (!state || state.chunk === 0 || state.step === null || state.settled) return
       state.settled = true
       state.task = settleFeedbackNoteStep(state.step, state.generation, state.task)
     },
-    settled: (streamId) =>
-      options.feedbackNotesEnabled
-        ? (streams.get(streamId)?.task ?? Promise.resolve())
-        : options.ordinarySettled()
+    settled: (streamId) => streams.get(streamId)?.task ?? Promise.resolve()
   })
 }

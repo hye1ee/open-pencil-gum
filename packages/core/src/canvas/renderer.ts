@@ -168,9 +168,9 @@ export class SkiaRenderer {
   _flashPaint: Paint | null = null
   _aiActiveNodes: Set<string> = new Set()
   _aiDoneFlashes: Array<{ nodeId: string; startTime: number }> = []
-  /** nodeId -> the meta-agent's severity for it, 1-10. Deliberately NOT
-   * `_aiActiveNodes`, which `onFlashNodes` clears after every mutating tool. */
-  _aiMismatch: Map<string, number> = new Map()
+  /** Canvas nodes linked to active Feedback Notes. Kept separate from transient
+   * agent activity, which is cleared after every mutating tool. */
+  _aiFeedbackHighlights: Map<string, number> = new Map()
   _aiGlowPaint: Paint | null = null
 
   readonly DEFAULT_FONT_SIZE = DEFAULT_FONT_SIZE
@@ -463,12 +463,12 @@ export class SkiaRenderer {
     RendererState.aiClearAll(this)
   }
 
-  aiSetMismatch(entries: Array<[string, number]>): void {
-    RendererState.aiSetMismatch(this, entries)
+  aiSetFeedbackHighlights(entries: Array<[string, number]>): void {
+    RendererState.aiSetFeedbackHighlights(this, entries)
   }
 
-  aiClearMismatch(): void {
-    RendererState.aiClearMismatch(this)
+  aiClearFeedbackHighlights(): void {
+    RendererState.aiClearFeedbackHighlights(this)
   }
 
   get hasActiveFlashes(): boolean {

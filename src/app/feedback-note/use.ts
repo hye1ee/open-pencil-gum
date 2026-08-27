@@ -6,14 +6,13 @@ import { logFeedbackNoteCode, logFeedbackNoteImage, logFeedbackStep } from '@/ap
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
 import { createUntracedLanguageModel } from '@/app/ai/chat/model'
 import { backgroundProviderOptions, modelConfigForSlot } from '@/app/ai/model-routing'
-import { composeCodeVisual } from '@/app/feedback-note/code-visual/use'
 import {
   confirmedFeedbackForNote,
   resetConfirmedFeedbackHistory
 } from '@/app/feedback-note/draft/history'
-import { generateFeedbackNoteImage } from '@/app/feedback-note/image'
+import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
+import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
 import { feedbackNoteRelationship, readFeedbackNote } from '@/app/feedback-note/parse'
-import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/feedback-note/prompt'
 import {
   recordFeedbackOutcome,
   resetStepFeedbackSession,
@@ -22,7 +21,12 @@ import {
 } from '@/app/feedback-note/session'
 import { FEEDBACK_NOTE_TOOLS } from '@/app/feedback-note/tools'
 import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/feedback-note/types'
-import type { Proposition } from '@/app/meta-agent/judge'
+import type { FeedbackNoteRepresentationProvider } from '@/app/meta-agent/core/representation'
+import {
+  DESIGN_FEEDBACK_NOTE_SYSTEM,
+  renderDesignFeedbackNotePrompt
+} from '@/app/meta-agent/domains/design/prompt'
+import type { OpenPencilFeedbackNoteInput } from '@/app/meta-agent/hosts/open-pencil/input'
 
 export const feedbackNoteState = reactive<{
   notes: FeedbackNote[]
@@ -72,7 +76,8 @@ function rememberNote(note: FeedbackNote): void {
     nodeId: note.nodeId,
     evidenceFromReasoning: note.evidenceFromReasoning,
     propositionIds: [...note.propositionIds],
-    status: 'active'
+    status: 'active',
+    outcome: null
   })
   feedbackNoteHistory = feedbackNoteHistory.slice(-NOTE_HISTORY_LIMIT)
 }
@@ -80,6 +85,16 @@ function rememberNote(note: FeedbackNote): void {
 function setHistoryStatus(id: string, status: FeedbackNoteHistoryItem['status']): void {
   const item = feedbackNoteHistory.find((candidate) => candidate.id === id)
   if (item) item.status = status
+}
+
+function setHistoryOutcome(id: string, feedbackItems: readonly ConfirmedFeedback[]): void {
+  const item = feedbackNoteHistory.find((candidate) => candidate.id === id)
+  if (!item) return
+  item.outcome = {
+    resolution: feedbackItems.length > 0 ? 'explicit-feedback' : 'implicitly-accepted',
+    selections: feedbackItems.map((feedback) => feedbackSelectionLabel(feedback.selection)),
+    feedback: feedbackItems.map((feedback) => feedback.feedback)
+  }
 }
 
 export function resetFeedbackNoteHistory(): void {
@@ -137,25 +152,18 @@ async function finalizeFeedbackNoteStep(originStep: number): Promise<void> {
   if (!handled) resumeTurn('feedback-note')
 }
 
-export async function createFeedbackNotes(input: {
-  request: string
-  plan: string | null
-  reasoning: string
-  originStep: number
-  originChunk: number
-  propositions: Proposition[]
-  canvas: string
-  actions: string[]
-  generation: number
-}): Promise<FeedbackNote[]> {
+export async function createFeedbackNotes(
+  input: OpenPencilFeedbackNoteInput,
+  representationProvider: FeedbackNoteRepresentationProvider
+): Promise<FeedbackNote[]> {
   if (input.reasoning.trim() === '' || !isCurrentGeneration(input.generation)) return []
   const finishActivity = beginMetaAgentActivity()
   feedbackNoteState.pending = true
   try {
     const result = await generateText({
       model: createUntracedLanguageModel(modelConfigForSlot('meta-agent')),
-      system: FEEDBACK_NOTE_SYSTEM,
-      prompt: renderFeedbackNotePrompt({ ...input, previousNotes: feedbackNoteHistory }),
+      system: DESIGN_FEEDBACK_NOTE_SYSTEM,
+      prompt: renderDesignFeedbackNotePrompt({ ...input, previousNotes: feedbackNoteHistory }),
       maxOutputTokens: 2048,
       providerOptions: backgroundProviderOptions('meta-agent'),
       tools: FEEDBACK_NOTE_TOOLS,
@@ -185,8 +193,7 @@ export async function createFeedbackNotes(input: {
       const index = feedbackNoteState.notes.push(note) - 1
       const storedNote = feedbackNoteState.notes[index]
       rememberNote(storedNote)
-      if (storedNote.representation.type === 'code-visual') void fillCodeVisual(storedNote)
-      if (storedNote.representation.type === 'image') void fillImage(storedNote)
+      void fillRepresentation(storedNote, representationProvider)
       return [storedNote]
     })
     if (storedNotes.length > 0) {
@@ -202,39 +209,42 @@ export async function createFeedbackNotes(input: {
   }
 }
 
-async function fillCodeVisual(note: FeedbackNote): Promise<void> {
-  if (note.representation.type !== 'code-visual') return
-  const representation = note.representation
+async function fillRepresentation(
+  note: FeedbackNote,
+  provider: FeedbackNoteRepresentationProvider
+): Promise<void> {
   try {
-    representation.artifact = await composeCodeVisual(note)
-    representation.status = 'ready'
-    logFeedbackNoteCode(note.id, representation.artifact.format)
-  } catch (error) {
-    console.warn('[feedback-note] code visual generation failed:', error)
-    representation.status = 'failed'
-    logFeedbackNoteCode(note.id, 'failed', error instanceof Error ? error.message : 'unknown error')
-  }
-}
-
-async function fillImage(note: FeedbackNote): Promise<void> {
-  if (note.representation.type !== 'image') return
-  const representation = note.representation
-  try {
-    representation.url = await generateFeedbackNoteImage(
-      representation.prompt,
-      representation.imageType,
-      note.representationGoal
-    )
-    representation.status = 'ready'
+    const result = await provider.materialize(note)
+    if (result.type === 'text') {
+      if (note.representation.type !== 'text') throw new Error('Representation provider mismatch')
+      return
+    }
+    if (result.type === 'code-visual') {
+      if (note.representation.type !== 'code-visual') {
+        throw new Error('Representation provider mismatch')
+      }
+      note.representation.artifact = result.artifact
+      note.representation.status = 'ready'
+      logFeedbackNoteCode(note.id, result.artifact.format)
+      return
+    }
+    if (note.representation.type !== 'image') throw new Error('Representation provider mismatch')
+    note.representation.url = result.url
+    note.representation.status = 'ready'
     logFeedbackNoteImage(note.id, 'ready')
   } catch (error) {
-    console.warn('[feedback-note] image generation failed:', error)
-    representation.status = 'failed'
-    logFeedbackNoteImage(
-      note.id,
-      'failed',
-      error instanceof Error ? error.message : 'unknown error'
-    )
+    const message = error instanceof Error ? error.message : 'unknown error'
+    if (note.representation.type === 'code-visual') {
+      console.warn('[feedback-note] code visual generation failed:', error)
+      note.representation.status = 'failed'
+      logFeedbackNoteCode(note.id, 'failed', message)
+    } else if (note.representation.type === 'image') {
+      console.warn('[feedback-note] image generation failed:', error)
+      note.representation.status = 'failed'
+      logFeedbackNoteImage(note.id, 'failed', message)
+    } else {
+      console.warn('[feedback-note] text representation failed:', error)
+    }
   }
 }
 
@@ -248,6 +258,7 @@ export async function resolveFeedbackNote(id: string): Promise<void> {
   const feedbackItems = confirmedFeedbackForNote(id)
   recordFeedbackOutcome(note, feedbackItems)
   setHistoryStatus(id, feedbackItems.length > 0 ? 'answered' : 'continued')
+  setHistoryOutcome(id, feedbackItems)
   const wasActive = feedbackNoteState.activeId === id
   feedbackNoteState.notes = feedbackNoteState.notes.filter((note) => note.id !== id)
   if (wasActive) feedbackNoteState.activeId = feedbackNoteState.notes[0]?.id ?? null

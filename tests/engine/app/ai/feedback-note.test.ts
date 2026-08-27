@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
+import {
+  agentTurn,
+  awaitTurnResume,
+  currentTurnGeneration,
+  pauseTurn,
+  resumeTurn,
+  setTurnRunning
+} from '@/app/ai/chat/agent-turn'
 import { buildInteractiveCodeVisualDocument } from '@/app/feedback-note/code-visual/document'
 import { inspectCodeVisualHtml, sanitizeCodeVisualHtml } from '@/app/feedback-note/code-visual/html'
 import {
@@ -44,6 +52,29 @@ const COMPARISON_SVG = `<svg viewBox="0 0 720 440">
 </svg>`
 
 describe('interactive feedback note', () => {
+  test('keeps a feedback hold when chat status temporarily stops running', async () => {
+    setTurnRunning(true)
+    const turnGeneration = currentTurnGeneration()
+    pauseTurn('feedback-note')
+    let released = false
+    const waiting = awaitTurnResume('test-before-action', turnGeneration).then((allowed) => {
+      released = true
+      return allowed
+    })
+
+    setTurnRunning(false)
+    await Promise.resolve()
+
+    expect(agentTurn.running).toBe(false)
+    expect(agentTurn.paused).toBe(true)
+    expect(released).toBe(false)
+
+    resumeTurn('feedback-note')
+    expect(await waiting).toBe(true)
+    expect(agentTurn.paused).toBe(false)
+    setTurnRunning(false)
+  })
+
   test('collects a whole step before deciding whether its action may proceed', () => {
     resetStepFeedbackSession()
     const note = {
@@ -105,7 +136,9 @@ describe('interactive feedback note', () => {
   })
 
   test('drafts editable feedback without treating selection as approval', () => {
-    expect(FEEDBACK_DRAFT_SYSTEM).toContain('Selection signals attention, not approval')
+    expect(FEEDBACK_DRAFT_SYSTEM).toContain(
+      'a mark signals attention rather than approval or disapproval'
+    )
     expect(FEEDBACK_DRAFT_SYSTEM).toContain('at most 25 words')
   })
 
@@ -389,17 +422,24 @@ describe('interactive feedback note', () => {
           nodeId: '0:3',
           evidenceFromReasoning: 'I will sketch the layout first.',
           propositionIds: ['equal-cards'],
-          status: 'continued'
+          status: 'answered',
+          outcome: {
+            resolution: 'explicit-feedback',
+            selections: ['Compact alternative (compact)'],
+            feedback: ['Use compact cards so more information remains visible.']
+          }
         }
       ]
     })
     expect(prompt).toContain('I will use equal-width cards.')
     expect(prompt).toContain('representation: code-visual/flow')
+    expect(prompt).toContain('Compact alternative (compact)')
+    expect(prompt).toContain('Use compact cards so more information remains visible.')
     expect(FEEDBACK_NOTE_SYSTEM).toContain(
-      "confirming a primary button's accent does not settle whether secondary or tertiary controls"
+      "resolving a primary control's accent does not automatically resolve a secondary or tertiary control's treatment"
     )
     expect(FEEDBACK_NOTE_SYSTEM).toContain(
-      'Skip as repetition only when the earlier answer necessarily resolves the current decision'
+      'A more specific application of an answer is not a new user-model question'
     )
   })
 
