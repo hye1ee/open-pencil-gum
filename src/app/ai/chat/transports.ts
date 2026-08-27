@@ -18,6 +18,7 @@ import {
   logStep,
   logTurnAbandoned,
   logUsage,
+  logUserModelPropositions,
   logUserMessage
 } from '@/app/ai/chat/agent-log'
 import { clearAgentSpeech } from '@/app/ai/chat/agent-speech'
@@ -34,6 +35,7 @@ import {
   clearUserMessages,
   drainUserMessages
 } from '@/app/ai/chat/user-messages'
+import { renderUserModelPropositions } from '@/app/ai/chat/user-model-propositions'
 import { describeModelRouting, modelConfigForSlot } from '@/app/ai/model-routing'
 import {
   MAX_AGENT_STEPS,
@@ -49,7 +51,7 @@ import {
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/feedback-note/session'
 import { noteAgentPlan } from '@/app/meta-agent/events'
-import { startMetaAgentTurn } from '@/app/meta-agent/use'
+import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -250,10 +252,14 @@ export function createToolLoopTransport({
       resumeTurn()
       clearAgentSpeech()
       await startMetaAgentTurn(store, submittedRequest)
+      const userModelPropositions = renderUserModelPropositions(runUserModel())
+      if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       showAgentCursor(store)
       return {
         ...options,
-        instructions: SYSTEM_PROMPT,
+        instructions: userModelPropositions
+          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
+          : SYSTEM_PROMPT,
         maxOutputTokens,
         providerOptions: callProviderOptions
       }

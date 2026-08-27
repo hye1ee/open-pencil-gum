@@ -195,8 +195,9 @@ export function currentMetaRequest(): string {
   return request
 }
 
-/** Read once in `startMetaAgentTurn` and held, so the design agent, the planning
- * call and the judge all work from the same version. */
+/** Read once in `startMetaAgentTurn` and held, so the task agent and the judge
+ * work from the same version. The separate planning module intentionally does
+ * not receive the user model. */
 export function runUserModel(): Proposition[] {
   return runPropositions
 }
