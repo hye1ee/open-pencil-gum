@@ -46,7 +46,7 @@ type StreamPart =
  * only watcher today is the meta-agent, and it builds a model of its own — an
  * import here would close the loop model → model-trace → meta-agent → model.
  */
-interface ReasoningObserver {
+export interface ReasoningObserver {
   /** A fresh block of thinking has begun; whatever came before is finished. */
   start(streamId: number): void
   /** One provider chunk and everything thought in this block so far. */
@@ -56,6 +56,19 @@ interface ReasoningObserver {
   /** Resolves once the watcher has finished answering everything it has been
    * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
   settled(streamId: number): Promise<void>
+}
+
+export interface ModelTraceOptions {
+  /** A session-scoped observer. The design editor falls back to its registered observer. */
+  reasoningObserver?: ReasoningObserver
+  /** A session-scoped hold gate. Returning false drops the pending provider action. */
+  awaitResume?: (
+    point: 'mid-thought' | 'before-action' | 'before-final-response'
+  ) => Promise<boolean>
+  /** Conversation mode keeps the trace but omits canvas speech, run logs, and design pacing. */
+  mode?: 'design' | 'conversation'
+  /** Hold text output until the reasoning observer settles and any checkpoint clears. */
+  gateOutput?: boolean
 }
 let observeReasoning: ReasoningObserver | null = null
 let nextStreamId = 1
@@ -128,156 +141,186 @@ function traceSystemPrompt(params: CallParams): void {
   console.debug(`[ai] system prompt (${system.length} chars)\n${system}`)
 }
 
-const middleware: LanguageModelMiddleware = {
-  specificationVersion: 'v3',
+function createMiddleware(options: ModelTraceOptions = {}): LanguageModelMiddleware {
+  const isDesign = options.mode !== 'conversation'
+  const resume = options.awaitResume ?? awaitTurnResume
+  const designBeat = (ms: number): Promise<void> => (isDesign ? beat(ms) : Promise.resolve())
+  const logDropped = (message: string): void => {
+    if (isDesign) logTurnAbandoned(message)
+  }
+  const finishText = (text: string): void => {
+    if (!isDesign) return
+    logAgentText(text)
+    sayAgent(text)
+  }
+  const prepareAction = async (): Promise<void> => {
+    if (!isDesign) return
+    await awaitSpeechDrained()
+    await beat(BEFORE_ACTION_MS)
+  }
 
-  wrapStream: async ({ doStream, params }) => {
-    traceSystemPrompt(params)
-    const { stream, ...rest } = await doStream()
-    const streamId = nextStreamId++
+  return {
+    specificationVersion: 'v3',
 
-    // Reasoning goes to observers per delta but to the log per block, since one
-    // line per delta would be unreadable there. It is deliberately not mirrored
-    // into the canvas speech bubble; the meta-agent still needs the stream, but
-    // exposing the model's private work there adds visual noise.
-    let thinking = ''
-    let reasoningClosed = false
-    let text = ''
-    const closeReasoning = (): void => {
-      if (reasoningClosed) return
-      observeReasoning?.end(streamId, thinking)
-      reasoningClosed = true
-      logThinking(thinking)
-      thinking = ''
-    }
-    // Repeats collapsed to a count — a step is mostly deltas, and the question
-    // this answers is which part types arrive and in what order.
-    const shape: string[] = []
-    const seen = (type: string): void => {
-      const last = shape.length > 0 ? shape[shape.length - 1] : ''
-      let run = 0
-      if (last === type) run = 1
-      else if (last.startsWith(`${type} ×`)) run = Number(last.slice(type.length + 2))
-      if (run === 0) shape.push(type)
-      else shape[shape.length - 1] = `${type} ×${run + 1}`
-    }
-    // The turn was thrown away while this stream was held. Everything still
-    // buffered behind the hold belongs to a step that is being done again, so
-    // none of it may reach the tool executor.
-    let dropped = false
-    let sawToolInput = false
-    let finalReviewSettled = false
+    wrapStream: async ({ doStream, params }) => {
+      if (isDesign) traceSystemPrompt(params)
+      const { stream, ...rest } = await doStream()
+      const streamId = nextStreamId++
+      const streamObserver = options.reasoningObserver ?? observeReasoning
+      let streamSequence = 0
 
-    /**
-     * A text-only final step has no `tool-input-start`, so `before-action`
-     * cannot hold it. Treat the final response as the step's commit point: its
-     * reasoning must be reviewed and any Note resolved before the response or
-     * finish chunk is allowed through.
-     */
-    const awaitFinalReview = async (): Promise<boolean> => {
-      if (sawToolInput || finalReviewSettled) return true
-      if (thinking.trim() !== '') closeReasoning()
-      if (observeReasoning) await observeReasoning.settled(streamId)
-      if (!(await awaitTurnResume('before-final-response'))) {
-        dropped = true
-        logTurnAbandoned('stream dropped before final response — response not shown')
-        return false
+      // Reasoning goes to observers per delta but to the log per block, since one
+      // line per delta would be unreadable there. It is deliberately not mirrored
+      // into the canvas speech bubble; the meta-agent still needs the stream, but
+      // exposing the model's private work there adds visual noise.
+      let thinking = ''
+      let reasoningClosed = false
+      let text = ''
+      const closeReasoning = (): void => {
+        if (reasoningClosed) return
+        streamObserver?.end(streamId, thinking)
+        reasoningClosed = true
+        if (isDesign) logThinking(thinking)
+        thinking = ''
       }
-      finalReviewSettled = true
-      return true
-    }
+      // Repeats collapsed to a count — a step is mostly deltas, and the question
+      // this answers is which part types arrive and in what order.
+      const shape: string[] = []
+      const seen = (type: string): void => {
+        const last = shape.length > 0 ? shape[shape.length - 1] : ''
+        let run = 0
+        if (last === type) run = 1
+        else if (last.startsWith(`${type} ×`)) run = Number(last.slice(type.length + 2))
+        if (run === 0) shape.push(type)
+        else shape[shape.length - 1] = `${type} ×${run + 1}`
+      }
+      // The turn was thrown away while this stream was held. Everything still
+      // buffered behind the hold belongs to a step that is being done again, so
+      // none of it may reach the tool executor.
+      let dropped = false
+      let sawToolInput = false
+      let outputGateSettled = false
 
-    const tap = new TransformStream<StreamPart, StreamPart>({
-      async transform(chunk, controller) {
-        if (dropped) return
-        seen(chunk.type)
-        if (chunk.type === 'reasoning-start') {
-          thinking = ''
-          reasoningClosed = false
-          observeReasoning?.start(streamId)
-        } else if (chunk.type === 'reasoning-delta') {
-          thinking += chunk.delta
-          // Everything so far, not the delta: a watcher judging where the
-          // thought has arrived cannot do it from half a sentence. Not awaited
-          // — it answers on its own clock, and the beat below is what gives it
-          // room, not this call.
-          observeReasoning?.chunk(streamId, chunk.delta, thinking)
-          await beat(BETWEEN_THOUGHTS_MS)
-          // The step boundary is the other place the turn can be held, and it
-          // can be twenty seconds away. Someone who points at a marker while the
-          // agent is mid-thought means now.
-          if (!(await awaitTurnResume('mid-thought'))) {
-            dropped = true
-            logTurnAbandoned('stream dropped at mid-thought')
-            controller.terminate()
-            return
-          }
-        } else if (chunk.type === 'reasoning-end') {
-          closeReasoning()
-          // Keep a short beat before the agent switches from thinking to
-          // speaking, without waiting on a hidden bubble animation.
-          await beat(AFTER_THINKING_MS)
-        } else if (chunk.type === 'text-start') {
-          if (!(await awaitFinalReview())) {
-            controller.terminate()
-            return
-          }
-          text = ''
-        } else if (chunk.type === 'text-delta') text += chunk.delta
-        else if (chunk.type === 'text-end') {
-          logAgentText(text)
-          // Replaces the muted thinking line with what the agent actually
-          // wants to say.
-          sayAgent(text)
-          text = ''
-        } else if (chunk.type === 'tool-input-start') {
-          sawToolInput = true
-          if (thinking.trim() !== '') closeReasoning()
-          // Nothing downstream has run yet — holding the chunk here holds the
-          // tool call itself, so the canvas doesn't change until the line
-          // announcing it has been up long enough to read.
-          await awaitSpeechDrained()
-          await beat(BEFORE_ACTION_MS)
-          // Then for the watcher's verdict on the thinking that led here, so
-          // its marks are up before the thing they are about lands.
-          if (observeReasoning) {
-            await observeReasoning.settled(streamId)
-          }
-          // Last point at which the canvas is still untouched by this step.
-          // After the wait above, so a mark that only just appeared still gets
-          // the chance to hold the run.
-          // This is the one that matters: the chunk in hand is the tool call.
-          if (!(await awaitTurnResume('before-action'))) {
-            dropped = true
-            logTurnAbandoned('stream dropped at before-action — tool call not run')
-            controller.terminate()
-            return
-          }
-        } else if (chunk.type === 'finish' && !(await awaitFinalReview())) {
-          controller.terminate()
-          return
+      /**
+       * A text-only final step has no `tool-input-start`, so `before-action`
+       * cannot hold it. Treat output as the step's commit point: wait for the
+       * reasoning observer and resolve any checkpoint before text is released.
+       */
+      const awaitOutputGate = async (): Promise<boolean> => {
+        if (sawToolInput || outputGateSettled) return true
+        if (thinking.trim() !== '') closeReasoning()
+        if (options.gateOutput === false) return true
+        await streamObserver?.settled(streamId)
+        if (!(await resume('before-final-response'))) {
+          dropped = true
+          logDropped('stream dropped before final response — response not shown')
+          return false
         }
-        controller.enqueue(chunk)
-      },
-      flush() {
-        logStreamShape(shape)
+        outputGateSettled = true
+        return true
       }
-    })
 
-    return { ...rest, stream: stream.pipeThrough(tap) }
-  },
+      const tap = new TransformStream<StreamPart, StreamPart>({
+        async transform(chunk, controller) {
+          if (!isDesign && import.meta.env.DEV) {
+            streamSequence += 1
+            // oxlint-disable-next-line no-console -- development trace requested for stream debugging.
+            console.info('[conversation:model-stream]', {
+              streamId,
+              sequence: streamSequence,
+              receivedAt: new Date().toISOString(),
+              type: chunk.type,
+              data: chunk
+            })
+          }
+          if (dropped) return
+          seen(chunk.type)
+          if (chunk.type === 'reasoning-start') {
+            thinking = ''
+            reasoningClosed = false
+            streamObserver?.start(streamId)
+          } else if (chunk.type === 'reasoning-delta') {
+            thinking += chunk.delta
+            // Everything so far, not the delta: a watcher judging where the
+            // thought has arrived cannot do it from half a sentence. Not awaited
+            // — it answers on its own clock, and the beat below is what gives it
+            // room, not this call.
+            streamObserver?.chunk(streamId, chunk.delta, thinking)
+            await designBeat(BETWEEN_THOUGHTS_MS)
+            // The step boundary is the other place the turn can be held, and it
+            // can be twenty seconds away. Someone who points at a marker while the
+            // agent is mid-thought means now.
+            if (!(await resume('mid-thought'))) {
+              dropped = true
+              logDropped('stream dropped at mid-thought')
+              controller.terminate()
+              return
+            }
+          } else if (chunk.type === 'reasoning-end') {
+            closeReasoning()
+            // Keep a short beat before the agent switches from thinking to
+            // speaking, without waiting on a hidden bubble animation.
+            await designBeat(AFTER_THINKING_MS)
+          } else if (chunk.type === 'text-start') {
+            if (!(await awaitOutputGate())) {
+              controller.terminate()
+              return
+            }
+            text = ''
+          } else if (chunk.type === 'text-delta') text += chunk.delta
+          else if (chunk.type === 'text-end') {
+            // Replaces the muted thinking line with what the agent actually
+            // wants to say.
+            finishText(text)
+            text = ''
+          } else if (chunk.type === 'tool-input-start') {
+            sawToolInput = true
+            if (thinking.trim() !== '') closeReasoning()
+            // Nothing downstream has run yet — holding the chunk here holds the
+            // tool call itself, so the canvas doesn't change until the line
+            // announcing it has been up long enough to read.
+            await prepareAction()
+            // Then for the watcher's verdict on the thinking that led here, so
+            // its marks are up before the thing they are about lands.
+            await streamObserver?.settled(streamId)
+            // Last point at which the canvas is still untouched by this step.
+            // After the wait above, so a mark that only just appeared still gets
+            // the chance to hold the run.
+            // This is the one that matters: the chunk in hand is the tool call.
+            if (!(await resume('before-action'))) {
+              dropped = true
+              logDropped('stream dropped at before-action — tool call not run')
+              controller.terminate()
+              return
+            }
+          } else if (chunk.type === 'finish' && !(await awaitOutputGate())) {
+            controller.terminate()
+            return
+          }
+          controller.enqueue(chunk)
+        },
+        flush() {
+          if (isDesign) logStreamShape(shape)
+        }
+      })
 
-  // The plan calls (`plan.ts`) don't stream, so their thinking arrives here.
-  wrapGenerate: async ({ doGenerate, params }) => {
-    traceSystemPrompt(params)
-    const result = await doGenerate()
-    for (const part of result.content) {
-      if (part.type === 'reasoning') logThinking(part.text)
+      return { ...rest, stream: stream.pipeThrough(tap) }
+    },
+
+    // The plan calls (`plan.ts`) don't stream, so their thinking arrives here.
+    wrapGenerate: async ({ doGenerate, params }) => {
+      if (isDesign) traceSystemPrompt(params)
+      const result = await doGenerate()
+      if (isDesign) {
+        for (const part of result.content) {
+          if (part.type === 'reasoning') logThinking(part.text)
+        }
+      }
+      return result
     }
-    return result
   }
 }
 
-export function withModelTrace(model: ProviderModel): ProviderModel {
-  return wrapLanguageModel({ model, middleware })
+export function withModelTrace(model: ProviderModel, options?: ModelTraceOptions): ProviderModel {
+  return wrapLanguageModel({ model, middleware: createMiddleware(options) })
 }
