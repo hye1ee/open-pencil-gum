@@ -3,10 +3,14 @@ import { useEventListener } from '@vueuse/core'
 import { computed, ref, useTemplateRef } from 'vue'
 
 import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
+import type { FeedbackCueSegment } from '@/app/meta-agent/core/types'
 import { CODE_VISUAL_SIZE_BRIDGE_SOURCE } from '@/app/meta-agent/feedback-note/code-visual/document'
 import { captureCodeVisualSelection } from '@/app/meta-agent/feedback-note/draft/code-visual'
 import { annotateFeedbackImage } from '@/app/meta-agent/feedback-note/draft/image'
-import { copyFeedbackSelection, feedbackSelectionLabel } from '@/app/meta-agent/feedback-note/draft/selection'
+import {
+  copyFeedbackSelection,
+  feedbackSelectionLabel
+} from '@/app/meta-agent/feedback-note/draft/selection'
 import { resolveCodeVisualTarget } from '@/app/meta-agent/feedback-note/draft/target'
 import type { FeedbackPoint, FeedbackSelection } from '@/app/meta-agent/feedback-note/draft/types'
 import { generateLenChatFeedbackDraft } from '@/app/meta-agent/hosts/lenchat/feedback-note/draft'
@@ -16,6 +20,7 @@ import type { Proposition } from '@/app/user-model/pipeline'
 
 type FeedbackNotePhase = 'reviewed' | 'current' | 'waiting'
 type VisualTool = 'region' | 'point' | 'arrow' | 'sequence' | 'freehand'
+type TextSelectionSource = Extract<FeedbackSelection, { type: 'text' }>['source']
 
 interface VisualGesture {
   tool: Exclude<VisualTool, 'point' | 'sequence'>
@@ -49,6 +54,7 @@ const suggestion = ref<string | null>(null)
 const suggestionLoading = ref(false)
 const feedbackItems = ref<ConversationFeedbackItem[]>([])
 const hoveredFeedbackIndex = ref<number | null>(null)
+const provenanceIndex = ref<number | null>(null)
 const codeVisualAspectRatio = ref('720 / 240')
 const codeVisualFrame = useTemplateRef<HTMLIFrameElement>('codeVisualFrame')
 let suggestionVersion = 0
@@ -62,6 +68,13 @@ const visualReady = computed(
       note.representation.status === 'ready' &&
       note.representation.url !== null)
 )
+const cueSegments = computed<FeedbackCueSegment[]>(() =>
+  note.cueSegments?.length ? note.cueSegments : [{ text: note.cue, source: 'neutral' }]
+)
+const provenanceSegment = computed(() => {
+  const index = provenanceIndex.value
+  return index === null ? null : (cueSegments.value[index] ?? null)
+})
 const activeSelection = computed(
   () =>
     (hoveredFeedbackIndex.value === null
@@ -80,6 +93,33 @@ function relationshipLabel(): string {
   if (note.relationship === 'conflict') return 'Conflict'
   if (note.relationship === 'alignment') return 'Alignment'
   return 'Uncovered'
+}
+
+function cueSegmentOffset(segmentIndex: number): number {
+  return cueSegments.value
+    .slice(0, segmentIndex)
+    .reduce((length, segment) => length + segment.text.length + 1, 0)
+}
+
+function toggleProvenance(segmentIndex: number): void {
+  // A click closing a text selection must not also toggle the panel.
+  if (window.getSelection()?.toString().trim()) return
+  provenanceIndex.value = provenanceIndex.value === segmentIndex ? null : segmentIndex
+}
+
+function reasoningEvidence(): string {
+  const segment = provenanceSegment.value
+  return segment?.source === 'reasoning' ? segment.evidenceQuote : ''
+}
+
+function propositionText(): string {
+  const segment = provenanceSegment.value
+  return segment?.source === 'proposition' ? segment.propositionText : ''
+}
+
+function propositionRationale(): string {
+  const segment = provenanceSegment.value
+  return segment?.source === 'proposition' ? (segment.propositionRationale ?? '') : ''
 }
 
 function relativePoint(event: PointerEvent): FeedbackPoint | null {
@@ -181,7 +221,7 @@ function finishVisualSelection(event: PointerEvent): void {
   if (selection.value) void requestSuggestion()
 }
 
-function selectText(event: MouseEvent, source: 'cue' | 'reasoning', fullText: string): void {
+function selectText(event: MouseEvent, source: TextSelectionSource, fullText: string): void {
   const container = event.currentTarget
   const browserSelection = window.getSelection()
   const text = browserSelection?.toString().trim() ?? ''
@@ -190,7 +230,9 @@ function selectText(event: MouseEvent, source: 'cue' | 'reasoning', fullText: st
   const start = fullText.indexOf(text)
   if (start === -1) return
   selection.value = { type: 'text', text, source, start, end: start + text.length }
-  browserSelection.removeAllRanges()
+  // Clearing on the next frame keeps the selection visible to the click that
+  // follows this mouseup, so selecting cue text never toggles a provenance panel.
+  requestAnimationFrame(() => browserSelection.removeAllRanges())
   void requestSuggestion()
 }
 
@@ -333,9 +375,13 @@ function freehandPoints(): string {
     : ''
 }
 
-function textSelectionParts(source: 'cue' | 'reasoning', fullText: string): TextSelectionPart[] {
+function textSelectionParts(source: TextSelectionSource, fullText: string): TextSelectionPart[] {
   const value = activeSelection.value
-  if (value?.type !== 'text' || value.source !== source) {
+  if (
+    value?.type !== 'text' ||
+    value.source !== source ||
+    fullText.slice(value.start, value.end) !== value.text
+  ) {
     return [{ text: fullText, selected: false }]
   }
   return [
@@ -343,6 +389,28 @@ function textSelectionParts(source: 'cue' | 'reasoning', fullText: string): Text
     { text: fullText.slice(value.start, value.end), selected: true },
     { text: fullText.slice(value.end), selected: false }
   ].filter((part) => part.text !== '')
+}
+
+function cueSelectionParts(segment: FeedbackCueSegment, segmentIndex: number): TextSelectionPart[] {
+  const value = activeSelection.value
+  const offset = cueSegmentOffset(segmentIndex)
+  if (value?.type !== 'text' || value.source !== 'cue') {
+    return [{ text: segment.text, selected: false }]
+  }
+  const localStart = Math.max(0, value.start - offset)
+  const localEnd = Math.min(segment.text.length, value.end - offset)
+  if (localStart >= localEnd) return [{ text: segment.text, selected: false }]
+  return [
+    { text: segment.text.slice(0, localStart), selected: false },
+    { text: segment.text.slice(localStart, localEnd), selected: true },
+    { text: segment.text.slice(localEnd), selected: false }
+  ].filter((part) => part.text !== '')
+}
+
+function propositionConfidence(): string {
+  const segment = provenanceSegment.value
+  if (segment?.source !== 'proposition') return ''
+  return `${(segment.propositionConfidence * 9 + 1).toFixed(0)}/10 confidence`
 }
 
 useEventListener(window, 'message', (event: MessageEvent) => {
@@ -368,17 +436,17 @@ useEventListener(window, 'message', (event: MessageEvent) => {
   <div
     data-test-id="conversation-feedback-note"
     :data-note-id="note.id"
-    class="relative shrink-0 snap-start transition"
+    class="relative w-88 max-w-[calc(100vw-6rem)] shrink-0 snap-center transition-[opacity,filter] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
     :class="{
-      'mr-10 w-[22rem] max-w-[calc(100vw-6rem)]': phase === 'current',
-      'w-72 max-w-[calc(100vw-4rem)] cursor-pointer': phase === 'waiting',
-      'w-64 max-w-[calc(100vw-4rem)] opacity-60 grayscale': phase === 'reviewed'
+      'z-20': phase === 'current',
+      'z-10 cursor-pointer opacity-75 hover:opacity-100': phase === 'waiting',
+      'z-0 opacity-45 grayscale': phase === 'reviewed'
     }"
     @click="phase === 'waiting' && emit('activate', note.id)"
   >
     <div
-      class="absolute -top-3 -left-3 z-10 flex size-7 items-center justify-center rounded-full bg-white shadow-md ring-2"
-      :class="markerTone()"
+      class="absolute -top-3 -left-3 z-10 flex size-7 items-center justify-center rounded-full bg-white shadow-md ring-2 transition-[transform,opacity,color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+      :class="[markerTone(), phase === 'current' ? 'scale-100 opacity-100' : 'scale-90 opacity-75']"
       :aria-label="`${relationshipLabel()} feedback note`"
       :title="relationshipLabel()"
     >
@@ -388,11 +456,12 @@ useEventListener(window, 'message', (event: MessageEvent) => {
     </div>
 
     <div
-      class="relative overflow-hidden rounded-xl bg-white transition"
+      class="relative overflow-hidden rounded-xl bg-white transition-[transform,background-color,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
       :class="{
-        'shadow-[0_18px_42px_-24px_rgb(15_23_42/0.42)] ring-1 ring-slate-200': phase === 'current',
-        'shadow-sm ring-1 ring-slate-200 hover:ring-violet-200': phase === 'waiting',
-        'bg-slate-100 ring-1 ring-slate-200': phase === 'reviewed'
+        'scale-100 shadow-[0_18px_42px_-24px_rgb(15_23_42/0.42)] ring-1 ring-slate-200':
+          phase === 'current',
+        'scale-[0.96] shadow-sm ring-1 ring-slate-200 hover:ring-violet-200': phase === 'waiting',
+        'scale-[0.96] bg-slate-100 ring-1 ring-slate-200': phase === 'reviewed'
       }"
     >
       <div :class="phase === 'current' ? 'p-5' : 'p-4'">
@@ -510,20 +579,53 @@ useEventListener(window, 'message', (event: MessageEvent) => {
           :class="phase === 'current' ? 'cursor-text text-base' : 'line-clamp-3 text-sm'"
           @mouseup="phase === 'current' && selectText($event, 'cue', note.cue)"
         >
-          <span
-            v-for="(part, index) in textSelectionParts('cue', note.cue)"
-            :key="index"
-            :class="{
-              'rounded-sm bg-violet-200': part.selected,
-              'animate-pulse ring-2 ring-violet-300/70':
-                part.selected && hoveredFeedbackIndex !== null
-            }"
-            >{{ part.text }}</span
-          >
+          <template v-for="(segment, segmentIndex) in cueSegments" :key="segmentIndex">
+            <span v-if="segmentIndex > 0">{{ ' ' }}</span>
+            <span
+              :role="phase === 'current' && segment.source !== 'neutral' ? 'button' : undefined"
+              :tabindex="phase === 'current' && segment.source !== 'neutral' ? 0 : undefined"
+              :title="
+                phase !== 'current' || segment.source === 'neutral'
+                  ? undefined
+                  : segment.source === 'reasoning'
+                    ? 'Show the agent reasoning behind this'
+                    : 'Show the user-model belief behind this'
+              "
+              :class="{
+                'cursor-pointer rounded-sm underline decoration-amber-500 decoration-dotted decoration-2 underline-offset-4 transition hover:bg-amber-100':
+                  phase === 'current' && segment.source === 'reasoning',
+                'cursor-pointer rounded-sm underline decoration-sky-500 decoration-dotted decoration-2 underline-offset-4 transition hover:bg-sky-100':
+                  phase === 'current' && segment.source === 'proposition',
+                'bg-amber-100': segment.source === 'reasoning' && provenanceIndex === segmentIndex,
+                'bg-sky-100': segment.source === 'proposition' && provenanceIndex === segmentIndex
+              }"
+              @click.stop="
+                phase === 'current' &&
+                segment.source !== 'neutral' &&
+                toggleProvenance(segmentIndex)
+              "
+              @keydown.enter.prevent="
+                segment.source !== 'neutral' && toggleProvenance(segmentIndex)
+              "
+              @keydown.space.prevent="
+                segment.source !== 'neutral' && toggleProvenance(segmentIndex)
+              "
+              ><span
+                v-for="(part, partIndex) in cueSelectionParts(segment, segmentIndex)"
+                :key="partIndex"
+                :class="{
+                  'rounded-sm bg-violet-200': part.selected,
+                  'animate-pulse ring-2 ring-violet-300/70':
+                    part.selected && hoveredFeedbackIndex !== null
+                }"
+                >{{ part.text }}</span
+              ></span
+            >
+          </template>
         </p>
 
         <div
-          v-if="phase === 'current'"
+          v-if="phase === 'current' && provenanceSegment?.source === 'reasoning'"
           class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-slate-800 ring-1 ring-amber-200"
         >
           <p class="mb-1 flex items-center gap-1.5 font-semibold text-amber-700">
@@ -532,11 +634,11 @@ useEventListener(window, 'message', (event: MessageEvent) => {
           </p>
           <p
             class="cursor-text leading-relaxed text-slate-600 select-text selection:bg-violet-200"
-            @mouseup="selectText($event, 'reasoning', note.reasoningEvidence)"
+            @mouseup="selectText($event, 'reasoning', reasoningEvidence())"
           >
             <span>“</span
             ><span
-              v-for="(part, index) in textSelectionParts('reasoning', note.reasoningEvidence)"
+              v-for="(part, index) in textSelectionParts('reasoning', reasoningEvidence())"
               :key="index"
               :class="{
                 'rounded-sm bg-violet-200': part.selected,
@@ -545,6 +647,55 @@ useEventListener(window, 'message', (event: MessageEvent) => {
               }"
               >{{ part.text }}</span
             ><span>”</span>
+          </p>
+        </div>
+
+        <div
+          v-else-if="phase === 'current' && provenanceSegment?.source === 'proposition'"
+          class="mt-3 rounded-lg bg-sky-50 p-3 text-xs text-slate-800 ring-1 ring-sky-200"
+        >
+          <p class="mb-1 flex items-center justify-between gap-2 font-semibold text-sky-700">
+            <span class="flex items-center gap-1.5">
+              <icon-lucide-user-round class="size-3.5" />
+              From user model
+            </span>
+            <span class="shrink-0 font-normal text-sky-600">
+              {{ propositionConfidence() }}
+            </span>
+          </p>
+          <p
+            class="cursor-text leading-relaxed text-slate-600 select-text selection:bg-violet-200"
+            @mouseup="selectText($event, 'proposition', propositionText())"
+          >
+            <span
+              v-for="(part, index) in textSelectionParts('proposition', propositionText())"
+              :key="index"
+              :class="{
+                'rounded-sm bg-violet-200': part.selected,
+                'animate-pulse ring-2 ring-violet-300/70':
+                  part.selected && hoveredFeedbackIndex !== null
+              }"
+              >{{ part.text }}</span
+            >
+          </p>
+          <p
+            v-if="propositionRationale()"
+            class="mt-1.5 cursor-text border-t border-sky-200 pt-1.5 leading-relaxed text-slate-500 select-text selection:bg-violet-200"
+            @mouseup="selectText($event, 'proposition-rationale', propositionRationale())"
+          >
+            <span
+              v-for="(part, index) in textSelectionParts(
+                'proposition-rationale',
+                propositionRationale()
+              )"
+              :key="index"
+              :class="{
+                'rounded-sm bg-violet-200': part.selected,
+                'animate-pulse ring-2 ring-violet-300/70':
+                  part.selected && hoveredFeedbackIndex !== null
+              }"
+              >{{ part.text }}</span
+            >
           </p>
         </div>
 
@@ -603,17 +754,8 @@ useEventListener(window, 'message', (event: MessageEvent) => {
         <icon-lucide-arrow-right v-else class="size-3.5" />
       </button>
 
-      <button
-        v-if="phase === 'waiting'"
-        type="button"
-        class="flex w-full items-center justify-between border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-xs font-semibold text-slate-600 transition hover:bg-violet-50 hover:text-violet-700"
-        @click.stop="emit('activate', note.id)"
-      >
-        Review this note
-        <icon-lucide-arrow-right class="size-3.5" />
-      </button>
       <div
-        v-else-if="phase === 'reviewed'"
+        v-if="phase === 'reviewed'"
         class="flex items-start gap-2 border-t border-slate-200 bg-slate-100 px-4 py-3 text-xs text-slate-500"
       >
         <icon-lucide-check class="mt-0.5 size-3.5 shrink-0 text-slate-400" />

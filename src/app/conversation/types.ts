@@ -1,7 +1,7 @@
 import type { UIMessage } from 'ai'
 
 import type { FeedbackSelection } from '@/app/meta-agent/feedback-note/draft/types'
-import type { FeedbackNoteRepresentation } from '@/app/meta-agent/core/types'
+import type { FeedbackCueSegment, FeedbackNoteRepresentation } from '@/app/meta-agent/core/types'
 import type { Proposition } from '@/app/user-model/pipeline'
 
 export type ConversationFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
@@ -39,6 +39,7 @@ export interface ConversationFeedbackNote {
   originChunk: number
   topic: string
   cue: string
+  cueSegments?: FeedbackCueSegment[]
   reasoningEvidence: string
   relationship: ConversationFeedbackRelationship
   representation: FeedbackNoteRepresentation

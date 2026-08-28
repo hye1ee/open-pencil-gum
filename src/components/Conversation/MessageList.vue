@@ -37,6 +37,20 @@ function notesAfter(message: UIMessage): ConversationFeedbackNote[] {
   )
 }
 
+function showGeneratingCard(message: UIMessage): boolean {
+  if (
+    !feedbackGenerating ||
+    message.role !== 'assistant' ||
+    message.id !== messages.at(-1)?.id
+  ) {
+    return false
+  }
+  const notes = notesAfter(message)
+  if (notes.length === 0) return true
+  const activeIndex = notes.findIndex((note) => note.id === activeNoteId.value)
+  return activeIndex === -1 || activeIndex === notes.length - 1
+}
+
 function notePhase(note: ConversationFeedbackNote): 'reviewed' | 'current' | 'waiting' {
   if (note.status !== 'pending') return 'reviewed'
   return note.id === activeNoteId.value ? 'current' : 'waiting'
@@ -69,12 +83,41 @@ function handleScroll(): void {
   lastScrollTop = element.scrollTop
 }
 
+function centerActiveNote(): void {
+  const id = activeNoteId.value
+  if (!id) return
+  void nextTick(() => {
+    const card = scroller.value?.querySelector<HTMLElement>(`[data-note-id="${id}"]`)
+    const carousel = card?.closest<HTMLElement>('[data-feedback-carousel]')
+    if (!card || !carousel) return
+    const carouselRect = carousel.getBoundingClientRect()
+    const cardRect = card.getBoundingClientRect()
+    const cardLeftInsideCarousel = carousel.scrollLeft + cardRect.left - carouselRect.left
+    const centeredLeft =
+      cardLeftInsideCarousel - (carousel.clientWidth - card.offsetWidth) / 2
+    const maximumLeft = Math.max(0, carousel.scrollWidth - carousel.clientWidth)
+    carousel.scrollTo({
+      left: Math.min(maximumLeft, Math.max(0, centeredLeft)),
+      behavior: 'smooth'
+    })
+  })
+}
+
 watch(
   () => messages.length,
   (count, previousCount) => {
     if (count > previousCount && messages.at(-1)?.role === 'user') followOutput.value = true
   }
 )
+
+// Registered before the note watcher below so its immediate run, which can pick
+// the first active note, still reaches this.
+watch(activeNoteId, (id, previousId) => {
+  // The first note replaces the already-centered loading card, so scrolling it
+  // would fight the enter/move transition. Later changes are explicit carousel
+  // navigation and need one horizontal-only centering operation.
+  if (id && previousId) centerActiveNote()
+})
 
 watch(
   () => feedbackNotes,
@@ -85,12 +128,9 @@ watch(
     if (!activeStillPending) {
       activeNoteId.value = notes.find((note) => note.status === 'pending')?.id ?? null
     }
-    const id = activeNoteId.value
-    if (!id) return
-    void nextTick(() => {
-      const card = scroller.value?.querySelector<HTMLElement>(`[data-note-id="${id}"]`)
-      card?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-    })
+    // Centering belongs to the activeNoteId watcher alone. Scrolling on every
+    // note change would run while TransitionGroup animates an inserted card,
+    // and the FLIP offsets would then carry the scroll shift.
   },
   { deep: true, immediate: true }
 )
@@ -146,9 +186,20 @@ watch(
                   {{ notesAfter(message).length }} reviewed
                 </p>
               </div>
-              <div
-                class="flex snap-x snap-mandatory scroll-px-7 items-start gap-5 overflow-x-auto px-7 pt-7 pb-9 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              <TransitionGroup
+                tag="div"
+                data-feedback-carousel
+                class="flex snap-x snap-proximity items-start gap-8 overflow-x-auto pt-7 pb-9 [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                enter-active-class="transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                enter-from-class="translate-x-6 opacity-0"
+                leave-active-class="transition-[transform,opacity] duration-300 ease-in"
+                leave-to-class="-translate-x-6 opacity-0"
               >
+                <div
+                  :key="`feedback-start-${message.id}`"
+                  class="w-[max(1rem,calc(50%_-_13rem))] shrink-0"
+                  aria-hidden="true"
+                />
                 <InlineFeedbackNote
                   v-for="note in notesAfter(message)"
                   :key="note.id"
@@ -161,17 +212,15 @@ watch(
                   @feedback="relayFeedback"
                 />
                 <div
-                  v-if="
-                    feedbackGenerating &&
-                    message.role === 'assistant' &&
-                    message.id === messages.at(-1)?.id
-                  "
+                  v-if="showGeneratingCard(message)"
+                  :key="`feedback-generating-${message.id}`"
                   data-test-id="conversation-feedback-generating"
-                  class="w-72 max-w-[calc(100vw-4rem)] shrink-0 snap-start rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4"
+                  class="w-88 max-w-[calc(100vw-6rem)] shrink-0 snap-center rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4"
+                  aria-live="polite"
                 >
                   <div class="mb-4 flex items-center gap-2 text-xs font-semibold text-violet-700">
                     <icon-lucide-loader-circle class="size-4 animate-spin" />
-                    Generating feedback…
+                    Generating feedback note…
                   </div>
                   <div class="space-y-2.5" aria-hidden="true">
                     <div class="h-4 w-11/12 animate-pulse rounded bg-violet-100" />
@@ -181,8 +230,12 @@ watch(
                     />
                   </div>
                 </div>
-                <div class="w-2 shrink-0" aria-hidden="true" />
-              </div>
+                <div
+                  :key="`feedback-end-${message.id}`"
+                  class="w-[max(1rem,calc(50%_-_13rem))] shrink-0"
+                  aria-hidden="true"
+                />
+              </TransitionGroup>
             </section>
           </template>
         </MessageBubble>

@@ -457,6 +457,7 @@ export class ConversationStore {
       originChunk: note.originChunk,
       topic: note.topic,
       cue: note.text,
+      cueSegments: structuredClone(note.cueSegments),
       reasoningEvidence: note.evidenceFromReasoning,
       relationship: note.relationship,
       representation: structuredClone(note.representation),

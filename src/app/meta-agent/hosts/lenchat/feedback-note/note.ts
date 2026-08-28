@@ -12,7 +12,9 @@ export function lenChatFeedbackNote(note: ConversationFeedbackNote): FeedbackNot
     representation: structuredClone(note.representation),
     representationGoal: note.representationGoal,
     text: note.cue,
-    cueSegments: [{ text: note.cue, source: 'neutral' }],
+    cueSegments: note.cueSegments
+      ? structuredClone(note.cueSegments)
+      : [{ text: note.cue, source: 'neutral' }],
     nodeId: null,
     evidenceFromReasoning: note.reasoningEvidence,
     propositionIds: [...note.propositionIds]
