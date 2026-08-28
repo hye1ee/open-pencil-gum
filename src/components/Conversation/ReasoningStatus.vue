@@ -50,11 +50,21 @@ const visibleReasoningChunks = computed(() => {
   chunks[last] = chunks[last]?.replace(/(?:\r?\n)+$/, '') ?? ''
   return chunks.filter((chunk) => chunk !== '')
 })
-const expandedReasoning = computed(() => trimBoundaryNewlines(reasoning))
+const expandedReasoning = computed(() =>
+  trimBoundaryNewlines(visibleReasoningChunks.value.join('\n\n'))
+)
 const liveReasoning = computed(() => trimBoundaryNewlines(visibleReasoningChunks.value.join('')))
 const liveReasoningSegments = computed(() => highlightedSegments(liveReasoning.value, highlight))
 const expandedReasoningSegments = computed(() =>
   highlightedSegments(expandedReasoning.value, highlight)
+)
+
+watch(
+  () => highlight,
+  (value, previous) => {
+    if (value && value !== previous) expanded.value = true
+  },
+  { immediate: true }
 )
 
 watch([visibleReasoningChunks, expanded, () => highlight], () => {

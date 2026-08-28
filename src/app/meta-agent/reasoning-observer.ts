@@ -8,13 +8,11 @@ import {
   currentFeedbackNoteGeneration,
   settleFeedbackNoteStep
 } from '@/app/feedback-note/use'
+import { createSequencedReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
 import type { Proposition } from '@/app/meta-agent/core/types'
 
-interface FeedbackNoteStreamState {
-  chunk: number
+interface OpenPencilReasoningContext {
   step: number | null
-  settled: boolean
-  task: Promise<void>
   generation: number
   store: EditorStore | null
   request: string
@@ -29,59 +27,47 @@ interface ReasoningObserverOptions {
   getPropositions(): Proposition[]
 }
 
-const streams = new Map<number, FeedbackNoteStreamState>()
-const invalidatedStreams = new Set<number>()
+let reasoningController: ReturnType<typeof createSequencedReasoningObserver> | null = null
 
 export function resetFeedbackNoteStreams(): void {
-  for (const streamId of streams.keys()) invalidatedStreams.add(streamId)
-  streams.clear()
+  reasoningController?.reset()
 }
 
 export function installReasoningObserver(options: ReasoningObserverOptions): void {
-  setReasoningObserver({
-    start: (streamId) => {
-      if (invalidatedStreams.has(streamId)) return
+  reasoningController = createSequencedReasoningObserver<OpenPencilReasoningContext>({
+    begin: () => {
       const store = options.getStore()
-      streams.set(streamId, {
-        chunk: 0,
+      return {
         step: store ? interactiveFeedbackStep(currentRunStepNumber(store)) : null,
-        settled: false,
-        task: Promise.resolve(),
         generation: currentFeedbackNoteGeneration(),
         store,
         request: options.getRequest(),
         plan: options.getPlan(),
         propositions: options.getPropositions()
+      }
+    },
+    review: ({ context, chunkIndex, reasoningChunk }) => {
+      const store = context.store
+      if (!store) return
+      const originStep = context.step ?? currentRunStepNumber(store)
+      const originChunk = chunkIndex
+      if (!recordFeedbackReasoning(originStep, originChunk, reasoningChunk)) return
+      beginFeedbackNoteStep(originStep, context.generation)
+      return considerFeedbackNotesForStep({
+        store,
+        request: context.request,
+        plan: context.plan,
+        reasoning: reasoningChunk,
+        originStep,
+        originChunk,
+        propositions: context.propositions,
+        generation: context.generation
       })
     },
-    chunk: (streamId, reasoningChunk) => {
-      const state = streams.get(streamId)
-      const store = state?.store
-      if (!state || !store || reasoningChunk.trim() === '') return
-      state.chunk++
-      const originStep = state.step ?? currentRunStepNumber(store)
-      const originChunk = state.chunk
-      if (!recordFeedbackReasoning(originStep, originChunk, reasoningChunk)) return
-      beginFeedbackNoteStep(originStep, state.generation)
-      state.task = state.task.then(() =>
-        considerFeedbackNotesForStep({
-          store,
-          request: state.request,
-          plan: state.plan,
-          reasoning: reasoningChunk,
-          originStep,
-          originChunk,
-          propositions: state.propositions,
-          generation: state.generation
-        })
-      )
-    },
-    end: (streamId) => {
-      const state = streams.get(streamId)
-      if (!state || state.chunk === 0 || state.step === null || state.settled) return
-      state.settled = true
-      state.task = settleFeedbackNoteStep(state.step, state.generation, state.task)
-    },
-    settled: (streamId) => streams.get(streamId)?.task ?? Promise.resolve()
+    complete: ({ context, pendingReviews }) => {
+      if (context.step === null) return pendingReviews
+      return settleFeedbackNoteStep(context.step, context.generation, pendingReviews)
+    }
   })
+  setReasoningObserver(reasoningController.observer)
 }

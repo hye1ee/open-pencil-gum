@@ -394,6 +394,44 @@ describe('interactive feedback note', () => {
     })
   })
 
+  test('repairs a paraphrased cue anchor with exact top-level reasoning evidence', () => {
+    const reasoning = 'I will keep the itinerary focused on three nearby regions.'
+    const note = readFeedbackNote({
+      id: 'n-repaired-anchor',
+      value: {
+        topic: 'itinerary-scope',
+        representation_type: 'text',
+        code_visual_type: null,
+        code_visual_brief: null,
+        image_type: null,
+        image_prompt: null,
+        representation_goal: 'Confirm how geographically focused the itinerary should be.',
+        cue_segments: [
+          {
+            text: 'The itinerary stays focused on three nearby regions.',
+            source: 'reasoning',
+            evidence_quote: 'The itinerary will focus on three nearby regions.',
+            proposition_id: null
+          }
+        ],
+        node_id: null,
+        evidence_from_reasoning: reasoning,
+        proposition_ids: []
+      },
+      relation: 'uncovered',
+      reasoning,
+      propositions: [],
+      originStep: 1,
+      originChunk: 1
+    })
+
+    expect(note?.cueSegments[0]).toEqual({
+      text: 'The itinerary stays focused on three nearby regions.',
+      source: 'reasoning',
+      evidenceQuote: reasoning
+    })
+  })
+
   test('puts representation history and reasoning in the prompt', () => {
     const prompt = renderFeedbackNotePrompt({
       request: 'Make a dashboard',

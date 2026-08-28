@@ -14,6 +14,8 @@ interface ConversationTransportOptions {
   modelId: string
   enabledTools: readonly ConversationToolId[]
   observer: ChatReasoningObserver
+  awaitReasoningReviews: boolean
+  isSilentRevision(): boolean
   gate: ChatTurnGate
   getPropositions(): readonly ChatProposition[]
   takeRevisionFeedback(): string | null
@@ -35,6 +37,11 @@ export function createConversationTransport(
   const google = createGoogleGenerativeAI({ apiKey: options.apiKey })
   const model = withChatModelTrace(google(options.modelId), {
     observer: options.observer,
+    awaitReasoningReviews: options.awaitReasoningReviews,
+    reasoningMode: () => ({
+      observe: !options.isSilentRevision(),
+      reveal: !options.isSilentRevision()
+    }),
     awaitResume: (point) => options.gate.awaitResume(point)
   })
   const enabledTools = new Set(options.enabledTools)

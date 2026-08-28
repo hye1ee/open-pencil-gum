@@ -29,6 +29,7 @@ import {
   logTurnAbandoned
 } from '@/app/ai/chat/agent-log'
 import { awaitTurnResume, currentTurnGeneration } from '@/app/ai/chat/agent-turn'
+import type { ReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
 
 /** Provider model / stream part types, taken off the SDK's own signatures so
  * this file doesn't have to import `@ai-sdk/provider` (a transitive dep). */
@@ -38,22 +39,8 @@ type CallParams = Parameters<WrapStream>[0]['params']
 type StreamPart =
   Awaited<ReturnType<WrapStream>>['stream'] extends ReadableStream<infer Part> ? Part : never
 
-/**
- * Who is watching the thinking, if anyone. Registered rather than imported: the
- * only watcher today is the meta-agent, and it builds a model of its own — an
- * import here would close the loop model → model-trace → meta-agent → model.
- */
-interface ReasoningObserver {
-  /** A fresh block of thinking has begun; whatever came before is finished. */
-  start(streamId: number): void
-  /** One provider chunk and everything thought in this block so far. */
-  chunk(streamId: number, reasoningChunk: string, reasoningSoFar: string): void
-  /** The completed block, before the agent's action is released. */
-  end(streamId: number, reasoning: string): void
-  /** Resolves once the watcher has finished answering everything it has been
-   * given. Awaited before the tool call — see `SETTLE_TIMEOUT_MS`. */
-  settled(streamId: number): Promise<void>
-}
+// The watcher is registered instead of imported at runtime: importing the
+// Meta Agent implementation here would close model → trace → Meta Agent → model.
 let observeReasoning: ReasoningObserver | null = null
 let nextStreamId = 1
 

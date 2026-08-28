@@ -38,12 +38,12 @@ const {
   currentId,
   messages,
   status,
-  feedback,
-  monitorActive,
+  feedbackNotes,
+  feedbackPending,
+  feedbackGenerating,
   revising,
   learning,
   propositions,
-  reasoningChunks,
   configured,
   lastError
 } = store
@@ -73,6 +73,10 @@ async function applySettings(): Promise<void> {
   settingsOpen.value = false
   await store.reconfigure()
 }
+
+function reviseFromFeedback(id: string, text: string): void {
+  store.reviseFromFeedback(id, text)
+}
 </script>
 
 <template>
@@ -93,12 +97,11 @@ async function applySettings(): Promise<void> {
         :key="currentId"
         :messages="messages"
         :status="status"
-        :feedback="feedback"
-        :monitor-active="monitorActive"
+        :feedback-notes="feedbackNotes"
+        :feedback-generating="feedbackGenerating"
         :revising="revising"
-        :reasoning-chunks="reasoningChunks"
-        @continue="store.continueFromFeedback()"
-        @feedback="store.reviseFromFeedback($event)"
+        @continue="store.continueFromFeedback($event)"
+        @feedback="reviseFromFeedback"
       />
       <div v-if="lastError" class="mx-auto w-full max-w-3xl px-6 pb-2 text-xs text-red-600">
         {{ lastError }}
@@ -106,7 +109,7 @@ async function applySettings(): Promise<void> {
       <Composer
         :status="status"
         :configured="configured"
-        :blocked="feedback !== null"
+        :blocked="feedbackPending"
         :model-name="currentModelName"
         @submit="store.send($event)"
         @stop="store.stop()"

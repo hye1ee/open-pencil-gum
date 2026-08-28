@@ -1,24 +1,10 @@
-import { isTextUIPart } from 'ai'
 import type { UIMessage } from 'ai'
 
 import type { ChatMonitoredContext } from '@/app/meta-agent-chat/types'
+import { summarizeLenChatConversation } from '@/app/meta-agent/hosts/lenchat/input'
 import type { ChatProposition } from '@/app/user-model-chat/types'
 
-function messageText(message: UIMessage): string {
-  return message.parts
-    .filter(isTextUIPart)
-    .map((part) => part.text)
-    .join(' ')
-    .trim()
-}
-
-export function summarizeConversation(messages: readonly UIMessage[]): string {
-  if (messages.length === 0) return '(new conversation)'
-  return messages
-    .slice(-10)
-    .map((message) => `${message.role}: ${messageText(message).slice(0, 800) || '(tool activity)'}`)
-    .join('\n')
-}
+export { summarizeLenChatConversation as summarizeConversation }
 
 export function createChatContext(input: {
   messages: readonly UIMessage[]
@@ -30,7 +16,7 @@ export function createChatContext(input: {
     domain: 'chat',
     userRequest: input.userRequest,
     propositions: input.propositions,
-    summarizeState: () => summarizeConversation(input.messages),
+    summarizeState: () => summarizeLenChatConversation(input.messages),
     actionsSoFar: () => input.actions
   }
 }

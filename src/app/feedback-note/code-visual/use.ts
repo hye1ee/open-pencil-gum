@@ -79,7 +79,7 @@ export async function composeCodeVisual(note: FeedbackNote): Promise<CodeVisualA
       goal: note.representationGoal,
       brief: note.representation.brief
     }),
-    maxOutputTokens: 2048,
+    maxOutputTokens: 4096,
     providerOptions: backgroundProviderOptions('meta-agent'),
     tools: CODE_VISUAL_TOOLS,
     toolChoice: { type: 'tool', toolName: expectedToolName }

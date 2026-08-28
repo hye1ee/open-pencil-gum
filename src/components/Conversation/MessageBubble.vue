@@ -1,36 +1,21 @@
 <script setup lang="ts">
-import { getToolName, isReasoningUIPart, isTextUIPart, isToolUIPart } from 'ai'
+import { getToolName, isTextUIPart, isToolUIPart } from 'ai'
 import { computed } from 'vue'
 import { Markdown } from 'vue-stream-markdown'
 import 'vue-stream-markdown/index.css'
 
 import LenChatCodeBlock from '@/components/Conversation/LenChatCodeBlock.vue'
-import ReasoningStatus from '@/components/Conversation/ReasoningStatus.vue'
 import SearchResults from '@/components/Conversation/SearchResults.vue'
 import ToolActivityList from '@/components/Conversation/ToolActivityList.vue'
 import type { ConversationToolActivity } from '@/app/conversation/types'
 import type { SourceUrlUIPart, UIMessage } from 'ai'
 
-const { message, active, reasoningChunks, reasoningHighlight } = defineProps<{
+const { message, active } = defineProps<{
   message: UIMessage
   active: boolean
-  reasoningChunks: string[]
-  reasoningHighlight: string
 }>()
 const conversationNodeRenderers = { code: LenChatCodeBlock }
 const conversationPreload = { nodeRenderers: [] }
-const reasoning = computed(() =>
-  message.parts
-    .filter(isReasoningUIPart)
-    .map((part) => part.text)
-    .join('\n')
-)
-const reasoningActive = computed(
-  () =>
-    active &&
-    (reasoning.value === '' ||
-      message.parts.some((part) => isReasoningUIPart(part) && part.state === 'streaming'))
-)
 const searchSources = computed<SourceUrlUIPart[]>(() =>
   message.parts.filter((part): part is SourceUrlUIPart => part.type === 'source-url')
 )
@@ -90,13 +75,6 @@ const toolActivities = computed<ConversationToolActivity[]>(() =>
       "
     >
       <template v-if="message.role === 'assistant'">
-        <ReasoningStatus
-          :reasoning="reasoning"
-          :active="active"
-          :reasoning-active="reasoningActive"
-          :reasoning-chunks="reasoningChunks"
-          :highlight="reasoningHighlight"
-        />
         <ToolActivityList :tools="toolActivities" />
         <slot name="meta-agent" />
         <template v-for="(part, index) in message.parts" :key="`${message.id}-${index}`">

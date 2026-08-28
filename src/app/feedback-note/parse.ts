@@ -44,6 +44,8 @@ interface RawFeedbackCueSegment {
   proposition_id?: unknown
 }
 
+type RejectFeedbackNote = (reason: string) => null
+
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -107,16 +109,24 @@ function readCodeVisualBrief(
   return { subject, decision, alternatives, mustShow, formatHint }
 }
 
-function readRepresentation(row: RawFeedbackNote): FeedbackNoteRepresentation | null {
+function readRepresentation(
+  row: RawFeedbackNote,
+  reject: RejectFeedbackNote
+): FeedbackNoteRepresentation | null {
   const codeVisualType = readCodeVisualType(row.code_visual_type)
   const imageType = readImageType(row.image_type)
   const imagePrompt = readString(row.image_prompt)
   if (row.representation_type === 'text') {
-    if (codeVisualType || row.code_visual_brief !== null || imageType || imagePrompt) return null
+    if (codeVisualType || row.code_visual_brief !== null || imageType || imagePrompt) {
+      return reject('text representation contains a non-null visual payload')
+    }
     return { type: 'text' }
   }
   if (row.representation_type === 'code-visual') {
-    if (!codeVisualType || imageType || imagePrompt) return null
+    if (!codeVisualType) return reject('code-visual representation has an invalid visual type')
+    if (imageType || imagePrompt) {
+      return reject('code-visual representation contains a non-null image payload')
+    }
     const brief = readCodeVisualBrief(row.code_visual_brief, codeVisualType)
     return brief
       ? {
@@ -126,13 +136,18 @@ function readRepresentation(row: RawFeedbackNote): FeedbackNoteRepresentation | 
           artifact: null,
           status: 'loading'
         }
-      : null
+      : reject('code-visual representation has an incomplete or inconsistent brief')
   }
   if (row.representation_type === 'image') {
-    if (codeVisualType || row.code_visual_brief !== null || !imageType || !imagePrompt) return null
+    if (codeVisualType || row.code_visual_brief !== null) {
+      return reject('image representation contains a non-null code-visual payload')
+    }
+    if (!imageType || !imagePrompt) {
+      return reject('image representation is missing image_type or image_prompt')
+    }
     return { type: 'image', imageType, prompt: imagePrompt, url: null, status: 'loading' }
   }
-  return null
+  return reject('representation_type is missing or invalid')
 }
 
 function readPropositionIds(value: unknown, propositions: Proposition[]): string[] {
@@ -147,48 +162,80 @@ function readCueSegments(input: {
   reasoning: string
   propositions: Proposition[]
   propositionIds: string[]
+  fallbackReasoningEvidence: string
+  reject: RejectFeedbackNote
 }): FeedbackCueSegment[] | null {
-  if (!Array.isArray(input.value) || input.value.length === 0 || input.value.length > 8) return null
+  if (!Array.isArray(input.value) || input.value.length === 0 || input.value.length > 8) {
+    return input.reject('cue_segments must contain between one and eight segments')
+  }
   const propositions = new Map(input.propositions.map((item) => [item.id, item]))
   const cited = new Set(input.propositionIds)
-  const segments = input.value.flatMap((value): FeedbackCueSegment[] => {
-    if (typeof value !== 'object' || value === null) return []
+  const segments: FeedbackCueSegment[] = []
+  for (const [index, value] of input.value.entries()) {
+    if (typeof value !== 'object' || value === null) {
+      return input.reject(`cue_segments[${index}] is not an object`)
+    }
     const row = value as RawFeedbackCueSegment
     const text = readString(row.text).slice(0, 160)
-    if (!text) return []
+    if (!text) return input.reject(`cue_segments[${index}] has no text`)
     if (row.source === 'neutral') {
-      return row.evidence_quote === null && row.proposition_id === null
-        ? [{ text, source: 'neutral' }]
-        : []
+      if (row.evidence_quote !== null || row.proposition_id !== null) {
+        return input.reject(`cue_segments[${index}] neutral provenance is not null`)
+      }
+      segments.push({ text, source: 'neutral' })
+      continue
     }
     if (row.source === 'reasoning') {
       const evidenceQuote = readString(row.evidence_quote)
-      return evidenceQuote && input.reasoning.includes(evidenceQuote) && row.proposition_id === null
-        ? [{ text, source: 'reasoning', evidenceQuote }]
-        : []
+      const exactEvidence =
+        evidenceQuote && input.reasoning.includes(evidenceQuote)
+          ? evidenceQuote
+          : input.fallbackReasoningEvidence
+      if (!exactEvidence) {
+        return input.reject(
+          `cue_segments[${index}] reasoning evidence is not an exact reasoning substring`
+        )
+      }
+      if (row.proposition_id !== null) {
+        return input.reject(`cue_segments[${index}] reasoning proposition_id is not null`)
+      }
+      segments.push({ text, source: 'reasoning', evidenceQuote: exactEvidence })
+      continue
     }
     if (row.source === 'proposition') {
       const propositionId = readString(row.proposition_id)
       const proposition = propositions.get(propositionId)
-      return proposition && cited.has(propositionId) && row.evidence_quote === null
-        ? [
-            {
-              text,
-              source: 'proposition',
-              propositionId,
-              propositionText: proposition.text,
-              propositionConfidence: proposition.confidence,
-              propositionRationale: proposition.rationale || null
-            }
-          ]
-        : []
+      if (!proposition || !cited.has(propositionId)) {
+        return input.reject(
+          `cue_segments[${index}] proposition_id is unknown or absent from proposition_ids`
+        )
+      }
+      if (row.evidence_quote !== null) {
+        return input.reject(`cue_segments[${index}] proposition evidence_quote is not null`)
+      }
+      segments.push({
+        text,
+        source: 'proposition',
+        propositionId,
+        propositionText: proposition.text,
+        propositionConfidence: proposition.confidence,
+        propositionRationale: proposition.rationale || null
+      })
+      continue
     }
-    return []
-  })
-  if (segments.length !== input.value.length) return null
-  if (!segments.some((segment) => segment.source === 'reasoning')) return null
+    return input.reject(`cue_segments[${index}] has an invalid source`)
+  }
+  if (!segments.some((segment) => segment.source === 'reasoning')) {
+    return input.reject('cue_segments contains no reasoning segment')
+  }
   const hasPropositionSegment = segments.some((segment) => segment.source === 'proposition')
-  if (input.relation === 'uncovered' ? hasPropositionSegment : !hasPropositionSegment) return null
+  if (input.relation === 'uncovered' ? hasPropositionSegment : !hasPropositionSegment) {
+    return input.reject(
+      input.relation === 'uncovered'
+        ? 'uncovered note contains a proposition segment'
+        : `${input.relation} note contains no proposition segment`
+    )
+  }
   return segments
 }
 
@@ -200,26 +247,43 @@ export function readFeedbackNote(input: {
   propositions: Proposition[]
   originStep: number
   originChunk: number
+  onInvalid?: (reason: string) => void
 }): FeedbackNote | null {
-  if (typeof input.value !== 'object' || input.value === null) return null
-  const row = input.value as RawFeedbackNote
-  const topic = readString(row.topic)
-  const representation = readRepresentation(row)
-  const representationGoal = readString(row.representation_goal)
-  if (!topic || !representation || !representationGoal) return null
-  const propositionIds = readPropositionIds(row.proposition_ids, input.propositions)
-  if (input.relation === 'uncovered' ? propositionIds.length > 0 : propositionIds.length === 0) {
+  const reject: RejectFeedbackNote = (reason) => {
+    input.onInvalid?.(reason)
     return null
   }
+  if (typeof input.value !== 'object' || input.value === null) {
+    return reject('tool payload is not an object')
+  }
+  const row = input.value as RawFeedbackNote
+  const topic = readString(row.topic)
+  const representation = readRepresentation(row, reject)
+  const representationGoal = readString(row.representation_goal)
+  if (!topic) return reject('topic is missing')
+  if (!representation) return null
+  if (!representationGoal) return reject('representation_goal is missing')
+  const propositionIds = readPropositionIds(row.proposition_ids, input.propositions)
+  if (input.relation === 'uncovered' ? propositionIds.length > 0 : propositionIds.length === 0) {
+    return reject(
+      input.relation === 'uncovered'
+        ? 'uncovered note cites a known proposition'
+        : `${input.relation} note cites no known proposition`
+    )
+  }
+  const requestedEvidence = readString(row.evidence_from_reasoning)
+  const exactRequestedEvidence =
+    requestedEvidence && input.reasoning.includes(requestedEvidence) ? requestedEvidence : ''
   const cueSegments = readCueSegments({
     value: row.cue_segments,
     relation: input.relation,
     reasoning: input.reasoning,
     propositions: input.propositions,
-    propositionIds
+    propositionIds,
+    fallbackReasoningEvidence: exactRequestedEvidence,
+    reject
   })
   if (!cueSegments) return null
-  const evidence = readString(row.evidence_from_reasoning)
   return {
     id: input.id,
     originStep: input.originStep,
@@ -231,10 +295,7 @@ export function readFeedbackNote(input: {
     text: cueSegments.map((segment) => segment.text).join(' '),
     cueSegments,
     nodeId: typeof row.node_id === 'string' && row.node_id !== '' ? row.node_id : null,
-    evidenceFromReasoning:
-      evidence && input.reasoning.includes(evidence)
-        ? evidence
-        : input.reasoning.trim().slice(0, 200),
+    evidenceFromReasoning: exactRequestedEvidence || input.reasoning.trim().slice(0, 200),
     propositionIds
   }
 }

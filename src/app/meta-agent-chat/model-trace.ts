@@ -1,8 +1,9 @@
 import { wrapLanguageModel } from 'ai'
 import type { LanguageModelMiddleware } from 'ai'
 
+import { logTurnAbandoned } from '@/app/ai/chat/agent-log'
 import type { ChatGatePoint } from '@/app/meta-agent-chat/gate'
-import type { ChatReasoningObserver } from '@/app/meta-agent-chat/types'
+import type { ChatReasoningMode, ChatReasoningObserver } from '@/app/meta-agent-chat/types'
 
 type ProviderModel = Parameters<typeof wrapLanguageModel>[0]['model']
 type WrapStream = NonNullable<LanguageModelMiddleware['wrapStream']>
@@ -12,6 +13,8 @@ type StreamPart =
 interface ChatModelTraceOptions {
   observer: ChatReasoningObserver
   awaitResume(point: ChatGatePoint): Promise<boolean>
+  awaitReasoningReviews: boolean
+  reasoningMode(): ChatReasoningMode
 }
 
 let nextStreamId = 1
@@ -22,28 +25,31 @@ function createChatMiddleware(options: ChatModelTraceOptions): LanguageModelMidd
     wrapStream: async ({ doStream }) => {
       const { stream, ...rest } = await doStream()
       const streamId = nextStreamId++
+      const reasoningMode = options.reasoningMode()
       let streamSequence = 0
       let reasoning = ''
       let reasoningClosed = false
       let dropped = false
-      let sawTool = false
       let actionGateSettled = false
       let outputGateSettled = false
 
       const closeReasoning = (): void => {
         if (reasoningClosed) return
-        options.observer.end(streamId, reasoning)
+        if (reasoningMode.observe) options.observer.end(streamId, reasoning)
         reasoningClosed = true
         reasoning = ''
       }
 
       const awaitActionGate = async (): Promise<boolean> => {
-        sawTool = true
         if (actionGateSettled) return true
         if (reasoning.trim() !== '') closeReasoning()
-        await options.observer.settled(streamId)
+        if (reasoningMode.observe && options.awaitReasoningReviews) {
+          await options.observer.settled(streamId)
+        }
+        if (!reasoningMode.observe) return true
         if (!(await options.awaitResume('before-action'))) {
           dropped = true
+          logTurnAbandoned(`LenChat stream ${streamId} before tool call`)
           return false
         }
         actionGateSettled = true
@@ -51,11 +57,15 @@ function createChatMiddleware(options: ChatModelTraceOptions): LanguageModelMidd
       }
 
       const awaitOutputGate = async (): Promise<boolean> => {
-        if (sawTool || outputGateSettled) return true
+        if (outputGateSettled) return true
         if (reasoning.trim() !== '') closeReasoning()
-        await options.observer.settled(streamId)
+        if (reasoningMode.observe && options.awaitReasoningReviews) {
+          await options.observer.settled(streamId)
+        }
+        if (!reasoningMode.observe) return true
         if (!(await options.awaitResume('before-final-response'))) {
           dropped = true
+          logTurnAbandoned(`LenChat stream ${streamId} before final response`)
           return false
         }
         outputGateSettled = true
@@ -80,11 +90,11 @@ function createChatMiddleware(options: ChatModelTraceOptions): LanguageModelMidd
           if (chunk.type === 'reasoning-start') {
             reasoning = ''
             reasoningClosed = false
-            options.observer.start(streamId)
+            if (reasoningMode.observe) options.observer.start(streamId)
           } else if (chunk.type === 'reasoning-delta') {
             reasoning += chunk.delta
-            options.observer.chunk(streamId, chunk.delta, reasoning)
-            if (!(await options.awaitResume('mid-thought'))) {
+            if (reasoningMode.observe) options.observer.chunk(streamId, chunk.delta, reasoning)
+            if (reasoningMode.observe && !(await options.awaitResume('mid-thought'))) {
               dropped = true
               controller.terminate()
               return
@@ -106,6 +116,7 @@ function createChatMiddleware(options: ChatModelTraceOptions): LanguageModelMidd
             return
           }
 
+          if (!reasoningMode.reveal && chunk.type.startsWith('reasoning-')) return
           controller.enqueue(chunk)
         }
       })

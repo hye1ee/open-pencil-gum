@@ -6,28 +6,43 @@ import MessageBubble from '@/components/Conversation/MessageBubble.vue'
 import type { ConversationFeedbackNote } from '@/app/conversation/types'
 import type { ChatStatus, UIMessage } from 'ai'
 
-const { messages, status, feedback, monitorActive, revising, reasoningChunks } = defineProps<{
+const { messages, status, feedbackNotes, feedbackGenerating, revising } = defineProps<{
   messages: UIMessage[]
   status: ChatStatus
-  feedback: ConversationFeedbackNote | null
-  monitorActive: boolean
+  feedbackNotes: ConversationFeedbackNote[]
+  feedbackGenerating: boolean
   revising: boolean
-  reasoningChunks: string[]
 }>()
-const emit = defineEmits<{ continue: []; feedback: [text: string] }>()
+const emit = defineEmits<{ continue: [id: string]; feedback: [id: string, text: string] }>()
 const scroller = ref<HTMLDivElement>()
+const activeNoteId = ref<string | null>(null)
 const followOutput = ref(true)
 let lastScrollTop = 0
 const lastAssistantId = computed(
   () => [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null
 )
 
-function noteBelongsAfter(message: UIMessage): boolean {
-  if (!feedback || message.role !== 'assistant') return false
-  return (
-    feedback.messageId === message.id ||
-    (feedback.messageId === null && lastAssistantId.value === message.id)
+function notesAfter(message: UIMessage): ConversationFeedbackNote[] {
+  if (message.role !== 'assistant') return []
+  return feedbackNotes.filter(
+    (note) =>
+      note.messageId === message.id ||
+      (note.messageId === null && lastAssistantId.value === message.id)
   )
+}
+
+function notePhase(note: ConversationFeedbackNote): 'reviewed' | 'current' | 'waiting' {
+  if (note.status !== 'pending') return 'reviewed'
+  return note.id === activeNoteId.value ? 'current' : 'waiting'
+}
+
+function activateNote(id: string): void {
+  if (!feedbackNotes.some((note) => note.id === id && note.status === 'pending')) return
+  activeNoteId.value = id
+}
+
+function relayFeedback(id: string, text: string): void {
+  emit('feedback', id, text)
 }
 
 function nearBottom(element: HTMLDivElement): boolean {
@@ -56,7 +71,26 @@ watch(
 )
 
 watch(
-  () => [messages, feedback, monitorActive, revising, status],
+  () => feedbackNotes,
+  (notes) => {
+    const activeStillPending = notes.some(
+      (note) => note.id === activeNoteId.value && note.status === 'pending'
+    )
+    if (!activeStillPending) {
+      activeNoteId.value = notes.find((note) => note.status === 'pending')?.id ?? null
+    }
+    const id = activeNoteId.value
+    if (!id) return
+    void nextTick(() => {
+      const card = scroller.value?.querySelector<HTMLElement>(`[data-note-id="${id}"]`)
+      card?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    })
+  },
+  { deep: true, immediate: true }
+)
+
+watch(
+  () => [messages, feedbackNotes, feedbackGenerating, revising, status],
   () =>
     nextTick(() => {
       const element = scroller.value
@@ -87,30 +121,61 @@ watch(
         <MessageBubble
           :message="message"
           :active="status === 'streaming' && message.id === messages.at(-1)?.id"
-          :reasoning-chunks="
-            status === 'streaming' && message.id === messages.at(-1)?.id ? reasoningChunks : []
-          "
-          :reasoning-highlight="
-            noteBelongsAfter(message) && feedback ? feedback.reasoningEvidence : ''
-          "
         >
           <template #meta-agent>
-            <div
+            <section
               v-if="
-                monitorActive && message.role === 'assistant' && message.id === messages.at(-1)?.id
+                notesAfter(message).length > 0 ||
+                (feedbackGenerating &&
+                  message.role === 'assistant' &&
+                  message.id === messages.at(-1)?.id)
               "
-              class="mb-3 flex w-full items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500"
+              class="my-5"
+              aria-label="Feedback notes"
             >
-              <icon-lucide-scan-search class="size-3.5 animate-pulse text-blue-600" />Comparing this
-              decision with your conversation preferences…
-            </div>
-            <InlineFeedbackNote
-              v-if="noteBelongsAfter(message) && feedback"
-              :note="feedback"
-              :disabled="monitorActive"
-              @continue="emit('continue')"
-              @feedback="emit('feedback', $event)"
-            />
+              <div class="mb-2 flex items-center justify-between gap-3 px-0.5">
+                <p class="text-xs font-semibold tracking-wide text-slate-500">Feedback notes</p>
+                <p class="text-[11px] text-slate-400">
+                  {{ notesAfter(message).filter((note) => note.status !== 'pending').length }} of
+                  {{ notesAfter(message).length }} reviewed
+                </p>
+              </div>
+              <div
+                class="flex snap-x snap-mandatory scroll-px-3 items-start gap-3 overflow-x-auto px-3 pt-2 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                <InlineFeedbackNote
+                  v-for="note in notesAfter(message)"
+                  :key="note.id"
+                  :note="note"
+                  :phase="notePhase(note)"
+                  :disabled="revising"
+                  @activate="activateNote"
+                  @continue="emit('continue', $event)"
+                  @feedback="relayFeedback"
+                />
+                <div
+                  v-if="
+                    feedbackGenerating &&
+                    message.role === 'assistant' &&
+                    message.id === messages.at(-1)?.id
+                  "
+                  data-test-id="conversation-feedback-generating"
+                  class="w-72 max-w-[calc(100vw-4rem)] shrink-0 snap-start rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4"
+                >
+                  <div class="mb-4 flex items-center gap-2 text-xs font-semibold text-violet-700">
+                    <icon-lucide-loader-circle class="size-4 animate-spin" />
+                    Generating feedback…
+                  </div>
+                  <div class="space-y-2.5" aria-hidden="true">
+                    <div class="h-4 w-11/12 animate-pulse rounded bg-violet-100" />
+                    <div class="h-4 w-8/12 animate-pulse rounded bg-violet-100" />
+                    <div
+                      class="mt-4 h-12 animate-pulse rounded-lg bg-white ring-1 ring-violet-100"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
           </template>
         </MessageBubble>
       </template>

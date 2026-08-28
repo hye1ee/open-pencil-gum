@@ -236,6 +236,36 @@ export function logMetaAgentLifecycle(event: string): void {
   write('META-LIFE', event)
 }
 
+/** One raw LenChat provider delta sent to the shared Meta Agent. */
+export function logChatMetaAgentReasoning(
+  streamId: number,
+  chunkIndex: number,
+  reasoning: string
+): void {
+  writeBlock('CHAT-RSN', `stream ${streamId} chunk ${chunkIndex}\n${reasoning}`)
+}
+
+/** One LenChat Meta Agent judgment before host validation and intervention. */
+export function logChatMetaAgentReview(
+  streamId: number,
+  chunkIndex: number,
+  result: 'decision' | 'skip' | 'failed',
+  detail = ''
+): void {
+  write(
+    'CHAT-META',
+    `stream ${streamId} chunk ${chunkIndex} → ${result}${detail ? `  ${detail}` : ''}`
+  )
+}
+
+/** LenChat's output gate and feedback-driven retry lifecycle. */
+export function logChatFeedbackLifecycle(
+  event: 'note' | 'continued' | 'answered' | 'resumed' | 'retry' | 'retry-complete',
+  detail: string
+): void {
+  write('CHAT-GATE', `${event.padEnd(14)} ${detail}`)
+}
+
 /**
  * What happened after the person reviewed the Feedback Notes for a step.
  */

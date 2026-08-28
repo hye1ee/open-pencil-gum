@@ -1,90 +1,217 @@
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { valibotSchema } from '@ai-sdk/valibot'
-import { generateText, tool } from 'ai'
-import * as v from 'valibot'
+import { logChatMetaAgentReasoning, logChatMetaAgentReview } from '@/app/ai/chat/agent-log'
+import { readFeedbackNote } from '@/app/feedback-note/parse'
+import type { ChatReasoningObserver } from '@/app/meta-agent-chat/types'
+import { createSequencedReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
+import { runMetaAgent } from '@/app/meta-agent/core/runtime'
+import type { MetaAgentDecision, MetaAgentRuntimeInput } from '@/app/meta-agent/core/runtime'
+import type { FeedbackNote } from '@/app/meta-agent/core/types'
+import {
+  CHAT_FEEDBACK_NOTE_SYSTEM,
+  renderChatFeedbackNotePrompt
+} from '@/app/meta-agent/domains/chat/prompt'
+import {
+  buildLenChatFeedbackNoteInput,
+  type LenChatMetaAgentContext
+} from '@/app/meta-agent/hosts/lenchat/input'
 
-import type { ConversationFeedbackNote } from '@/app/conversation/types'
-import { CHAT_MONITOR_SYSTEM, renderChatMonitorPrompt } from '@/app/meta-agent-chat/prompt'
-import type { ChatMonitoredContext, ChatReasoningObserver } from '@/app/meta-agent-chat/types'
+interface ChatReviewContext extends LenChatMetaAgentContext {
+  generation: number
+}
 
-const monitorTools = {
-  record_feedback_note: tool({
-    description: 'Record the single strongest review point, or explicitly record that none exists.',
-    inputSchema: valibotSchema(
-      v.object({
-        should_interrupt: v.boolean(),
-        relationship: v.picklist(['alignment', 'conflict', 'uncovered']),
-        cue: v.string(),
-        evidence_from_reasoning: v.string(),
-        proposition_ids: v.array(v.string())
-      })
-    )
-  })
+export interface ChatMetaAgentReview {
+  streamId: number
+  chunkIndex: number
+  reasoning: string
+  decision: MetaAgentDecision | null
+  note: FeedbackNote | null
 }
 
 interface ChatMonitorOptions {
-  apiKey: string
-  modelId: string
-  getContext(): ChatMonitoredContext
-  getMessageId(): string | null
-  onActivity(active: boolean): void
-  onReasoningChunk(chunk: string): void
-  onFeedback(note: ConversationFeedbackNote): void
+  getContext(): LenChatMetaAgentContext
+  onReasoningChunk(streamId: number, chunkIndex: number, chunk: string): void
+  run?(input: MetaAgentRuntimeInput): Promise<MetaAgentDecision[]>
+  onActivity?(active: boolean): void
+  onReviewActivity?(active: boolean): void
+  onNote?(note: FeedbackNote): void
+  onSettled?(streamId: number): void
+  onReview?(review: ChatMetaAgentReview): void
 }
 
-function exactEvidence(reasoning: string, evidence: string): boolean {
-  const flat = (value: string) => value.replaceAll(/\s+/g, ' ').trim().toLowerCase()
-  return evidence.trim() !== '' && flat(reasoning).includes(flat(evidence))
+export interface ChatMonitorController {
+  observer: ChatReasoningObserver
+  reset(): void
 }
 
-export function createChatMonitor(options: ChatMonitorOptions): ChatReasoningObserver {
-  const tasks = new Map<number, Promise<void>>()
+interface LoggedDecisionFields {
+  topic: string
+  representation: string
+  evidence: string
+  propositionIds: string[]
+}
 
-  async function review(reasoning: string): Promise<void> {
-    if (reasoning.trim() === '') return
-    options.onActivity(true)
-    try {
-      const google = createGoogleGenerativeAI({ apiKey: options.apiKey })
-      const result = await generateText({
-        model: google(options.modelId),
-        system: CHAT_MONITOR_SYSTEM,
-        prompt: renderChatMonitorPrompt(options.getContext(), reasoning),
-        maxOutputTokens: 768,
-        providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
-        tools: monitorTools,
-        toolChoice: { type: 'tool', toolName: 'record_feedback_note' }
-      })
-      const call = result.staticToolCalls.at(0)
-      if (!call) return
-      const input = call.input
-      if (!input.should_interrupt || !exactEvidence(reasoning, input.evidence_from_reasoning))
-        return
-      options.onFeedback({
-        id: crypto.randomUUID(),
-        messageId: options.getMessageId(),
-        cue: input.cue.trim(),
-        reasoningEvidence: input.evidence_from_reasoning.trim(),
-        relationship: input.relationship,
-        propositionIds: input.proposition_ids,
-        createdAt: Date.now()
-      })
-    } catch (error) {
-      console.warn('[meta-agent-chat] review failed:', error)
-    } finally {
-      options.onActivity(false)
+interface RawLoggedDecision {
+  topic?: unknown
+  representation_type?: unknown
+  evidence_from_reasoning?: unknown
+  proposition_ids?: unknown
+}
+
+function readText(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
+}
+
+function readDecisionFields(payload: unknown): LoggedDecisionFields {
+  if (typeof payload !== 'object' || payload === null) {
+    return { topic: '(invalid)', representation: '(invalid)', evidence: '', propositionIds: [] }
+  }
+  const row = payload as RawLoggedDecision
+  const propositionIds = Array.isArray(row.proposition_ids)
+    ? row.proposition_ids.filter((value): value is string => typeof value === 'string')
+    : []
+  return {
+    topic: readText(row.topic, 80) || '(missing)',
+    representation: readText(row.representation_type, 40) || '(missing)',
+    evidence: readText(row.evidence_from_reasoning, 160),
+    propositionIds
+  }
+}
+
+function decisionDetail(decision: MetaAgentDecision): string {
+  const fields = readDecisionFields(decision.payload)
+  return (
+    `${decision.relationship}/${fields.representation}` +
+    `  topic=${fields.topic}` +
+    `  evidence=${JSON.stringify(fields.evidence)}` +
+    `  propositions=${fields.propositionIds.join(',') || 'none'}`
+  )
+}
+
+/**
+ * Runs the shared Meta Agent for every LenChat reasoning delta. The monitor
+ * validates host-neutral decisions and publishes Notes; the conversation host
+ * owns UI state, output gating, feedback aggregation, and retry behavior.
+ */
+export function createChatMonitor(options: ChatMonitorOptions): ChatMonitorController {
+  let generation = 1
+  const activeStreams = new Set<number>()
+  const chunkCounts = new Map<number, number>()
+  const run = options.run ?? runMetaAgent
+  const controller = createSequencedReasoningObserver<ChatReviewContext>({
+    begin: () => {
+      const context = options.getContext()
+      return {
+        ...context,
+        messages: [...context.messages],
+        propositions: [...context.propositions],
+        completedActions: [...context.completedActions],
+        previousNotes: context.previousNotes ? [...context.previousNotes] : undefined,
+        generation
+      }
+    },
+    review: async ({ context, streamId, chunkIndex, reasoningChunk }) => {
+      options.onReviewActivity?.(true)
+      logChatMetaAgentReasoning(streamId, chunkIndex, reasoningChunk)
+      try {
+        const latestContext = options.getContext()
+        const input = buildLenChatFeedbackNoteInput({
+          ...context,
+          previousNotes: latestContext.previousNotes,
+          reasoning: reasoningChunk
+        })
+        const decisions = await run({
+          system: CHAT_FEEDBACK_NOTE_SYSTEM,
+          prompt: renderChatFeedbackNotePrompt(input)
+        })
+        if (context.generation !== generation) return
+        const decision = decisions.at(0) ?? null
+        let invalidReason = ''
+        const note = decision
+          ? readFeedbackNote({
+              id: crypto.randomUUID(),
+              value: decision.payload,
+              relation: decision.relationship,
+              reasoning: reasoningChunk,
+              propositions: [...input.propositions],
+              originStep: streamId,
+              originChunk: chunkIndex,
+              onInvalid: (reason) => {
+                invalidReason = reason
+              }
+            })
+          : null
+        const knownTopics = new Set(
+          (latestContext.previousNotes ?? []).map((item) => item.topic.toLowerCase())
+        )
+        const acceptedNote = note && !knownTopics.has(note.topic.toLowerCase()) ? note : null
+        if (acceptedNote && decision) {
+          logChatMetaAgentReview(streamId, chunkIndex, 'decision', decisionDetail(decision))
+          options.onNote?.(acceptedNote)
+        } else if (decision && !note) {
+          logChatMetaAgentReview(
+            streamId,
+            chunkIndex,
+            'failed',
+            `${invalidReason || 'invalid feedback-note payload'}  ${decisionDetail(decision)}`
+          )
+        } else {
+          logChatMetaAgentReview(streamId, chunkIndex, 'skip')
+        }
+        options.onReview?.({
+          streamId,
+          chunkIndex,
+          reasoning: reasoningChunk,
+          decision: acceptedNote ? decision : null,
+          note: acceptedNote
+        })
+      } catch (error) {
+        if (context.generation !== generation) return
+        const detail = error instanceof Error ? error.message : String(error)
+        logChatMetaAgentReview(streamId, chunkIndex, 'failed', detail.slice(0, 240))
+        console.warn('[meta-agent-chat] review failed:', error)
+      } finally {
+        options.onReviewActivity?.(false)
+      }
     }
+  })
+
+  const observer: ChatReasoningObserver = {
+    start: (streamId) => {
+      activeStreams.add(streamId)
+      chunkCounts.set(streamId, 0)
+      options.onActivity?.(true)
+      controller.observer.start(streamId)
+    },
+    chunk: (streamId, reasoningChunk, reasoningSoFar) => {
+      if (reasoningChunk.trim() !== '') {
+        const chunkIndex = (chunkCounts.get(streamId) ?? 0) + 1
+        chunkCounts.set(streamId, chunkIndex)
+        options.onReasoningChunk(streamId, chunkIndex, reasoningChunk)
+      }
+      controller.observer.chunk(streamId, reasoningChunk, reasoningSoFar)
+    },
+    end: (streamId, reasoning) => {
+      controller.observer.end(streamId, reasoning)
+      const endingGeneration = generation
+      void controller.observer.settled(streamId).then(() => {
+        if (endingGeneration !== generation) return
+        activeStreams.delete(streamId)
+        chunkCounts.delete(streamId)
+        options.onSettled?.(streamId)
+        options.onActivity?.(activeStreams.size > 0)
+      })
+    },
+    settled: controller.observer.settled
   }
 
   return {
-    start: (streamId) => {
-      tasks.delete(streamId)
-    },
-    chunk: (_streamId, reasoningChunk) => {
-      options.onReasoningChunk(reasoningChunk)
-    },
-    end: (streamId, reasoning) => {
-      tasks.set(streamId, review(reasoning))
-    },
-    settled: (streamId) => tasks.get(streamId) ?? Promise.resolve()
+    observer,
+    reset: () => {
+      generation++
+      activeStreams.clear()
+      chunkCounts.clear()
+      options.onActivity?.(false)
+      options.onReviewActivity?.(false)
+      controller.reset()
+    }
   }
 }
