@@ -1,10 +1,9 @@
-import type { ConversationPreferencesRecord, ConversationRecord } from '@/app/conversation/types'
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { ConversationRecord } from '@/app/conversation/types'
 
 const DATABASE_NAME = 'open-pencil-chat'
-const DATABASE_VERSION = 1
+const DATABASE_VERSION = 2
 const CONVERSATIONS_STORE = 'conversations'
-const PREFERENCES_STORE = 'preferences'
+const LEGACY_PREFERENCES_STORE = 'preferences'
 
 function plainMessages(messages: ConversationRecord['messages']): ConversationRecord['messages'] {
   // Vue's Chat state exposes reactive proxies, which IndexedDB cannot clone.
@@ -23,8 +22,8 @@ function openDatabase(): Promise<IDBDatabase | null> {
         const store = database.createObjectStore(CONVERSATIONS_STORE, { keyPath: 'id' })
         store.createIndex('updatedAt', 'updatedAt')
       }
-      if (!database.objectStoreNames.contains(PREFERENCES_STORE)) {
-        database.createObjectStore(PREFERENCES_STORE, { keyPath: 'id' })
+      if (database.objectStoreNames.contains(LEGACY_PREFERENCES_STORE)) {
+        database.deleteObjectStore(LEGACY_PREFERENCES_STORE)
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -100,39 +99,6 @@ export async function deleteConversation(id: string): Promise<void> {
   try {
     const transaction = database.transaction(CONVERSATIONS_STORE, 'readwrite')
     transaction.objectStore(CONVERSATIONS_STORE).delete(id)
-    await transactionDone(transaction)
-  } finally {
-    database.close()
-  }
-}
-
-export async function loadConversationPreferences(): Promise<Proposition[]> {
-  const database = await openDatabase()
-  if (!database) return []
-  try {
-    const transaction = database.transaction(PREFERENCES_STORE, 'readonly')
-    const record = await requestResult(
-      transaction.objectStore(PREFERENCES_STORE).get('chat') as IDBRequest<
-        ConversationPreferencesRecord | undefined
-      >
-    )
-    return record?.propositions ?? []
-  } finally {
-    database.close()
-  }
-}
-
-export async function saveConversationPreferences(propositions: Proposition[]): Promise<void> {
-  const database = await openDatabase()
-  if (!database) return
-  try {
-    const transaction = database.transaction(PREFERENCES_STORE, 'readwrite')
-    const record: ConversationPreferencesRecord = {
-      id: 'chat',
-      propositions,
-      updatedAt: Date.now()
-    }
-    transaction.objectStore(PREFERENCES_STORE).put(record)
     await transactionDone(transaction)
   } finally {
     database.close()

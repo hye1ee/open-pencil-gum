@@ -1,8 +1,7 @@
 import type { UIMessage } from 'ai'
 
-import type { FeedbackSelection } from '@/app/meta-agent/feedback-note/draft/types'
 import type { FeedbackCueSegment, FeedbackNoteRepresentation } from '@/app/meta-agent/core/types'
-import type { Proposition } from '@/app/user-model/pipeline'
+import type { FeedbackSelection } from '@/app/meta-agent/feedback-note/draft/types'
 
 export type ConversationFeedbackRelationship = 'alignment' | 'conflict' | 'uncovered'
 export type ConversationFeedbackStatus = 'pending' | 'continued' | 'answered'
@@ -56,11 +55,5 @@ export interface ConversationRecord {
   title: string
   messages: UIMessage[]
   createdAt: number
-  updatedAt: number
-}
-
-export interface ConversationPreferencesRecord {
-  id: 'chat'
-  propositions: Proposition[]
   updatedAt: number
 }

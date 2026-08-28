@@ -28,6 +28,7 @@ export { canBuildUserModel }
  * would undo the first's. Built on demand, since feedback outlives capture. */
 let current: UserModel | null = null
 let currentReady: Promise<void> = Promise.resolve()
+let auditSessionId = 'feedback-notes'
 
 let pending: Promise<void> | null = null
 
@@ -69,6 +70,14 @@ export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promi
   }
 }
 
+/** Makes the shared app User Model available to hosts that do not start the
+ * screen-capture lifecycle. LenCanvas capture and LenChat feedback must reuse
+ * this one instance because they read and write the same proposition store. */
+export async function initializeUserModel(): Promise<void> {
+  current ??= createPropositionSink('feedback-notes')
+  await currentReady
+}
+
 /** The meta-agent reads the model once per turn. A restart after an answer is
  * two model calls ahead of the revision that answer caused. */
 export function awaitUserModelSettled(): Promise<void> {
@@ -76,6 +85,8 @@ export function awaitUserModelSettled(): Promise<void> {
 }
 
 export function createPropositionSink(sessionId: string): UserModel {
+  auditSessionId = sessionId
+  if (current) return current
   const deps = modelCalls()
   const model = createUserModel({
     deps,
@@ -134,7 +145,7 @@ export function createPropositionSink(sessionId: string): UserModel {
       logUserModelStage('saved', `${propositions.length} propositions`)
       setPropositions(propositions)
       void save(propositions)
-      void appendAudit(sessionId, propositions)
+      void appendAudit(auditSessionId, propositions)
     },
 
     onError: (error: unknown) => {
@@ -160,6 +171,13 @@ export function createPropositionSink(sessionId: string): UserModel {
 
   current = model
   return model
+}
+
+export async function clearUserModel(): Promise<void> {
+  await initializeUserModel()
+  current?.clear()
+  setPropositions([])
+  await clearSaved()
 }
 
 export { clearSaved }

@@ -243,7 +243,7 @@ function reviseFromFeedback(id: string, items: ConversationFeedbackItem[]): void
       :propositions="propositions"
       :learning="learning"
       @close="userModelOpen = false"
-      @clear="store.clearPreferences()"
+      @clear="store.clearUserModel()"
     />
   </ConversationShell>
 </template>

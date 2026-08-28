@@ -8,8 +8,16 @@ import {
   resumeTurn,
   setTurnRunning
 } from '@/app/ai/chat/agent-turn'
+import { META_AGENT_FEEDBACK_NOTE_TOOLS as FEEDBACK_NOTE_TOOLS } from '@/app/meta-agent/core/tools'
+import {
+  DESIGN_FEEDBACK_NOTE_SYSTEM as FEEDBACK_NOTE_SYSTEM,
+  renderDesignFeedbackNotePrompt as renderFeedbackNotePrompt
+} from '@/app/meta-agent/domains/canvas/prompt'
 import { buildInteractiveCodeVisualDocument } from '@/app/meta-agent/feedback-note/code-visual/document'
-import { inspectCodeVisualHtml, sanitizeCodeVisualHtml } from '@/app/meta-agent/feedback-note/code-visual/html'
+import {
+  inspectCodeVisualHtml,
+  sanitizeCodeVisualHtml
+} from '@/app/meta-agent/feedback-note/code-visual/html'
 import {
   CODE_VISUAL_SYSTEM,
   renderCodeVisualComposerPrompt
@@ -22,10 +30,12 @@ import {
 import { CODE_VISUAL_TOOLS } from '@/app/meta-agent/feedback-note/code-visual/tools'
 import { codeVisualToolName } from '@/app/meta-agent/feedback-note/code-visual/use'
 import { createConfirmedFeedbackHistory } from '@/app/meta-agent/feedback-note/draft/history'
-import { FEEDBACK_DRAFT_SYSTEM, renderFeedbackDraftPrompt } from '@/app/meta-agent/feedback-note/draft/prompt'
+import {
+  FEEDBACK_DRAFT_SYSTEM,
+  renderFeedbackDraftPrompt
+} from '@/app/meta-agent/feedback-note/draft/prompt'
 import { buildFeedbackNoteImagePrompt } from '@/app/meta-agent/feedback-note/image'
 import { readFeedbackNote } from '@/app/meta-agent/feedback-note/parse'
-import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/meta-agent/hosts/lencanvas/feedback-note/prompt'
 import { renderStepFeedbackReport } from '@/app/meta-agent/hosts/lencanvas/feedback-note/report'
 import {
   beginFeedbackReplay,
@@ -38,7 +48,6 @@ import {
   resetStepFeedbackSession,
   takeStepFeedbackResult
 } from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
-import { FEEDBACK_NOTE_TOOLS } from '@/app/meta-agent/feedback-note/tools'
 
 const COMPARISON_SVG = `<svg viewBox="0 0 720 440">
   <rect x="80" y="120" width="220" height="72" rx="36" fill="none" stroke="#5D5964" />

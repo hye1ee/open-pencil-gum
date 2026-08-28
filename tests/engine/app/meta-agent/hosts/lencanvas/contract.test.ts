@@ -2,8 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 
 import { createEditorStore } from '@/app/editor/session'
-import { FEEDBACK_NOTE_SYSTEM, renderFeedbackNotePrompt } from '@/app/meta-agent/hosts/lencanvas/feedback-note/prompt'
-import { FEEDBACK_NOTE_TOOLS } from '@/app/meta-agent/feedback-note/tools'
+import { META_AGENT_FEEDBACK_NOTE_TOOLS as FEEDBACK_NOTE_TOOLS } from '@/app/meta-agent/core/tools'
+import {
+  DESIGN_FEEDBACK_NOTE_SYSTEM as FEEDBACK_NOTE_SYSTEM,
+  renderDesignFeedbackNotePrompt as renderFeedbackNotePrompt
+} from '@/app/meta-agent/domains/canvas/prompt'
 import { buildOpenPencilFeedbackNoteInput } from '@/app/meta-agent/hosts/lencanvas/input'
 
 function sha256(value: string): string {

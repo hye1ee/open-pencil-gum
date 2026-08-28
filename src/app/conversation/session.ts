@@ -8,20 +8,15 @@ import {
   logFeedbackNoteImage,
   logChatFeedbackLifecycle,
   logMetaAgentLifecycle,
-  logPropositionChange,
-  logRationaleChange,
   logRunStart,
-  logUserModelFeedback,
-  logUserModelStage
+  logUserModelFeedback
 } from '@/app/ai/chat/agent-log'
 import type { ConversationToolId } from '@/app/conversation/settings'
 import {
   deleteConversation,
   listConversations,
   loadConversation,
-  loadConversationPreferences,
-  saveConversation,
-  saveConversationPreferences
+  saveConversation
 } from '@/app/conversation/storage'
 import { createConversationTransport } from '@/app/conversation/transport'
 import type {
@@ -31,21 +26,22 @@ import type {
   ConversationRecord
 } from '@/app/conversation/types'
 import { conversationFeedbackBatch } from '@/app/conversation/user-model'
-import { copyFeedbackSelection, feedbackSelectionLabel } from '@/app/meta-agent/feedback-note/draft/selection'
-import { lenChatFeedbackHistory } from '@/app/meta-agent/hosts/lenchat/feedback-note/history'
+import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/meta-agent/core/types'
+import {
+  copyFeedbackSelection,
+  feedbackSelectionLabel
+} from '@/app/meta-agent/feedback-note/draft/selection'
 import { FEEDBACK_NOTE_REPRESENTATION_PROVIDER } from '@/app/meta-agent/feedback-note/representation'
+import { lenChatFeedbackHistory } from '@/app/meta-agent/hosts/lenchat/feedback-note/history'
 import { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
-import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/meta-agent/core/types'
-import { canUpdateUserModelFromFeedback, modelCalls } from '@/app/user-model/calls'
-import { hydrateMissingPropositionEmbeddings } from '@/app/user-model/embeddings'
+import { canUpdateUserModelFromFeedback } from '@/app/user-model/calls'
+import { propositions as sharedPropositions } from '@/app/user-model/store'
 import {
-  createUserModel,
-  type FeedbackRetrievalTrace,
-  type Proposition,
-  type UserModel,
-  type UserModelDeps
-} from '@/app/user-model/pipeline'
+  clearUserModel as clearSharedUserModel,
+  initializeUserModel,
+  observeFeedbackNotes
+} from '@/app/user-model/use'
 
 interface ConversationStoreOptions {
   apiKey(): string
@@ -75,31 +71,8 @@ function lastUserRequest(messages: readonly UIMessage[]): string {
   return ''
 }
 
-function logConversationFeedbackRetrieval(trace: FeedbackRetrievalTrace): void {
-  for (const note of trace.notes) {
-    logUserModelStage(
-      'retrieval',
-      `host=LenChat ${note.noteId} direct → ${note.directIds.join(', ') || '(none)'}`
-    )
-    logUserModelStage(
-      'retrieval',
-      `host=LenChat ${note.noteId} embedding → ${
-        note.embedding
-          .map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`)
-          .join(', ') || '(none above threshold)'
-      }`
-    )
-  }
-  logUserModelStage(
-    'retrieval',
-    `host=LenChat shown-to-feedback-model → ${trace.shownIds.join(', ') || '(none)'}`
-  )
-}
-
 export class ConversationStore {
   private readonly options: ConversationStoreOptions
-  private readonly preferenceDeps: UserModelDeps
-  private readonly preferenceModel: UserModel
   private readonly chatRef = shallowRef<Chat<UIMessage> | null>(null)
   private gate = new ChatTurnGate()
   private revisionFeedback: string | null = null
@@ -114,7 +87,7 @@ export class ConversationStore {
   readonly history = shallowRef<ConversationRecord[]>([])
   readonly currentId = ref<string>(crypto.randomUUID())
   readonly feedbackNotes = shallowRef<ConversationFeedbackNote[]>([])
-  readonly propositions = shallowRef<Proposition[]>([])
+  readonly propositions = sharedPropositions
   readonly monitorActive = ref(false)
   readonly feedbackGenerating = ref(false)
   readonly learning = ref(false)
@@ -136,48 +109,11 @@ export class ConversationStore {
 
   constructor(options: ConversationStoreOptions) {
     this.options = options
-    this.preferenceDeps = modelCalls()
-    this.preferenceModel = createUserModel({
-      deps: this.preferenceDeps,
-      onStage: (stage) => logUserModelStage(stage, 'host=LenChat'),
-      onFeedbackRetrieval: logConversationFeedbackRetrieval,
-      onRevision: logPropositionChange,
-      onRationale: logRationaleChange,
-      onRationaleDropped: (reason) =>
-        logUserModelStage('rationale', `host=LenChat dropped — ${reason}`),
-      onChange: (propositions) => {
-        this.propositions.value = [...propositions]
-        void saveConversationPreferences([...propositions]).catch((error: unknown) => {
-          console.warn('[conversation-user-model] save failed:', error)
-        })
-      },
-      onError: (error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        logUserModelStage('failed', `host=LenChat ${message}`)
-        console.warn('[conversation-user-model] pipeline failed:', error)
-      }
-    })
   }
 
   async initialize(): Promise<void> {
-    const [history, propositions] = await Promise.all([
-      listConversations(),
-      loadConversationPreferences()
-    ])
+    const [history] = await Promise.all([listConversations(), initializeUserModel()])
     this.history.value = history
-    let loaded = propositions
-    if (propositions.length > 0 && canUpdateUserModelFromFeedback()) {
-      try {
-        loaded = await hydrateMissingPropositionEmbeddings(propositions, (texts) =>
-          this.preferenceDeps.embed(texts)
-        )
-        if (loaded !== propositions) await saveConversationPreferences(loaded)
-      } catch (error) {
-        console.warn('[conversation-user-model] embedding migration failed:', error)
-      }
-    }
-    this.preferenceModel.load(loaded)
-    this.propositions.value = [...this.preferenceModel.propositions]
     const latest = history.at(0)
     if (latest) {
       this.currentId.value = latest.id
@@ -320,12 +256,10 @@ export class ConversationStore {
     }
   }
 
-  async clearPreferences(): Promise<void> {
+  async clearUserModel(): Promise<void> {
     if (this.learning.value) return
     try {
-      this.preferenceModel.clear()
-      await saveConversationPreferences([])
-      this.propositions.value = []
+      await clearSharedUserModel()
     } catch (error) {
       console.warn('[conversation-user-model] clear failed:', error)
       this.lastError.value = 'Could not clear the user model.'
@@ -434,7 +368,7 @@ export class ConversationStore {
       `host=LenChat note=${note.id} resolution=${note.feedbackItems.length > 0 ? 'explicit-feedback' : 'implicitly-accepted'}`
     )
     try {
-      await this.preferenceModel.observeFeedback(batch)
+      await observeFeedbackNotes(batch)
     } catch (error) {
       console.warn('[conversation-user-model] update failed:', error)
     } finally {

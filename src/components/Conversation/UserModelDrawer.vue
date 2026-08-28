@@ -40,7 +40,7 @@ defineEmits<{ close: []; clear: [] }>()
           v-if="propositions.length === 0"
           class="rounded-xl border border-dashed border-slate-200 p-5 text-center text-xs leading-5 text-slate-500"
         >
-          Preferences learned from reviewed chat decisions will appear here.
+          Propositions learned from captured activity and reviewed feedback will appear here.
         </div>
         <article
           v-for="item in propositions"
