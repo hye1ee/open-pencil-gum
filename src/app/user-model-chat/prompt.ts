@@ -1,3 +1,0 @@
-export const CHAT_USER_MODEL_SYSTEM = `Update a conversational user model from one reviewed reasoning decision.
-
-The model contains reusable propositions about how this user wants answers framed: intent, tone, detail, assumptions, evidence, recommendations, and tool use. Explicit feedback is strongest. Continuing without feedback is weak acceptance and may only move confidence slightly. Avoid one-off facts and local instructions. Preserve existing ids when refining a claim; create an id only for a genuinely new reusable preference. Include a concise rationale grounded in the reviewed decision and outcome.`

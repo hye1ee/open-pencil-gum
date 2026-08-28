@@ -20,6 +20,7 @@ import {
   CONVERSATION_TOOL_OPTIONS
 } from '@/app/conversation/settings'
 import { fadeOutGlobalLoader } from '@/app/editor/canvas/loader-overlay'
+import type { ConversationFeedbackItem } from '@/app/conversation/types'
 
 useHead({
   title: 'LenChat',
@@ -74,8 +75,8 @@ async function applySettings(): Promise<void> {
   await store.reconfigure()
 }
 
-function reviseFromFeedback(id: string, text: string): void {
-  store.reviseFromFeedback(id, text)
+function reviseFromFeedback(id: string, items: ConversationFeedbackItem[]): void {
+  store.reviseFromFeedback(id, items)
 }
 </script>
 
@@ -100,6 +101,7 @@ function reviseFromFeedback(id: string, text: string): void {
         :feedback-notes="feedbackNotes"
         :feedback-generating="feedbackGenerating"
         :revising="revising"
+        :propositions="propositions"
         @continue="store.continueFromFeedback($event)"
         @feedback="reviseFromFeedback"
       />

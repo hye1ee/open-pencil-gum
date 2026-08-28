@@ -8,7 +8,11 @@ import {
   logFeedbackNoteImage,
   logChatFeedbackLifecycle,
   logMetaAgentLifecycle,
-  logRunStart
+  logPropositionChange,
+  logRationaleChange,
+  logRunStart,
+  logUserModelFeedback,
+  logUserModelStage
 } from '@/app/ai/chat/agent-log'
 import type { ConversationToolId } from '@/app/conversation/settings'
 import {
@@ -21,16 +25,27 @@ import {
 } from '@/app/conversation/storage'
 import { createConversationTransport } from '@/app/conversation/transport'
 import type {
+  ConversationFeedbackItem,
   ConversationFeedbackNote,
   ConversationReasoningChunk,
   ConversationRecord
 } from '@/app/conversation/types'
+import { conversationFeedbackBatch } from '@/app/conversation/user-model'
+import { copyFeedbackSelection, feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
+import { lenChatFeedbackHistory } from '@/app/feedback-note/hosts/lenchat/history'
 import { FEEDBACK_NOTE_REPRESENTATION_PROVIDER } from '@/app/feedback-note/representation'
 import { ChatTurnGate } from '@/app/meta-agent-chat/gate'
 import { createChatMonitor } from '@/app/meta-agent-chat/monitor'
 import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/meta-agent/core/types'
-import { learnConversationPreferences } from '@/app/user-model-chat/pipeline'
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import { canUpdateUserModelFromFeedback, modelCalls } from '@/app/user-model/calls'
+import { hydrateMissingPropositionEmbeddings } from '@/app/user-model/embeddings'
+import {
+  createUserModel,
+  type FeedbackRetrievalTrace,
+  type Proposition,
+  type UserModel,
+  type UserModelDeps
+} from '@/app/user-model/pipeline'
 
 interface ConversationStoreOptions {
   apiKey(): string
@@ -60,8 +75,31 @@ function lastUserRequest(messages: readonly UIMessage[]): string {
   return ''
 }
 
+function logConversationFeedbackRetrieval(trace: FeedbackRetrievalTrace): void {
+  for (const note of trace.notes) {
+    logUserModelStage(
+      'retrieval',
+      `host=LenChat ${note.noteId} direct → ${note.directIds.join(', ') || '(none)'}`
+    )
+    logUserModelStage(
+      'retrieval',
+      `host=LenChat ${note.noteId} embedding → ${
+        note.embedding
+          .map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`)
+          .join(', ') || '(none above threshold)'
+      }`
+    )
+  }
+  logUserModelStage(
+    'retrieval',
+    `host=LenChat shown-to-feedback-model → ${trace.shownIds.join(', ') || '(none)'}`
+  )
+}
+
 export class ConversationStore {
   private readonly options: ConversationStoreOptions
+  private readonly preferenceDeps: UserModelDeps
+  private readonly preferenceModel: UserModel
   private readonly chatRef = shallowRef<Chat<UIMessage> | null>(null)
   private gate = new ChatTurnGate()
   private revisionFeedback: string | null = null
@@ -76,7 +114,7 @@ export class ConversationStore {
   readonly history = shallowRef<ConversationRecord[]>([])
   readonly currentId = ref<string>(crypto.randomUUID())
   readonly feedbackNotes = shallowRef<ConversationFeedbackNote[]>([])
-  readonly propositions = shallowRef<ChatProposition[]>([])
+  readonly propositions = shallowRef<Proposition[]>([])
   readonly monitorActive = ref(false)
   readonly feedbackGenerating = ref(false)
   readonly learning = ref(false)
@@ -98,6 +136,27 @@ export class ConversationStore {
 
   constructor(options: ConversationStoreOptions) {
     this.options = options
+    this.preferenceDeps = modelCalls()
+    this.preferenceModel = createUserModel({
+      deps: this.preferenceDeps,
+      onStage: (stage) => logUserModelStage(stage, 'host=LenChat'),
+      onFeedbackRetrieval: logConversationFeedbackRetrieval,
+      onRevision: logPropositionChange,
+      onRationale: logRationaleChange,
+      onRationaleDropped: (reason) =>
+        logUserModelStage('rationale', `host=LenChat dropped — ${reason}`),
+      onChange: (propositions) => {
+        this.propositions.value = [...propositions]
+        void saveConversationPreferences([...propositions]).catch((error: unknown) => {
+          console.warn('[conversation-user-model] save failed:', error)
+        })
+      },
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        logUserModelStage('failed', `host=LenChat ${message}`)
+        console.warn('[conversation-user-model] pipeline failed:', error)
+      }
+    })
   }
 
   async initialize(): Promise<void> {
@@ -106,7 +165,19 @@ export class ConversationStore {
       loadConversationPreferences()
     ])
     this.history.value = history
-    this.propositions.value = propositions
+    let loaded = propositions
+    if (propositions.length > 0 && canUpdateUserModelFromFeedback()) {
+      try {
+        loaded = await hydrateMissingPropositionEmbeddings(propositions, (texts) =>
+          this.preferenceDeps.embed(texts)
+        )
+        if (loaded !== propositions) await saveConversationPreferences(loaded)
+      } catch (error) {
+        console.warn('[conversation-user-model] embedding migration failed:', error)
+      }
+    }
+    this.preferenceModel.load(loaded)
+    this.propositions.value = [...this.preferenceModel.propositions]
     const latest = history.at(0)
     if (latest) {
       this.currentId.value = latest.id
@@ -129,6 +200,7 @@ export class ConversationStore {
     this.actions.value = []
     this.reasoningChunks.value = []
     this.feedbackNotes.value = []
+    lenChatFeedbackHistory.reset()
     this.monitorActive.value = false
     this.feedbackGenerating.value = false
     this.resetMetaAgentMonitor()
@@ -167,27 +239,40 @@ export class ConversationStore {
     this.feedbackNotes.value = this.feedbackNotes.value.map((candidate) =>
       candidate.id === noteId ? continuedNote : candidate
     )
-    this.recordFeedbackOutcome(continuedNote, null)
+    this.recordFeedbackOutcome(continuedNote)
     logChatFeedbackLifecycle('continued', `note=${continuedNote.id} topic=${continuedNote.topic}`)
-    this.queueLearn(continuedNote, null)
+    this.queueLearn(continuedNote)
     void this.finishFeedbackReview()
   }
 
-  reviseFromFeedback(noteId: string, reply: string): void {
+  reviseFromFeedback(noteId: string, feedbackItems: readonly ConversationFeedbackItem[]): void {
     const note = this.feedbackNotes.value.find((candidate) => candidate.id === noteId)
-    const clean = reply.trim()
-    if (!note || note.status !== 'pending' || !clean) return
+    const cleanItems = feedbackItems.flatMap((item) => {
+      const text = item.text.trim()
+      return text
+        ? [
+            {
+              ...item,
+              selection: copyFeedbackSelection(item.selection),
+              text
+            }
+          ]
+        : []
+    })
+    if (!note || note.status !== 'pending' || cleanItems.length === 0) return
+    const reply = cleanItems.map((item) => item.text).join('\n')
     const answeredNote: ConversationFeedbackNote = {
       ...note,
       status: 'answered',
-      reply: clean
+      reply,
+      feedbackItems: cleanItems
     }
     this.feedbackNotes.value = this.feedbackNotes.value.map((candidate) =>
       candidate.id === noteId ? answeredNote : candidate
     )
-    this.recordFeedbackOutcome(answeredNote, clean)
+    this.recordFeedbackOutcome(answeredNote)
     logChatFeedbackLifecycle('answered', `note=${answeredNote.id} topic=${answeredNote.topic}`)
-    this.queueLearn(answeredNote, clean)
+    this.queueLearn(answeredNote)
     void this.finishFeedbackReview()
   }
 
@@ -196,6 +281,7 @@ export class ConversationStore {
     this.currentId.value = crypto.randomUUID()
     this.createdAt = Date.now()
     this.feedbackNotes.value = []
+    lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
     this.reasoningChunks.value = []
@@ -210,6 +296,7 @@ export class ConversationStore {
     this.currentId.value = record.id
     this.createdAt = record.createdAt
     this.feedbackNotes.value = []
+    lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
     this.reasoningChunks.value = []
@@ -236,6 +323,7 @@ export class ConversationStore {
   async clearPreferences(): Promise<void> {
     if (this.learning.value) return
     try {
+      this.preferenceModel.clear()
       await saveConversationPreferences([])
       this.propositions.value = []
     } catch (error) {
@@ -336,17 +424,17 @@ export class ConversationStore {
     }
   }
 
-  private async learn(note: ConversationFeedbackNote, reply: string | null): Promise<void> {
-    if (!this.configured.value) return
+  private async learn(note: ConversationFeedbackNote): Promise<void> {
+    if (!canUpdateUserModelFromFeedback()) return
     this.learning.value = true
+    const batch = conversationFeedbackBatch(note, note.feedbackItems)
+    logUserModelFeedback(
+      batch.step ?? 0,
+      'queued',
+      `host=LenChat note=${note.id} resolution=${note.feedbackItems.length > 0 ? 'explicit-feedback' : 'implicitly-accepted'}`
+    )
     try {
-      this.propositions.value = await learnConversationPreferences({
-        apiKey: this.options.apiKey(),
-        modelId: this.options.modelId(),
-        note,
-        reply,
-        propositions: this.propositions.value
-      })
+      await this.preferenceModel.observeFeedback(batch)
     } catch (error) {
       console.warn('[conversation-user-model] update failed:', error)
     } finally {
@@ -354,10 +442,10 @@ export class ConversationStore {
     }
   }
 
-  private queueLearn(note: ConversationFeedbackNote, reply: string | null): void {
+  private queueLearn(note: ConversationFeedbackNote): void {
     this.preferenceUpdate = this.preferenceUpdate
       .catch(() => undefined)
-      .then(() => this.learn(note, reply))
+      .then(() => this.learn(note))
   }
 
   private addFeedbackNote(note: FeedbackNote): void {
@@ -376,6 +464,7 @@ export class ConversationStore {
       propositionIds: [...note.propositionIds],
       status: 'pending',
       reply: null,
+      feedbackItems: [],
       createdAt: Date.now()
     }
     this.feedbackNotes.value = [...this.feedbackNotes.value, conversationNote]
@@ -454,14 +543,14 @@ export class ConversationStore {
     }
   }
 
-  private recordFeedbackOutcome(note: ConversationFeedbackNote, reply: string | null): void {
+  private recordFeedbackOutcome(note: ConversationFeedbackNote): void {
     const history = this.feedbackNoteHistory.find((item) => item.id === note.id)
     if (!history) return
-    history.status = reply ? 'answered' : 'continued'
+    history.status = note.feedbackItems.length > 0 ? 'answered' : 'continued'
     history.outcome = {
-      resolution: reply ? 'explicit-feedback' : 'implicitly-accepted',
-      selections: [],
-      feedback: reply ? [reply] : []
+      resolution: note.feedbackItems.length > 0 ? 'explicit-feedback' : 'implicitly-accepted',
+      selections: note.feedbackItems.map((item) => feedbackSelectionLabel(item.selection)),
+      feedback: note.feedbackItems.map((item) => item.text)
     }
   }
 
@@ -469,8 +558,7 @@ export class ConversationStore {
     if (this.monitorActive.value || this.revisionPending) return
     if (this.feedbackNotes.value.some((note) => note.status === 'pending')) return
     const explicit = this.feedbackNotes.value.filter(
-      (note): note is ConversationFeedbackNote & { reply: string } =>
-        note.status === 'answered' && note.reply !== null
+      (note) => note.status === 'answered' && note.feedbackItems.length > 0
     )
     if (explicit.length === 0) {
       logChatFeedbackLifecycle('resumed', 'all notes reviewed without explicit feedback')
@@ -481,14 +569,26 @@ export class ConversationStore {
     const chat = this.chatRef.value
     if (!chat) return
     this.revisionPending = true
+    const handoffRun = this.revisionRun
+    logChatFeedbackLifecycle(
+      'retry',
+      `waiting for ${this.feedbackNotes.value.length} reviewed notes to update the user model`
+    )
+    await this.preferenceUpdate.catch(() => undefined)
+    if (this.chatRef.value !== chat || this.revisionRun !== handoffRun || !this.revisionPending) {
+      return
+    }
     const revisionRun = ++this.revisionRun
     this.revising.value = true
     this.revisionFeedback = explicit
-      .map(
-        (note, index) =>
-          `${index + 1}. Decision: ${note.cue}\n` +
-          `   Reasoning: ${note.reasoningEvidence}\n` +
-          `   User feedback: ${note.reply}`
+      .flatMap((note, noteIndex) =>
+        note.feedbackItems.map(
+          (item, itemIndex) =>
+            `${noteIndex + 1}.${itemIndex + 1}. Decision: ${note.cue}\n` +
+            `   Reasoning: ${note.reasoningEvidence}\n` +
+            `   Feedback target: ${feedbackSelectionLabel(item.selection)}\n` +
+            `   User feedback: ${item.text}`
+        )
       )
       .join('\n')
     logChatFeedbackLifecycle('retry', `discarding first run; feedback-notes=${explicit.length}`)

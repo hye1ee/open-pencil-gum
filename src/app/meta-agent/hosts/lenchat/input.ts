@@ -3,7 +3,7 @@ import type { UIMessage } from 'ai'
 
 import type { FeedbackNoteHistoryItem, Proposition } from '@/app/meta-agent/core/types'
 import type { ChatFeedbackNotePromptInput } from '@/app/meta-agent/domains/chat/prompt'
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import type { Proposition as UserModelProposition } from '@/app/user-model/pipeline'
 
 const MAX_CONVERSATION_MESSAGES = 10
 const MAX_MESSAGE_CHARACTERS = 800
@@ -12,7 +12,7 @@ const TASK_AGENT_PROPOSITION_THRESHOLD = 0.35
 export interface LenChatMetaAgentContext {
   messages: readonly UIMessage[]
   request: string
-  propositions: readonly ChatProposition[]
+  propositions: readonly UserModelProposition[]
   completedActions: readonly string[]
   previousNotes?: readonly FeedbackNoteHistoryItem[]
 }
@@ -42,7 +42,7 @@ export function summarizeLenChatConversation(messages: readonly UIMessage[]): st
     .join('\n')
 }
 
-function adaptProposition(proposition: ChatProposition): Proposition {
+function adaptProposition(proposition: UserModelProposition): Proposition {
   return {
     id: proposition.id,
     text: proposition.text,

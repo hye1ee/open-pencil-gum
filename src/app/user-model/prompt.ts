@@ -33,14 +33,6 @@ For each proposition give:
 - confidence: 1-10. How strongly these frames support it. 10 means the frames show it plainly; 1 means you are guessing.
 - reasoning: one sentence naming what in the frames led you here.
 
-Sometimes the frames come with a note about who was driving the canvas, because a screenshot cannot tell you that and getting it wrong builds a model of the wrong person.
-
-When the note says an AI agent was working, the changes it lists are the agent's. Do not read them as the user's habit or taste — the user asked for an outcome and watched it arrive. A canvas full of the agent's work says almost nothing about the user, so if that is all the frames show, return [].
-
-The note may also list edits the user made by hand, and it can list both at once: the agent works over many steps and the user is free to edit throughout. Those hand edits are the user, and they are the best evidence in the batch — the user saw what the agent did and chose to change it anyway. Weigh them accordingly.
-
-Beyond the note, what the frames tell you about the user is what they asked for, where they looked, and what they left standing.
-
 The subject of a proposition is always the user. If striking out "the AI", "the agent", or "AI-generated" leaves the sentence broken, it is not an observation about this person — it is a description of how this app works, and it is equally true of everyone who uses it.
 
 - Bad: "Delegates layout generation to an AI assistant" — every user here does that.

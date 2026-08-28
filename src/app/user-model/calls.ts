@@ -35,14 +35,18 @@ export function canBuildUserModel(): boolean {
   return isSlotConfigured('user-model-propose') && embeddingApiKey() !== ''
 }
 
+/** Feedback updates do not need the capture-time propose model, but they do
+ * need the feedback model and embeddings for adjacent proposition retrieval. */
+export function canUpdateUserModelFromFeedback(): boolean {
+  return isSlotConfigured('feedback') && embeddingApiKey() !== ''
+}
+
 export function modelCalls(): UserModelDeps {
   return {
-    propose: async ({ system, images, instruction, context }) => {
+    propose: async ({ system, images, instruction }) => {
       const frames = await Promise.all(images.map((image) => image.arrayBuffer()))
       // Unlabelled, the model describes the last frame; numbered, what changed.
       const content: UserContent = [{ type: 'text', text: instruction }]
-      // Before the frames, so it colours how they are read.
-      if (context.length > 0) content.push({ type: 'text', text: context.join('\n') })
       for (const [i, data] of frames.entries()) {
         content.push({ type: 'text', text: `Frame ${i + 1} of ${frames.length}:` })
         content.push({ type: 'image', image: new Uint8Array(data) })

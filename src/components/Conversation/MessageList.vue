@@ -3,17 +3,23 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import InlineFeedbackNote from '@/components/Conversation/InlineFeedbackNote.vue'
 import MessageBubble from '@/components/Conversation/MessageBubble.vue'
-import type { ConversationFeedbackNote } from '@/app/conversation/types'
+import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
+import type { Proposition } from '@/app/user-model/pipeline'
 import type { ChatStatus, UIMessage } from 'ai'
 
-const { messages, status, feedbackNotes, feedbackGenerating, revising } = defineProps<{
-  messages: UIMessage[]
-  status: ChatStatus
-  feedbackNotes: ConversationFeedbackNote[]
-  feedbackGenerating: boolean
-  revising: boolean
+const { messages, status, feedbackNotes, feedbackGenerating, revising, propositions } =
+  defineProps<{
+    messages: UIMessage[]
+    status: ChatStatus
+    feedbackNotes: ConversationFeedbackNote[]
+    feedbackGenerating: boolean
+    revising: boolean
+    propositions: Proposition[]
+  }>()
+const emit = defineEmits<{
+  continue: [id: string]
+  feedback: [id: string, items: ConversationFeedbackItem[]]
 }>()
-const emit = defineEmits<{ continue: [id: string]; feedback: [id: string, text: string] }>()
 const scroller = ref<HTMLDivElement>()
 const activeNoteId = ref<string | null>(null)
 const followOutput = ref(true)
@@ -41,8 +47,8 @@ function activateNote(id: string): void {
   activeNoteId.value = id
 }
 
-function relayFeedback(id: string, text: string): void {
-  emit('feedback', id, text)
+function relayFeedback(id: string, items: ConversationFeedbackItem[]): void {
+  emit('feedback', id, items)
 }
 
 function nearBottom(element: HTMLDivElement): boolean {
@@ -130,10 +136,10 @@ watch(
                   message.role === 'assistant' &&
                   message.id === messages.at(-1)?.id)
               "
-              class="my-5"
+              class="my-6"
               aria-label="Feedback notes"
             >
-              <div class="mb-2 flex items-center justify-between gap-3 px-0.5">
+              <div class="mb-1 flex items-center justify-between gap-3 px-1">
                 <p class="text-xs font-semibold tracking-wide text-slate-500">Feedback notes</p>
                 <p class="text-[11px] text-slate-400">
                   {{ notesAfter(message).filter((note) => note.status !== 'pending').length }} of
@@ -141,7 +147,7 @@ watch(
                 </p>
               </div>
               <div
-                class="flex snap-x snap-mandatory scroll-px-3 items-start gap-3 overflow-x-auto px-3 pt-2 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                class="flex snap-x snap-mandatory scroll-px-7 items-start gap-5 overflow-x-auto px-7 pt-7 pb-9 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 <InlineFeedbackNote
                   v-for="note in notesAfter(message)"
@@ -149,6 +155,7 @@ watch(
                   :note="note"
                   :phase="notePhase(note)"
                   :disabled="revising"
+                  :propositions="propositions"
                   @activate="activateNote"
                   @continue="emit('continue', $event)"
                   @feedback="relayFeedback"
@@ -174,6 +181,7 @@ watch(
                     />
                   </div>
                 </div>
+                <div class="w-2 shrink-0" aria-hidden="true" />
               </div>
             </section>
           </template>

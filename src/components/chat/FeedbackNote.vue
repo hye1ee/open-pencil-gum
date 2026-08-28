@@ -4,15 +4,12 @@ import { onBeforeUnmount, reactive, ref, useTemplateRef, watch } from 'vue'
 
 import { CODE_VISUAL_SIZE_BRIDGE_SOURCE } from '@/app/feedback-note/code-visual/document'
 import { captureCodeVisualSelection } from '@/app/feedback-note/draft/code-visual'
-import {
-  forgetConfirmedFeedback,
-  rememberConfirmedFeedback
-} from '@/app/feedback-note/draft/history'
 import { annotateFeedbackImage } from '@/app/feedback-note/draft/image'
 import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
 import { resolveCodeVisualTarget } from '@/app/feedback-note/draft/target'
 import type { FeedbackSelection } from '@/app/feedback-note/draft/types'
-import { generateFeedbackDraft } from '@/app/feedback-note/draft/use'
+import { generateOpenPencilFeedbackDraft } from '@/app/feedback-note/hosts/open-pencil/draft'
+import { openPencilFeedbackHistory } from '@/app/feedback-note/hosts/open-pencil/history'
 import { feedbackNoteState, openFeedbackNote, resolveFeedbackNote } from '@/app/feedback-note/use'
 import type { FeedbackCueSegment } from '@/app/feedback-note/types'
 import { useEditorStore } from '@/app/editor/active-store'
@@ -257,7 +254,7 @@ async function requestFeedbackSuggestion(noteId: string, selection: NoteSelectio
         }
       }
     }
-    const suggestion = await generateFeedbackDraft({
+    const suggestion = await generateOpenPencilFeedbackDraft({
       note,
       selection: copyFeedbackSelection(selection),
       ...images
@@ -408,7 +405,7 @@ function openGeneralFeedback(noteId: string) {
 function removeFeedback(noteId: string, index: number) {
   if (hoveredFeedback.value?.noteId === noteId) hoveredFeedback.value = null
   const removed = collectedFeedback[noteId]?.[index]
-  if (removed) forgetConfirmedFeedback(removed.id)
+  if (removed) openPencilFeedbackHistory.forget(removed.id)
   collectedFeedback[noteId] = (collectedFeedback[noteId] ?? []).filter(
     (_, itemIndex) => itemIndex !== index
   )
@@ -420,7 +417,7 @@ function addFeedback(noteId: string): boolean {
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === noteId)
   if (!selection || !text || !note) return false
   const copiedSelection = copyFeedbackSelection(selection)
-  const id = rememberConfirmedFeedback(note, copiedSelection, text)
+  const id = openPencilFeedbackHistory.remember(note, copiedSelection, text)
   collectedFeedback[noteId] = [
     ...(collectedFeedback[noteId] ?? []),
     { id, selection: copiedSelection, text }

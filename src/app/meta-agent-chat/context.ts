@@ -2,14 +2,14 @@ import type { UIMessage } from 'ai'
 
 import type { ChatMonitoredContext } from '@/app/meta-agent-chat/types'
 import { summarizeLenChatConversation } from '@/app/meta-agent/hosts/lenchat/input'
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import type { Proposition } from '@/app/user-model/pipeline'
 
 export { summarizeLenChatConversation as summarizeConversation }
 
 export function createChatContext(input: {
   messages: readonly UIMessage[]
   userRequest: string
-  propositions: readonly ChatProposition[]
+  propositions: readonly Proposition[]
   actions: readonly string[]
 }): ChatMonitoredContext {
   return {

@@ -1,7 +1,10 @@
 import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
-import type { ConfirmedFeedback, FeedbackSelection } from '@/app/feedback-note/draft/types'
+import type {
+  ConfirmedFeedback,
+  FeedbackDraftProposition,
+  FeedbackSelection
+} from '@/app/feedback-note/draft/types'
 import type { FeedbackNote } from '@/app/feedback-note/types'
-import type { Proposition } from '@/app/user-model/pipeline'
 
 export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion in the user's voice. It is a hypothesis the user can accept or revise.
 
@@ -37,8 +40,8 @@ function selectionText(note: FeedbackNote, selection: FeedbackSelection): string
 export function renderFeedbackDraftPrompt(input: {
   note: FeedbackNote
   selection: FeedbackSelection
-  propositions: Proposition[]
-  previousFeedback: ConfirmedFeedback[]
+  propositions: readonly FeedbackDraftProposition[]
+  previousFeedback: readonly ConfirmedFeedback[]
   hasOverviewImage: boolean
   hasAnnotatedImage: boolean
 }): string {

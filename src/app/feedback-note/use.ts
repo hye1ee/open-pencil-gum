@@ -3,12 +3,9 @@ import { reactive } from 'vue'
 import { beginMetaAgentActivity } from '@/app/ai/chat/agent-activity'
 import { logFeedbackNoteCode, logFeedbackNoteImage, logFeedbackStep } from '@/app/ai/chat/agent-log'
 import { pauseTurn, resumeTurn } from '@/app/ai/chat/agent-turn'
-import {
-  confirmedFeedbackForNote,
-  resetConfirmedFeedbackHistory
-} from '@/app/feedback-note/draft/history'
 import { feedbackSelectionLabel } from '@/app/feedback-note/draft/selection'
 import type { ConfirmedFeedback } from '@/app/feedback-note/draft/types'
+import { openPencilFeedbackHistory } from '@/app/feedback-note/hosts/open-pencil/history'
 import { readFeedbackNote } from '@/app/feedback-note/parse'
 import {
   recordFeedbackOutcome,
@@ -96,7 +93,7 @@ function setHistoryOutcome(id: string, feedbackItems: readonly ConfirmedFeedback
 
 export function resetFeedbackNoteHistory(): void {
   feedbackNoteHistory = []
-  resetConfirmedFeedbackHistory()
+  openPencilFeedbackHistory.reset()
   resetStepFeedbackSession()
 }
 
@@ -245,7 +242,7 @@ export function openFeedbackNote(id: string): void {
 export async function resolveFeedbackNote(id: string): Promise<void> {
   const note = feedbackNoteState.notes.find((candidate) => candidate.id === id)
   if (!note) return
-  const feedbackItems = confirmedFeedbackForNote(id)
+  const feedbackItems = openPencilFeedbackHistory.forNote(id)
   recordFeedbackOutcome(note, feedbackItems)
   setHistoryStatus(id, feedbackItems.length > 0 ? 'answered' : 'continued')
   setHistoryOutcome(id, feedbackItems)

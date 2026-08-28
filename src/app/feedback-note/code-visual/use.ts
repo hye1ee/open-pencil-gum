@@ -39,30 +39,33 @@ export function codeVisualToolName(
   return visualType === 'flow' ? 'render_code_visual_svg' : 'render_code_visual_html'
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function readTargets(value: unknown, source: string): CodeVisualTarget[] | null {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 6) return null
-  const targets = value.flatMap((item): CodeVisualTarget[] => {
-    if (typeof item !== 'object' || item === null) return []
-    const row = item as RawCodeVisualTarget
-    const id = typeof row.id === 'string' ? row.id.trim() : ''
-    const label = typeof row.label === 'string' ? row.label.trim().slice(0, 60) : ''
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || !label) return []
-    return [{ id, label }]
-  })
-  if (
-    targets.length !== value.length ||
-    new Set(targets.map((target) => target.id)).size !== targets.length
-  ) {
-    return null
+  const labels = new Map<string, string>()
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item !== 'object' || item === null) continue
+      const row = item as RawCodeVisualTarget
+      const id = typeof row.id === 'string' ? row.id.trim() : ''
+      const label = typeof row.label === 'string' ? row.label.trim().slice(0, 60) : ''
+      if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) && label) labels.set(id, label)
+    }
   }
-  const everyTargetExists = targets.every((target) =>
-    new RegExp(`data-feedback-id\\s*=\\s*["']${escapeRegExp(target.id)}["']`).test(source)
-  )
-  return everyTargetExists ? targets : null
+
+  const sourceIds = [...source.matchAll(/data-feedback-id\s*=\s*["']([^"']+)["']/gi)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter((id) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id))
+  const uniqueSourceIds = [...new Set(sourceIds)]
+  if (uniqueSourceIds.length < 1 || uniqueSourceIds.length > 6) return null
+
+  return uniqueSourceIds.map((id): CodeVisualTarget => {
+    const fallbackLabel = id
+      .split('-')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+      .slice(0, 60)
+    return { id, label: labels.get(id) ?? fallbackLabel }
+  })
 }
 
 export async function composeCodeVisual(note: FeedbackNote): Promise<CodeVisualArtifact> {

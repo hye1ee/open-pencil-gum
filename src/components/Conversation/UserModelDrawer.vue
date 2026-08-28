@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import type { Proposition } from '@/app/user-model/pipeline'
 
 const { open, propositions, learning } = defineProps<{
   open: boolean
-  propositions: ChatProposition[]
+  propositions: Proposition[]
   learning: boolean
 }>()
 defineEmits<{ close: []; clear: [] }>()

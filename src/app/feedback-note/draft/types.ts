@@ -57,3 +57,17 @@ export interface FeedbackDraftInput {
   overviewImage?: Uint8Array
   annotatedImage?: Uint8Array
 }
+
+/** The common generator needs only the proposition fields it can cite. Hosts
+ * can supply propositions from separate User Model instances. */
+export interface FeedbackDraftProposition {
+  id: string
+  text: string
+  confidence: number
+  rationale: string | null
+}
+
+export interface FeedbackDraftRequest extends FeedbackDraftInput {
+  propositions: readonly FeedbackDraftProposition[]
+  previousFeedback: readonly ConfirmedFeedback[]
+}

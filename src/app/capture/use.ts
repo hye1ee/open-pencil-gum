@@ -11,12 +11,7 @@ import {
   onReset,
   setPropositions
 } from '@/app/user-model/store'
-import {
-  canBuildUserModel,
-  clearSaved,
-  createPropositionSink,
-  frameNote
-} from '@/app/user-model/use'
+import { canBuildUserModel, clearSaved, createPropositionSink } from '@/app/user-model/use'
 
 const INTERVAL_MS = 5000
 
@@ -68,8 +63,7 @@ export function usePageCapture(): void {
         onFrame: (frame, meta) => {
           if (!userModel) return
           userModel.addFrame(frame, {
-            greyscaleThumbnail: meta.greyscaleThumbnail,
-            note: frameNote()
+            greyscaleThumbnail: meta.greyscaleThumbnail
           })
           noteFrame()
         }

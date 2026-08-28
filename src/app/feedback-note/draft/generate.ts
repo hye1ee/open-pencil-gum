@@ -7,23 +7,19 @@ import {
   isSlotConfigured,
   modelConfigForSlot
 } from '@/app/ai/model-routing'
-import { relevantConfirmedFeedback } from '@/app/feedback-note/draft/history'
 import { FEEDBACK_DRAFT_SYSTEM, renderFeedbackDraftPrompt } from '@/app/feedback-note/draft/prompt'
-import type { FeedbackDraftInput } from '@/app/feedback-note/draft/types'
-import { propositions } from '@/app/user-model/store'
+import type { FeedbackDraftRequest } from '@/app/feedback-note/draft/types'
 
-export async function generateFeedbackDraft(input: FeedbackDraftInput): Promise<string | null> {
+/** Host-neutral auto-feedback generation. The caller owns User Model state,
+ * confirmed-feedback history, and visual capture; this function sees only the
+ * explicit request assembled at that boundary. */
+export async function generateFeedbackDraft(input: FeedbackDraftRequest): Promise<string | null> {
   if (!isSlotConfigured('feedback-draft')) return null
-  const linkedIds = new Set(input.note.propositionIds)
-  const relevantPropositions = propositions.value
-    .filter((item) => linkedIds.has(item.id))
-    .slice(0, 5)
-  const previousFeedback = relevantConfirmedFeedback(input.note)
   const prompt = renderFeedbackDraftPrompt({
     note: input.note,
     selection: input.selection,
-    propositions: relevantPropositions,
-    previousFeedback,
+    propositions: input.propositions,
+    previousFeedback: input.previousFeedback,
     hasOverviewImage: input.overviewImage !== undefined,
     hasAnnotatedImage: input.annotatedImage !== undefined
   })

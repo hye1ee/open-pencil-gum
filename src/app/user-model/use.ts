@@ -4,16 +4,16 @@ import {
   logUserModelFeedback,
   logUserModelStage
 } from '@/app/ai/chat/agent-log'
-import { agentTurn } from '@/app/ai/chat/agent-turn'
-import { userEditsSince } from '@/app/ai/chat/user-edits'
-import { getToolLogEntries } from '@/app/ai/tools'
-import { canBuildUserModel, modelCalls } from '@/app/user-model/calls'
+import {
+  canBuildUserModel,
+  canUpdateUserModelFromFeedback,
+  modelCalls
+} from '@/app/user-model/calls'
+import { hydrateMissingPropositionEmbeddings } from '@/app/user-model/embeddings'
 import { userModelFixtureEnabled } from '@/app/user-model/fixture'
 import {
   createUserModel,
-  type SavedProposition,
   type UserModel,
-  type UserModelDeps,
   type UserModelFeedbackBatch
 } from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
@@ -23,37 +23,6 @@ import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user
  * and where the propositions are kept. `pipeline.ts` knows none of it. */
 
 export { canBuildUserModel }
-
-/** A frame's worth of tool history; the capture cadence is five seconds. */
-const NOTE_WINDOW_MS = 6000
-
-/** Who was acting, which a screenshot cannot show. Both sides are reported: the
- * agent builds over many steps and the user can edit throughout. */
-export function frameNote(): string | undefined {
-  const since = Date.now() - NOTE_WINDOW_MS
-  const edits = userEditsSince(since)
-  if (!agentTurn.running && edits.length === 0) return undefined
-
-  const parts: string[] = []
-  if (agentTurn.running) {
-    const tools = [
-      ...new Set(
-        getToolLogEntries()
-          .filter((entry) => entry.mutates && entry.timestamp >= since)
-          .map((entry) => entry.tool)
-      )
-    ]
-    parts.push(
-      tools.length === 0
-        ? "An AI agent is carrying out the user's request."
-        : `An AI agent is carrying out the user's request, changing the canvas with: ${tools.join(', ')}.`
-    )
-  }
-  if (edits.length > 0) {
-    parts.push(`Meanwhile the user edited the canvas by hand:\n${edits.join('\n')}`)
-  }
-  return parts.join('\n')
-}
 
 /** One instance only: two would both write the same file and the second's saves
  * would undo the first's. Built on demand, since feedback outlives capture. */
@@ -77,7 +46,7 @@ async function enqueueObservation(observe: () => Promise<void>): Promise<void> {
 }
 
 export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promise<void> {
-  if (batch.notes.length === 0 || !canBuildUserModel()) return
+  if (batch.notes.length === 0 || !canUpdateUserModelFromFeedback()) return
   current ??= createPropositionSink('feedback-notes')
   const explicit = batch.notes.filter((note) => note.resolution === 'explicit-feedback').length
   const items = batch.notes.reduce((sum, note) => sum + note.feedbackItems.length, 0)
@@ -179,7 +148,7 @@ export function createPropositionSink(sessionId: string): UserModel {
     let hydrated = saved
     if (userModelFixtureEnabled) {
       try {
-        hydrated = await hydrateFixtureEmbeddings(saved, deps.embed)
+        hydrated = await hydrateMissingPropositionEmbeddings(saved, (texts) => deps.embed(texts))
       } catch (error) {
         noteError(error)
       }
@@ -191,21 +160,6 @@ export function createPropositionSink(sessionId: string): UserModel {
 
   current = model
   return model
-}
-
-async function hydrateFixtureEmbeddings(
-  saved: SavedProposition[],
-  embed: UserModelDeps['embed']
-): Promise<SavedProposition[]> {
-  const vectors = await embed(saved.map((proposition) => proposition.text))
-  return saved.map((proposition, index) => {
-    const embedding = vectors.at(index) ?? []
-    return {
-      ...proposition,
-      embedding,
-      originalEmbedding: [...embedding]
-    }
-  })
 }
 
 export { clearSaved }

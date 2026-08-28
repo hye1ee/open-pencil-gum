@@ -7,7 +7,7 @@ import type { ConversationToolId } from '@/app/conversation/settings'
 import type { ChatTurnGate } from '@/app/meta-agent-chat/gate'
 import { withChatModelTrace } from '@/app/meta-agent-chat/model-trace'
 import type { ChatReasoningObserver } from '@/app/meta-agent-chat/types'
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import type { Proposition } from '@/app/user-model/pipeline'
 
 interface ConversationTransportOptions {
   apiKey: string
@@ -17,12 +17,12 @@ interface ConversationTransportOptions {
   awaitReasoningReviews: boolean
   isSilentRevision(): boolean
   gate: ChatTurnGate
-  getPropositions(): readonly ChatProposition[]
+  getPropositions(): readonly Proposition[]
   takeRevisionFeedback(): string | null
   onActions(actions: string[]): void
 }
 
-function preferenceInstructions(propositions: readonly ChatProposition[]): string {
+function preferenceInstructions(propositions: readonly Proposition[]): string {
   if (propositions.length === 0) return ''
   const lines = propositions
     .filter((item) => item.confidence >= 0.35)

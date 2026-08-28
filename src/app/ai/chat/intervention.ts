@@ -1,6 +1,5 @@
 import type { SceneNode } from '@open-pencil/scene-graph'
 
-import { recordUserEdit } from '@/app/ai/chat/user-edits'
 import type { EditorStore } from '@/app/editor/active-store'
 
 /**
@@ -364,10 +363,7 @@ export function beginAgentMutation(store: EditorStore): void {
   if (store.state.sceneVersion === state.baselineVersion) return
   const current = store.snapshotPage()
   const diff = computeUserDiff(state.baseline, current, state)
-  if (diff) {
-    state.pending.push(diff)
-    recordUserEdit(diff)
-  }
+  if (diff) state.pending.push(diff)
   setBaseline(state, current, store.state.sceneVersion)
 }
 
@@ -424,7 +420,6 @@ export function createInterventionTracker(store: EditorStore): InterventionTrack
       if (store.state.sceneVersion !== state.baselineVersion) {
         const current = store.snapshotPage()
         boundaryDiff = computeUserDiff(state.baseline, current, state)
-        if (boundaryDiff) recordUserEdit(boundaryDiff)
         setBaseline(state, current, store.state.sceneVersion)
       }
       const parts = [...state.pending, boundaryDiff].filter((d): d is string => !!d)

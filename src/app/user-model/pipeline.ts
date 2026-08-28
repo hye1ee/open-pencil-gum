@@ -82,13 +82,7 @@ export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback'
 
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
-  propose(input: {
-    system: string
-    images: Blob[]
-    instruction: string
-    /** What else was happening while these frames were taken, if anything. */
-    context: string[]
-  }): Promise<string>
+  propose(input: { system: string; images: Blob[]; instruction: string }): Promise<string>
   /** Text call. Returns the model's raw text. */
   revise(input: { system: string; prompt: string; purpose: RevisionPurpose }): Promise<string>
   /** One request for all the texts, in order. */
@@ -221,9 +215,6 @@ export type PipelineStage = 'idle' | 'proposing' | 'revising' | 'reasoning'
 export interface FrameMeta {
   /** Supplying it lets an unchanged batch be dropped before any model call. */
   greyscaleThumbnail?: Uint8Array
-  /** Above all, who was driving: a screenshot cannot tell "the user did this"
-   * from "the user watched this happen". */
-  note?: string
 }
 
 export interface UserModel {
@@ -524,7 +515,6 @@ export function createUserModel(options: UserModelOptions): UserModel {
   let propositions: Proposition[] = []
   let buffer: Blob[] = []
   let thumbnails: Uint8Array[] = []
-  let notes: string[] = []
   /** Thumbnail of the last frame we actually spent a model call on. */
   let lastFrameReasonedAbout: Uint8Array | null = null
   /** One batch at a time: revisions mutate the same set, so they cannot race. */
@@ -689,7 +679,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     await reEmbed(changed)
   }
 
-  async function run(frames: Blob[], context: string[]): Promise<void> {
+  async function run(frames: Blob[]): Promise<void> {
     running = true
     try {
       stage('proposing')
@@ -697,8 +687,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
         await deps.propose({
           system: PROPOSE_SYSTEM,
           images: frames,
-          instruction: PROPOSE_INSTRUCTION,
-          context
+          instruction: PROPOSE_INSTRUCTION
         })
       )
       if (candidates.length > 0) await revise(candidates)
@@ -823,30 +812,24 @@ export function createUserModel(options: UserModelOptions): UserModel {
       propositions = []
       buffer = []
       thumbnails = []
-      notes = []
       lastFrameReasonedAbout = null
     },
 
     addFrame(frame, meta) {
       buffer.push(frame)
       if (meta?.greyscaleThumbnail) thumbnails.push(meta.greyscaleThumbnail)
-      if (meta?.note) notes.push(meta.note)
       if (buffer.length < batchSize) return
       if (running) {
         // Falling behind should cost history, not memory.
         buffer = buffer.slice(-batchSize)
         thumbnails = thumbnails.slice(-batchSize)
-        notes = notes.slice(-batchSize)
         return
       }
 
       const batch = buffer
       const batchThumbnails = thumbnails
-      // The same note repeats across a batch, so only distinct ones carry meaning.
-      const batchNotes = [...new Set(notes)]
       buffer = []
       thumbnails = []
-      notes = []
 
       // Partly-covered batches are not evidence of stillness.
       const pixelChange =
@@ -860,7 +843,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
         return
       }
       lastFrameReasonedAbout = batchThumbnails.at(-1) ?? lastFrameReasonedAbout
-      const task = run(batch, batchNotes)
+      const task = run(batch)
       frameRun = task
       void task.finally(() => {
         if (frameRun === task) frameRun = null

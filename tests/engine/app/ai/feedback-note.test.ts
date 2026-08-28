@@ -21,11 +21,7 @@ import {
 } from '@/app/feedback-note/code-visual/svg'
 import { CODE_VISUAL_TOOLS } from '@/app/feedback-note/code-visual/tools'
 import { codeVisualToolName } from '@/app/feedback-note/code-visual/use'
-import {
-  relevantConfirmedFeedback,
-  rememberConfirmedFeedback,
-  resetConfirmedFeedbackHistory
-} from '@/app/feedback-note/draft/history'
+import { createConfirmedFeedbackHistory } from '@/app/feedback-note/draft/history'
 import { FEEDBACK_DRAFT_SYSTEM, renderFeedbackDraftPrompt } from '@/app/feedback-note/draft/prompt'
 import { buildFeedbackNoteImagePrompt } from '@/app/feedback-note/image'
 import { readFeedbackNote } from '@/app/feedback-note/parse'
@@ -143,7 +139,7 @@ describe('interactive feedback note', () => {
   })
 
   test('retrieves confirmed feedback with its note context', () => {
-    resetConfirmedFeedbackHistory()
+    const history = createConfirmedFeedbackHistory()
     const note = {
       id: 'draft-note',
       originStep: 1,
@@ -158,22 +154,23 @@ describe('interactive feedback note', () => {
       evidenceFromReasoning: 'I will reduce the gaps.',
       propositionIds: ['compact-layout']
     }
-    rememberConfirmedFeedback(
+    history.remember(
       note,
       { type: 'text', text: 'compact', source: 'cue', start: 23, end: 30 },
       'Keep the groups distinguishable.'
     )
-    const previous = relevantConfirmedFeedback(note)
+    const previous = history.relevant(note)
     expect(previous).toHaveLength(1)
     expect(previous[0]?.noteContext.reasoningEvidence).toBe('I will reduce the gaps.')
     expect(previous[0]?.feedback).toBe('Keep the groups distinguishable.')
+    expect(createConfirmedFeedbackHistory().relevant(note)).toEqual([])
     const prompt = renderFeedbackDraftPrompt({
       note,
       selection: { type: 'text', text: 'compact', source: 'cue', start: 23, end: 30 },
       propositions: [],
       previousFeedback: previous,
       hasOverviewImage: false,
-      hasSelectionImage: false
+      hasAnnotatedImage: false
     })
     expect(prompt).toContain('Note context: The cards are becoming compact.')
     expect(prompt).toContain('Confirmed feedback: Keep the groups distinguishable.')

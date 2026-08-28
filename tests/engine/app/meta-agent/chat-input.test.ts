@@ -10,7 +10,7 @@ import {
   buildLenChatFeedbackNoteInput,
   summarizeLenChatConversation
 } from '@/app/meta-agent/hosts/lenchat/input'
-import type { ChatProposition } from '@/app/user-model-chat/types'
+import type { Proposition } from '@/app/user-model/pipeline'
 
 const messages: UIMessage[] = [
   { id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Compare these approaches.' }] },
@@ -22,7 +22,7 @@ const messages: UIMessage[] = [
   { id: 'assistant-tool', role: 'assistant', parts: [] }
 ]
 
-function proposition(id: string, confidence: number): ChatProposition {
+function proposition(id: string, confidence: number): Proposition {
   return {
     id,
     text: `Preference ${id}`,
