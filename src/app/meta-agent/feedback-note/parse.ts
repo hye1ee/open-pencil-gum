@@ -50,6 +50,38 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+const MARKDOWN_DECORATION_CHARACTERS = new Set(['*', '_', '`', '~'])
+
+function recoverExactReasoningEvidence(reasoning: string, evidence: string): string {
+  if (!evidence) return ''
+  if (reasoning.includes(evidence)) return evidence
+
+  const normalizedEvidence = [...evidence]
+    .filter((character) => !MARKDOWN_DECORATION_CHARACTERS.has(character))
+    .join('')
+  if (!normalizedEvidence) return ''
+
+  const normalizedReasoningCharacters: string[] = []
+  const reasoningOffsets: number[] = []
+  let offset = 0
+  for (const character of reasoning) {
+    if (!MARKDOWN_DECORATION_CHARACTERS.has(character)) {
+      normalizedReasoningCharacters.push(character)
+      reasoningOffsets.push(offset)
+    }
+    offset += character.length
+  }
+
+  const normalizedReasoning = normalizedReasoningCharacters.join('')
+  const normalizedStart = normalizedReasoning.indexOf(normalizedEvidence)
+  if (normalizedStart < 0) return ''
+  const normalizedEnd = normalizedStart + normalizedEvidence.length - 1
+  const originalStart = reasoningOffsets[normalizedStart]
+  const originalEnd = reasoningOffsets[normalizedEnd]
+  if (originalStart === undefined || originalEnd === undefined) return ''
+  return reasoning.slice(originalStart, originalEnd + 1)
+}
+
 function readCodeVisualType(value: unknown): FeedbackNoteCodeVisualType | null {
   if (
     value === 'artifact' ||
@@ -188,9 +220,8 @@ function readCueSegments(input: {
     if (row.source === 'reasoning') {
       const evidenceQuote = readString(row.evidence_quote)
       const exactEvidence =
-        evidenceQuote && input.reasoning.includes(evidenceQuote)
-          ? evidenceQuote
-          : input.fallbackReasoningEvidence
+        recoverExactReasoningEvidence(input.reasoning, evidenceQuote) ||
+        input.fallbackReasoningEvidence
       if (!exactEvidence) {
         return input.reject(
           `cue_segments[${index}] reasoning evidence is not an exact reasoning substring`
@@ -272,8 +303,7 @@ export function readFeedbackNote(input: {
     )
   }
   const requestedEvidence = readString(row.evidence_from_reasoning)
-  const exactRequestedEvidence =
-    requestedEvidence && input.reasoning.includes(requestedEvidence) ? requestedEvidence : ''
+  const exactRequestedEvidence = recoverExactReasoningEvidence(input.reasoning, requestedEvidence)
   const cueSegments = readCueSegments({
     value: row.cue_segments,
     relation: input.relation,

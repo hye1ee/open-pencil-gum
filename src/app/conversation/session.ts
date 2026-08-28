@@ -78,6 +78,7 @@ export class ConversationStore {
   private revisionFeedback: string | null = null
   private revisionRun = 0
   private revisionPending = false
+  private activeChatRequest: Promise<void> | null = null
   private preferenceUpdate: Promise<void> = Promise.resolve()
   private resetMetaAgentMonitor: () => void = () => undefined
   private feedbackNoteHistory: FeedbackNoteHistoryItem[] = []
@@ -151,7 +152,7 @@ export class ConversationStore {
       role: 'user',
       parts: [{ type: 'text', text: clean }]
     }
-    const response = chat.sendMessage(userMessage)
+    const response = this.trackChatRequest(chat.sendMessage(userMessage))
     // Passing a complete UIMessage lets Chat append it before starting the
     // request. Save it now so Recent survives failed or interrupted generation.
     await this.checkpoint([...chat.messages])
@@ -358,6 +359,14 @@ export class ConversationStore {
     }
   }
 
+  private trackChatRequest(request: Promise<void>): Promise<void> {
+    const tracked = request.finally(() => {
+      if (this.activeChatRequest === tracked) this.activeChatRequest = null
+    })
+    this.activeChatRequest = tracked
+    return tracked
+  }
+
   private async learn(note: ConversationFeedbackNote): Promise<void> {
     if (!canUpdateUserModelFromFeedback()) return
     this.learning.value = true
@@ -503,6 +512,8 @@ export class ConversationStore {
 
     const chat = this.chatRef.value
     if (!chat) return
+    const requestMessage = [...chat.messages].reverse().find((message) => message.role === 'user')
+    if (!requestMessage) return
     this.revisionPending = true
     const handoffRun = this.revisionRun
     logChatFeedbackLifecycle(
@@ -527,18 +538,31 @@ export class ConversationStore {
       )
       .join('\n')
     logChatFeedbackLifecycle('retry', `discarding first run; feedback-notes=${explicit.length}`)
+    const firstRequest = this.activeChatRequest
     this.gate.abandon()
     this.resetMetaAgentMonitor()
     await chat.stop()
+    await firstRequest?.catch(() => undefined)
     if (this.chatRef.value !== chat || this.revisionRun !== revisionRun) return
     this.actions.value = []
     this.reasoningChunks.value = []
     this.feedbackNotes.value = []
+    let revisedAnswerLength = 0
     try {
-      await chat.regenerate()
+      await this.trackChatRequest(chat.regenerate({ messageId: requestMessage.id }))
+      const revisedAnswer = [...chat.messages]
+        .reverse()
+        .find((message) => message.role === 'assistant')
+      revisedAnswerLength = revisedAnswer ? messageText(revisedAnswer).length : 0
+      if (!chat.error && revisedAnswerLength === 0) {
+        this.lastError.value = 'The revised response was empty. Please try again.'
+      }
     } finally {
       if (this.revisionRun === revisionRun) {
-        logChatFeedbackLifecycle('retry-complete', 'silent retry finished')
+        logChatFeedbackLifecycle(
+          'retry-complete',
+          `silent retry finished; status=${chat.status} answer=${revisedAnswerLength} chars`
+        )
         this.revising.value = false
         this.revisionPending = false
       }

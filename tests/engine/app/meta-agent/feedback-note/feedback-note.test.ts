@@ -438,6 +438,48 @@ describe('interactive feedback note', () => {
     })
   })
 
+  test('accepts reasoning evidence that omits markdown decoration', () => {
+    const reasoning =
+      "I've identified *kalguksu*, knife-cut noodles, as a key example for Daejeon."
+    const plainEvidence =
+      "I've identified kalguksu, knife-cut noodles, as a key example for Daejeon."
+    const note = readFeedbackNote({
+      id: 'n-markdown-anchor',
+      value: {
+        topic: 'daejeon-representative-foods',
+        representation_type: 'text',
+        code_visual_type: null,
+        code_visual_brief: null,
+        image_type: null,
+        image_prompt: null,
+        representation_goal: 'Confirm which representative foods should lead the answer.',
+        cue_segments: [
+          {
+            text: 'Kalguksu leads the Daejeon food recommendations.',
+            source: 'reasoning',
+            evidence_quote: plainEvidence,
+            proposition_id: null
+          }
+        ],
+        node_id: null,
+        evidence_from_reasoning: plainEvidence,
+        proposition_ids: []
+      },
+      relation: 'uncovered',
+      reasoning,
+      propositions: [],
+      originStep: 1,
+      originChunk: 1
+    })
+
+    expect(note?.cueSegments[0]).toEqual({
+      text: 'Kalguksu leads the Daejeon food recommendations.',
+      source: 'reasoning',
+      evidenceQuote: reasoning
+    })
+    expect(note?.evidenceFromReasoning).toBe(reasoning)
+  })
+
   test('puts representation history and reasoning in the prompt', () => {
     const prompt = renderFeedbackNotePrompt({
       request: 'Make a dashboard',
