@@ -4,9 +4,9 @@ import type { ChatTransport, ModelMessage, UIMessage } from 'ai'
 
 import { CHAT_TASK_SYSTEM } from '@/app/conversation/prompt'
 import type { ConversationToolId } from '@/app/conversation/settings'
-import type { ChatTurnGate } from '@/app/meta-agent-chat/gate'
-import { withChatModelTrace } from '@/app/meta-agent-chat/model-trace'
-import type { ChatReasoningObserver } from '@/app/meta-agent-chat/types'
+import type { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
+import { withChatModelTrace } from '@/app/meta-agent/hosts/lenchat/model-trace'
+import type { ChatReasoningObserver } from '@/app/meta-agent/hosts/lenchat/types'
 import type { Proposition } from '@/app/user-model/pipeline'
 
 interface ConversationTransportOptions {

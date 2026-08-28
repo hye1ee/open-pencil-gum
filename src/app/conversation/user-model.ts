@@ -1,5 +1,5 @@
 import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
-import { copyFeedbackSelection } from '@/app/feedback-note/draft/selection'
+import { copyFeedbackSelection } from '@/app/meta-agent/feedback-note/draft/selection'
 import type { UserModelFeedbackBatch } from '@/app/user-model/pipeline'
 
 /** Converts LenChat feedback items at the host boundary while preserving the

@@ -11,21 +11,21 @@ import { abandonTurn, agentTurn, resumeTurn, setTurnRunning } from '@/app/ai/cha
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { withoutDanglingToolCalls } from '@/app/ai/chat/transcript'
 import { copyChatLog } from '@/app/ai/debug'
-import { renderStepFeedbackReport } from '@/app/feedback-note/report'
-import { userModelFeedbackBatch } from '@/app/feedback-note/user-model'
+import { renderStepFeedbackReport } from '@/app/meta-agent/hosts/lencanvas/feedback-note/report'
+import { userModelFeedbackBatch } from '@/app/meta-agent/hosts/lencanvas/feedback-note/user-model'
 import {
   beginFeedbackReplay,
   hasExplicitStepFeedback,
   setStepFeedbackHandler,
   type StepFeedbackResult
-} from '@/app/feedback-note/session'
+} from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
 import {
   clearToolLogEntries,
   continueRunSteps,
   currentRunStepNumber,
   didHitStepLimit
 } from '@/app/ai/tools'
-import { currentMetaRequest } from '@/app/meta-agent/use'
+import { currentMetaRequest } from '@/app/meta-agent/hosts/lencanvas/use'
 import { observeFeedbackNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { activeTab } from '@/app/tabs'

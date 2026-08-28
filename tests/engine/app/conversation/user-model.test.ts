@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
 import { conversationFeedbackBatch } from '@/app/conversation/user-model'
-import { lenChatFeedbackNote } from '@/app/feedback-note/hosts/lenchat/note'
+import { lenChatFeedbackNote } from '@/app/meta-agent/hosts/lenchat/feedback-note/note'
 
 function note(feedbackItems: ConversationFeedbackItem[]): ConversationFeedbackNote {
   return {

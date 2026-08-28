@@ -48,9 +48,9 @@ import {
   resetRunSteps
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
-import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/feedback-note/session'
-import { noteAgentPlan } from '@/app/meta-agent/events'
-import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/use'
+import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
+import { noteAgentPlan } from '@/app/meta-agent/hosts/lencanvas/events'
+import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/hosts/lencanvas/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
