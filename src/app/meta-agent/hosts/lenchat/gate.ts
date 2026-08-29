@@ -6,6 +6,8 @@ export class ChatTurnGate {
   private resolver: ((resume: boolean) => void) | null = null
   private result: Promise<boolean> | null = null
 
+  constructor(private readonly reviewReasoningDeltas = false) {}
+
   hold(): void {
     if (this.blocked) return
     this.blocked = true
@@ -15,9 +17,12 @@ export class ChatTurnGate {
   }
 
   async awaitResume(point: ChatGatePoint): Promise<boolean> {
-    // Reasoning must remain visible in real time. Only the action or final
-    // response derived from it waits for all review cards to be resolved.
-    if (point !== 'mid-thought' && this.blocked && this.result && !(await this.result)) {
+    if (point === 'mid-thought' && !this.reviewReasoningDeltas) return true
+
+    // User-Initiated LenChat reviews each reasoning delta before revealing the
+    // next one. Every condition still gates actions and final responses when a
+    // host explicitly holds the turn.
+    if (this.blocked && this.result && !(await this.result)) {
       return false
     }
     return point === 'mid-thought' || !this.abandonAtCommit

@@ -39,6 +39,9 @@ let lastScrollTop = 0
 const lastAssistantId = computed(
   () => [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null
 )
+const lastUserId = computed(
+  () => [...messages].reverse().find((message) => message.role === 'user')?.id ?? null
+)
 
 function notesAfter(message: UIMessage): ConversationFeedbackNote[] {
   if (message.role !== 'assistant') return []
@@ -182,20 +185,6 @@ watch(
     </div>
     <div v-else class="pb-4">
       <template v-for="message in messages" :key="message.id">
-        <section
-          v-if="reasoningReviews.length > 0 && message.id === lastAssistantId"
-          class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
-          aria-label="Reasoning reviews"
-        >
-          <ReasoningReviewCard
-            v-for="review in reasoningReviews"
-            :key="review.id"
-            :review="review"
-            :disabled="revising"
-            @continue="emit('continueReasoning', $event)"
-            @feedback="relayReasoningFeedback"
-          />
-        </section>
         <MessageBubble
           :message="message"
           :active="status === 'streaming' && message.id === messages.at(-1)?.id"
@@ -271,21 +260,21 @@ watch(
             </section>
           </template>
         </MessageBubble>
+        <section
+          v-if="reasoningReviews.length > 0 && message.id === lastUserId"
+          class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
+          aria-label="Reasoning reviews"
+        >
+          <ReasoningReviewCard
+            v-for="review in reasoningReviews"
+            :key="review.id"
+            :review="review"
+            :disabled="revising"
+            @continue="emit('continueReasoning', $event)"
+            @feedback="relayReasoningFeedback"
+          />
+        </section>
       </template>
-      <section
-        v-if="reasoningReviews.length > 0 && lastAssistantId === null"
-        class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
-        aria-label="Reasoning reviews"
-      >
-        <ReasoningReviewCard
-          v-for="review in reasoningReviews"
-          :key="review.id"
-          :review="review"
-          :disabled="revising"
-          @continue="emit('continueReasoning', $event)"
-          @feedback="relayReasoningFeedback"
-        />
-      </section>
       <div
         v-if="status === 'submitted' || (revising && status === 'ready')"
         :data-test-id="revising ? 'conversation-revision-pending' : 'conversation-request-pending'"
