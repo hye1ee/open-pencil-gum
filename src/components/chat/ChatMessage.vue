@@ -7,7 +7,10 @@ import 'vue-stream-markdown/index.css'
 
 import type { UIDataTypes, UIMessage, UIMessagePart, UITools } from 'ai'
 
-const { message } = defineProps<{ message: UIMessage }>()
+const { message, variant = 'default' } = defineProps<{
+  message: UIMessage
+  variant?: 'default' | 'additional-feedback'
+}>()
 
 type ToolPart = Extract<UIMessagePart<UIDataTypes, UITools>, { toolCallId: string }>
 
@@ -115,7 +118,12 @@ function partKey(part: UIMessagePart<UIDataTypes, UITools>, index: number): stri
       <div
         v-else-if="message.role === 'user'"
         data-test-id="chat-text-bubble"
-        class="rounded-xl rounded-br-md bg-accent px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap text-white"
+        class="rounded-xl rounded-br-md border px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
+        :class="
+          variant === 'additional-feedback'
+            ? 'border-accent/20 bg-accent/10 text-accent'
+            : 'border-transparent bg-accent text-white'
+        "
       >
         {{
           message.parts

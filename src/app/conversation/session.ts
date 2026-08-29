@@ -1,17 +1,19 @@
 import { Chat } from '@ai-sdk/vue'
-import { isTextUIPart } from 'ai'
 import type { ChatStatus, UIMessage } from 'ai'
 import { computed, markRaw, ref, shallowRef } from 'vue'
 
 import {
   logFeedbackNoteCode,
   logFeedbackNoteImage,
+  logAskUserLifecycle,
   logChatFeedbackLifecycle,
+  logChatToolActions,
   logMetaAgentLifecycle,
   logRunStart,
   logStudyRuntime,
   logUserModelFeedback
 } from '@/app/ai/chat/agent-log'
+import { lastUserRequest, messageText, titleFrom } from '@/app/conversation/message'
 import type { ConversationToolId } from '@/app/conversation/settings'
 import {
   deleteConversation,
@@ -27,6 +29,7 @@ import type {
   ConversationRecord
 } from '@/app/conversation/types'
 import { conversationFeedbackBatch } from '@/app/conversation/user-model'
+import { NOOP_REASONING_OBSERVER } from '@/app/meta-agent/core/reasoning-observer'
 import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/meta-agent/core/types'
 import {
   copyFeedbackSelection,
@@ -36,6 +39,8 @@ import { FEEDBACK_NOTE_REPRESENTATION_PROVIDER } from '@/app/meta-agent/feedback
 import { lenChatFeedbackHistory } from '@/app/meta-agent/hosts/lenchat/feedback-note/history'
 import { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
+import { AskUserSession, formatAskUserLifecycleEvent } from '@/app/study/ask-user'
+import type { AskUserQuestion } from '@/app/study/ask-user'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import { canUpdateUserModelFromFeedback } from '@/app/user-model/calls'
 import { propositions as sharedPropositions } from '@/app/user-model/store'
@@ -52,30 +57,9 @@ interface ConversationStoreOptions {
   runtime(): StudyRuntimeConfig
 }
 
-function messageText(message: UIMessage): string {
-  return message.parts
-    .filter(isTextUIPart)
-    .map((part) => part.text)
-    .join(' ')
-    .trim()
-}
-
-function titleFrom(messages: readonly UIMessage[]): string {
-  const first = messages.find((message) => message.role === 'user')
-  const text = first ? messageText(first) : ''
-  return text ? text.slice(0, 52) : 'New chat'
-}
-
-function lastUserRequest(messages: readonly UIMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    if (message.role === 'user') return messageText(message)
-  }
-  return ''
-}
-
 export class ConversationStore {
   private readonly options: ConversationStoreOptions
+  private readonly askUserSession: AskUserSession
   private readonly chatRef = shallowRef<Chat<UIMessage> | null>(null)
   private gate = new ChatTurnGate()
   private revisionFeedback: string | null = null
@@ -98,6 +82,7 @@ export class ConversationStore {
   readonly revising = ref(false)
   readonly actions = ref<string[]>([])
   readonly reasoningChunks = shallowRef<ConversationReasoningChunk[]>([])
+  readonly askUserQuestion = shallowRef<AskUserQuestion | null>(null)
   readonly lastError = ref('')
 
   readonly messages = computed(() => this.chatRef.value?.messages ?? [])
@@ -113,6 +98,12 @@ export class ConversationStore {
 
   constructor(options: ConversationStoreOptions) {
     this.options = options
+    this.askUserSession = new AskUserSession({
+      onEvent: (event) => logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+    })
+    this.askUserSession.subscribe((snapshot) => {
+      this.askUserQuestion.value = snapshot.pendingQuestion
+    })
   }
 
   async initialize(): Promise<void> {
@@ -146,9 +137,11 @@ export class ConversationStore {
     this.resetMetaAgentMonitor()
     logRunStart(clean)
     const runtime = this.options.runtime()
+    const enabledTools = this.options.enabledTools()
+    const activeTools = [...enabledTools, ...(runtime.askUserEnabled ? ['ask_user'] : [])]
     logStudyRuntime(runtime.host, runtime.condition)
     logMetaAgentLifecycle(
-      `host=LenChat condition=${runtime.condition} mode=interactive-gate propositions=${this.propositions.value.length}`
+      `host=LenChat condition=${runtime.condition} mode=${runtime.metaAgentEnabled ? 'interactive-gate' : 'disabled'} propositions=${this.propositions.value.length} tools=${activeTools.join(',') || 'none'}`
     )
     const chat = this.chatRef.value
     if (!chat) return
@@ -157,6 +150,8 @@ export class ConversationStore {
       role: 'user',
       parts: [{ type: 'text', text: clean }]
     }
+    if (runtime.askUserEnabled) this.askUserSession.beginRequest(userMessage.id)
+    else this.askUserSession.endRequest('condition-disabled')
     const response = this.trackChatRequest(chat.sendMessage(userMessage))
     // Passing a complete UIMessage lets Chat append it before starting the
     // request. Save it now so Recent survives failed or interrupted generation.
@@ -171,7 +166,13 @@ export class ConversationStore {
     this.revisionPending = false
     this.revising.value = false
     this.resetMetaAgentMonitor()
-    await this.chatRef.value?.stop()
+    const stopping = this.chatRef.value?.stop()
+    this.askUserSession.endRequest('request-stopped')
+    await stopping
+  }
+
+  answerAskUser(answer: string, selectedOption: string | null = null): boolean {
+    return this.askUserSession.answer(answer, selectedOption)
   }
 
   continueFromFeedback(noteId: string): void {
@@ -220,6 +221,7 @@ export class ConversationStore {
 
   async newChat(): Promise<void> {
     if (this.running.value) await this.stop()
+    else this.askUserSession.endRequest('new-chat')
     this.currentId.value = crypto.randomUUID()
     this.createdAt = Date.now()
     this.feedbackNotes.value = []
@@ -233,6 +235,7 @@ export class ConversationStore {
 
   async openConversation(id: string): Promise<void> {
     if (this.running.value) await this.stop()
+    else this.askUserSession.endRequest('conversation-opened')
     const record = await loadConversation(id)
     if (!record) return
     this.currentId.value = record.id
@@ -278,6 +281,7 @@ export class ConversationStore {
   }
 
   private buildChat(messages: UIMessage[]): void {
+    this.askUserSession.endRequest('chat-reconfigured')
     this.feedbackNotes.value = []
     this.revisionPending = true
     this.resetMetaAgentMonitor()
@@ -287,37 +291,44 @@ export class ConversationStore {
     this.revising.value = false
     this.gate.abandon()
     this.gate = new ChatTurnGate()
-    const monitor = createChatMonitor({
-      getContext: () => ({
-        messages: this.messages.value,
-        request: lastUserRequest(this.messages.value),
-        propositions: this.propositions.value,
-        completedActions: this.actions.value,
-        previousNotes: this.feedbackNoteHistory
-      }),
-      onReasoningChunk: (streamId, chunkIndex, text) => {
-        this.reasoningChunks.value = [...this.reasoningChunks.value, { streamId, chunkIndex, text }]
-      },
-      onActivity: (active) => {
-        this.monitorActive.value = active
-        if (!active) void this.finishFeedbackReview()
-      },
-      onReviewActivity: (active) => {
-        this.feedbackGenerating.value = active
-      },
-      onNote: (note) => {
-        this.gate.hold()
-        this.addFeedbackNote(note)
-      }
-    })
-    this.resetMetaAgentMonitor = monitor.reset
+    const runtime = this.options.runtime()
+    const monitor = runtime.metaAgentEnabled
+      ? createChatMonitor({
+          getContext: () => ({
+            messages: this.messages.value,
+            request: lastUserRequest(this.messages.value),
+            propositions: this.propositions.value,
+            completedActions: this.actions.value,
+            previousNotes: this.feedbackNoteHistory
+          }),
+          onReasoningChunk: (streamId, chunkIndex, text) => {
+            this.reasoningChunks.value = [
+              ...this.reasoningChunks.value,
+              { streamId, chunkIndex, text }
+            ]
+          },
+          onActivity: (active) => {
+            this.monitorActive.value = active
+            if (!active) void this.finishFeedbackReview()
+          },
+          onReviewActivity: (active) => {
+            this.feedbackGenerating.value = active
+          },
+          onNote: (note) => {
+            this.gate.hold()
+            this.addFeedbackNote(note)
+          }
+        })
+      : null
+    this.resetMetaAgentMonitor = monitor ? () => monitor.reset() : () => undefined
     const transport = createConversationTransport({
       apiKey: this.options.apiKey(),
       modelId: this.options.modelId(),
       enabledTools: this.options.enabledTools(),
-      runtime: this.options.runtime(),
-      observer: monitor.observer,
-      awaitReasoningReviews: true,
+      runtime,
+      askUserSession: this.askUserSession,
+      observer: monitor?.observer ?? NOOP_REASONING_OBSERVER,
+      awaitReasoningReviews: runtime.metaAgentEnabled,
       isSilentRevision: () => this.revising.value,
       gate: this.gate,
       getPropositions: () => this.propositions.value,
@@ -328,6 +339,7 @@ export class ConversationStore {
       },
       onActions: (actions) => {
         this.actions.value = [...this.actions.value, ...actions].slice(-12)
+        logChatToolActions(actions)
       }
     })
 
@@ -337,9 +349,15 @@ export class ConversationStore {
         messages,
         transport,
         onError: (error) => {
+          this.askUserSession.endRequest('request-error')
           this.lastError.value = error.message
         },
         onFinish: (event) => {
+          this.askUserSession.endRequest(
+            event.isAbort || event.isDisconnect || event.isError
+              ? 'request-interrupted'
+              : 'request-finished'
+          )
           if (event.isAbort || event.isDisconnect || event.isError) return
           void this.checkpoint(event.messages)
         }
@@ -374,7 +392,7 @@ export class ConversationStore {
   }
 
   private async learn(note: ConversationFeedbackNote): Promise<void> {
-    if (!canUpdateUserModelFromFeedback()) return
+    if (!this.options.runtime().updateUserModel || !canUpdateUserModelFromFeedback()) return
     this.learning.value = true
     const batch = conversationFeedbackBatch(note, note.feedbackItems)
     logUserModelFeedback(

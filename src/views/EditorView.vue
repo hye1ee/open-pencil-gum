@@ -53,7 +53,7 @@ if (createdInitialTab && route.meta.demo && !('test' in params)) {
 useHead({
   title: route.meta.demo ? 'Demo' : 'LenCanvas',
   titleTemplate: null,
-  link: [{ rel: 'icon', type: 'image/svg+xml', href: '/lencanvas.svg' }]
+  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lencanvas.svg' }]
 })
 useKeyboard()
 useMenu()

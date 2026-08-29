@@ -240,6 +240,15 @@ export function logStudyRuntime(host: string, condition: string): void {
   write('CONDITION', `host=${host} condition=${condition}`)
 }
 
+export function logAskUserLifecycle(detail: string): void {
+  write('ASK-USER', detail)
+}
+
+/** Provider and function tools the LenChat agent actually called in one step. */
+export function logChatToolActions(tools: readonly string[]): void {
+  write('CHAT-TOOL', tools.join(', '))
+}
+
 /** One raw LenChat provider delta sent to the shared Meta Agent. */
 export function logChatMetaAgentReasoning(
   streamId: number,

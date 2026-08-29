@@ -1,9 +1,12 @@
 import { logMetaAgentLifecycle } from '@/app/ai/chat/agent-log'
 import type { EditorStore } from '@/app/editor/active-store'
-import { resetFeedbackNoteHistory, resetFeedbackNotes } from '@/app/meta-agent/hosts/lencanvas/feedback-note/use'
-import { propositionsForRun } from '@/app/meta-agent/hosts/lencanvas/context'
 import type { Proposition } from '@/app/meta-agent/core/types'
+import { propositionsForRun } from '@/app/meta-agent/hosts/lencanvas/context'
 import { currentPlan, noteAgentPlan } from '@/app/meta-agent/hosts/lencanvas/events'
+import {
+  resetFeedbackNoteHistory,
+  resetFeedbackNotes
+} from '@/app/meta-agent/hosts/lencanvas/feedback-note/use'
 import {
   installReasoningObserver,
   resetFeedbackNoteStreams
@@ -15,13 +18,27 @@ import { awaitUserModelSettled } from '@/app/user-model/use'
 let request = ''
 let runPropositions: Proposition[] = []
 let runStore: EditorStore | null = null
+let enabled = true
 
 /** Start one task-agent turn with a stable snapshot of the current user model. */
-export async function startMetaAgentTurn(store: EditorStore, userText: string): Promise<void> {
+export async function startMetaAgentTurn(
+  store: EditorStore,
+  userText: string,
+  metaAgentEnabled = true
+): Promise<void> {
   runStore = store
+  enabled = metaAgentEnabled
   if (userText !== request) resetFeedbackNoteHistory()
   request = userText
   noteAgentPlan(null)
+
+  resetFeedbackNotes()
+  resetFeedbackNoteStreams()
+  if (!enabled) {
+    runPropositions = []
+    logMetaAgentLifecycle('disabled for the active study condition')
+    return
+  }
 
   // A feedback retry may start while its user-model update is still running.
   // Wait so the retried reasoning is compared against the corrected model.
@@ -32,13 +49,11 @@ export async function startMetaAgentTurn(store: EditorStore, userText: string): 
   runPropositions = propositionsForRun(userModel)
   const withheld = runPropositions.filter((proposition) => !proposition.shownToAgent).length
   logMetaAgentLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
-
-  resetFeedbackNotes()
-  resetFeedbackNoteStreams()
 }
 
 // Registered here because the reasoning tap must not import model setup.
 installReasoningObserver({
+  isEnabled: () => enabled,
   getStore: () => runStore,
   getRequest: () => request,
   getPlan: currentPlan,

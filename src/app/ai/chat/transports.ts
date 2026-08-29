@@ -1,6 +1,7 @@
 import { Chat } from '@ai-sdk/vue'
 import { DirectChatTransport, ToolLoopAgent } from 'ai'
 import type { ChatTransport, ImagePart, ModelMessage, UIMessage, UserContent } from 'ai'
+import { shallowRef } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
@@ -9,6 +10,7 @@ import type { ACPAgentID, AIProviderID } from '@open-pencil/core/constants'
 import { showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import {
   logIntervention,
+  logAskUserLifecycle,
   logFeedbackReplay,
   logModelRouting,
   logPlan,
@@ -55,6 +57,13 @@ import {
   currentFeedbackReplayStep
 } from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
 import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/hosts/lencanvas/use'
+import {
+  ASK_USER_AGENT_INSTRUCTIONS,
+  AskUserSession,
+  LENCANVAS_ASK_USER_INSTRUCTIONS,
+  createAskUserTool,
+  formatAskUserLifecycleEvent
+} from '@/app/study/ask-user'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
@@ -78,6 +87,7 @@ type ToolLoopTransportOptions = {
   maxOutputTokens: number
   takeRequest: () => string
   studyRuntime: StudyRuntimeConfig
+  askUserSession: AskUserSession
 }
 
 const ANTHROPIC_CACHE_CONTROL = {
@@ -199,9 +209,13 @@ export function createToolLoopTransport({
   store,
   maxOutputTokens,
   takeRequest,
-  studyRuntime
+  studyRuntime,
+  askUserSession
 }: ToolLoopTransportOptions) {
-  const tools = createAITools(store)
+  const tools = {
+    ...createAITools(store),
+    ...(studyRuntime.askUserEnabled ? { ask_user: createAskUserTool(askUserSession) } : {})
+  }
   const intervention = createInterventionTracker(store)
   const vision = createCanvasVision(store)
   const taskConfig = modelConfigForSlot('task')
@@ -225,9 +239,13 @@ export function createToolLoopTransport({
   // into its own transcript, so it can be re-injected every step.
   let plan: string | null = null
 
+  const conditionInstructions = studyRuntime.askUserEnabled
+    ? `${SYSTEM_PROMPT}\n\n${ASK_USER_AGENT_INSTRUCTIONS}\n\n${LENCANVAS_ASK_USER_INSTRUCTIONS}`
+    : SYSTEM_PROMPT
+
   const agent = new ToolLoopAgent({
     model,
-    instructions: SYSTEM_PROMPT,
+    instructions: conditionInstructions,
     tools,
     // Our own counter, not the SDK's: `stepCountIs` counts steps inside one
     // streaming call, and a build restarted after Feedback Note input is a second
@@ -240,6 +258,8 @@ export function createToolLoopTransport({
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
       const submittedRequest = takeRequest() || lastUserText(sent)
+      if (studyRuntime.askUserEnabled) askUserSession.beginRequest(crypto.randomUUID())
+      else askUserSession.endRequest('condition-disabled')
       // Read before `resetRunSteps`, which consumes the flag. A restart appends
       // to the log rather than truncating it: the half of the build that led to
       // the feedback is the part worth having.
@@ -258,14 +278,14 @@ export function createToolLoopTransport({
       clearUserMessages(store)
       plan = null
       resumeTurn()
-      await startMetaAgentTurn(store, submittedRequest)
+      await startMetaAgentTurn(store, submittedRequest, studyRuntime.metaAgentEnabled)
       const userModelPropositions = renderUserModelPropositions(runUserModel())
       if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       showAgentCursor(store)
       const instructions =
         studyRuntime.taskAgentUsesUserModel && userModelPropositions
-          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
-          : SYSTEM_PROMPT
+          ? `${conditionInstructions}\n\n${userModelPropositions}`
+          : conditionInstructions
       return {
         ...options,
         instructions,
@@ -338,7 +358,8 @@ export function createToolLoopTransport({
     onStepFinish: (step) => {
       intervention.onStepFinish()
       const replayedStep = currentFeedbackReplayStep()
-      const mutatingCalls = step.toolCalls.filter((call) => isMutatingAITool(call.toolName))
+      const completedToolCalls = step.toolCalls.filter((call) => call !== undefined)
+      const mutatingCalls = completedToolCalls.filter((call) => isMutatingAITool(call.toolName))
       if (mutatingCalls.length > 0 && step.toolResults.length > 0) {
         const completedReplayStep = completeFeedbackReplay()
         if (completedReplayStep !== null) {
@@ -348,11 +369,11 @@ export function createToolLoopTransport({
             `mutation-tools=${mutatingCalls.map((call) => call.toolName).join(',')} tool-results=${step.toolResults.length}; interactive notes re-enabled for following steps`
           )
         }
-      } else if (step.toolCalls.length > 0 && replayedStep !== null) {
+      } else if (completedToolCalls.length > 0 && replayedStep !== null) {
         logFeedbackReplay(
           replayedStep,
           'waiting',
-          `read-only-tools=${step.toolCalls.map((call) => call.toolName).join(',')}; same retry step and suppression remain active`
+          `read-only-tools=${completedToolCalls.map((call) => call.toolName).join(',')}; same retry step and suppression remain active`
         )
       }
       // The log line and the canvas bubble are both driven from the stream tap
@@ -385,6 +406,7 @@ export function createToolLoopTransport({
       recordStepUsage(recorded, store)
     },
     onFinish: ({ finishReason, steps }) => {
+      askUserSession.endRequest('request-finished')
       // Also flushes the buffer, so the file is complete the moment a run ends.
       logRunEnd(`${finishReason}  ${steps.length} steps`)
     }
@@ -408,8 +430,17 @@ export function createChatSessionManager({
   let chat: Chat<UIMessage> | null = null
   let acpTransportInstance: { destroy(): Promise<void> } | null = null
   let overrideTransport: (() => ChatTransport<UIMessage>) | null = null
+  const askUserQuestion =
+    shallowRef<ReturnType<AskUserSession['snapshot']>['pendingQuestion']>(null)
+  const askUserSession = new AskUserSession({
+    onEvent: (event) => logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+  })
+  askUserSession.subscribe((snapshot) => {
+    askUserQuestion.value = snapshot.pendingQuestion
+  })
 
   function markTransportDirty() {
+    askUserSession.endRequest('transport-reconfigured')
     transportDirty = true
     currentChatStore = null
     currentChatMessages = new WeakMap()
@@ -433,6 +464,7 @@ export function createChatSessionManager({
       store,
       maxOutputTokens: maxOutputTokens.value,
       studyRuntime: getStudyRuntime(),
+      askUserSession,
       takeRequest: () => {
         const value = pendingRequests.get(store) ?? ''
         pendingRequests.delete(store)
@@ -466,6 +498,7 @@ export function createChatSessionManager({
   }
 
   function resetChat() {
+    askUserSession.endRequest('chat-reset')
     if (currentChatStore) currentChatMessages.delete(currentChatStore)
     chat = null
     currentChatStore = null
@@ -478,5 +511,22 @@ export function createChatSessionManager({
     markTransportDirty()
   }
 
-  return { ensureChat, resetChat, markTransportDirty, noteUserRequest, setOverrideTransport }
+  function answerAskUser(answer: string, selectedOption: string | null = null): boolean {
+    return askUserSession.answer(answer, selectedOption)
+  }
+
+  function stopAskUser(): void {
+    askUserSession.endRequest('request-stopped')
+  }
+
+  return {
+    ensureChat,
+    resetChat,
+    markTransportDirty,
+    noteUserRequest,
+    setOverrideTransport,
+    askUserQuestion,
+    answerAskUser,
+    stopAskUser
+  }
 }

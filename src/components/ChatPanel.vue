@@ -10,6 +10,7 @@ import { logFeedbackAnswer, logFeedbackStep, logUserMessage } from '@/app/ai/cha
 import { abandonTurn, agentTurn, resumeTurn, setTurnRunning } from '@/app/ai/chat/agent-turn'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { withoutDanglingToolCalls } from '@/app/ai/chat/transcript'
+import { composeChatTimeline, type MidRunUserMessage } from '@/app/ai/chat/timeline'
 import { copyChatLog } from '@/app/ai/debug'
 import { renderStepFeedbackReport } from '@/app/meta-agent/hosts/lencanvas/feedback-note/report'
 import { userModelFeedbackBatch } from '@/app/meta-agent/hosts/lencanvas/feedback-note/user-model'
@@ -28,10 +29,12 @@ import {
 import { currentMetaRequest } from '@/app/meta-agent/hosts/lencanvas/use'
 import { observeFeedbackNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
+import { getStudyRuntime } from '@/app/study/runtime'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
+import AskUserCard from '@/components/Conversation/AskUserCard.vue'
 import AppTextButton from '@/components/ui/AppTextButton.vue'
 import ProviderSetup from '@/components/chat/ProviderSetup.vue'
 import { useAIChat } from '@/app/ai/chat/use'
@@ -43,7 +46,15 @@ import type { UIMessage } from 'ai'
 
 const IS_DEV = import.meta.env.DEV
 
-const { isConfigured, ensureChat, noteUserRequest, resetChat } = useAIChat()
+const {
+  isConfigured,
+  ensureChat,
+  noteUserRequest,
+  resetChat,
+  askUserQuestion,
+  answerAskUser,
+  stopAskUser
+} = useAIChat()
 const { dialogs } = useI18n()
 
 const chat = ref<Chat<UIMessage> | null>(null)
@@ -72,20 +83,18 @@ const logicallyRunning = computed(
 
 // Messages the user typed while a run was in progress. They're injected into the
 // running loop (not the persisted history), so we echo them here optimistically.
-const queuedBubbles = ref<string[]>([])
-const queuedMessages = computed<UIMessage[]>(() =>
-  queuedBubbles.value.map((text, i) => ({
-    id: `queued-${i}`,
-    role: 'user',
-    parts: [{ type: 'text', text }]
-  }))
+const queuedBubbles = ref<MidRunUserMessage[]>([])
+const timelineMessages = computed(() =>
+  composeChatTimeline(visibleMessages.value, queuedBubbles.value)
 )
+let nextQueuedBubbleId = 1
 // Counted off the run rather than off the last assistant message. A build
 // restarted after Feedback Note input writes a second assistant message, so
 // the retry remains an implementation detail and does not reset the visible step.
 const currentStep = computed(() => currentRunStepNumber())
 
 const activityText = computed(() => {
+  if (askUserQuestion.value) return 'Waiting for your answer…'
   if (agentActivity.metaAgentTasks > 0) return "Reviewing the current agent's reasoning…"
   if (!logicallyRunning.value) return null
   if (agentTurn.paused) return 'Waiting for your feedback…'
@@ -94,7 +103,9 @@ const activityText = computed(() => {
 })
 
 const activityIsProcessing = computed(
-  () => agentActivity.metaAgentTasks > 0 || (logicallyRunning.value && !agentTurn.paused)
+  () =>
+    !askUserQuestion.value &&
+    (agentActivity.metaAgentTasks > 0 || (logicallyRunning.value && !agentTurn.paused))
 )
 
 const showStepBar = computed(() => logicallyRunning.value)
@@ -163,7 +174,18 @@ async function handleSubmit(text: string) {
   // its next step boundary and adapts its remaining tool calls.
   if (isRunning.value) {
     enqueueUserMessage(getActiveEditorStore(), text)
-    queuedBubbles.value = [...queuedBubbles.value, text]
+    const anchor = visibleMessages.value.at(-1)
+    if (anchor) {
+      queuedBubbles.value = [
+        ...queuedBubbles.value,
+        {
+          id: `queued-${nextQueuedBubbleId++}`,
+          text,
+          anchorMessageId: anchor.id,
+          afterPartCount: anchor.role === 'assistant' ? anchor.parts.length : null
+        }
+      ]
+    }
     return
   }
 
@@ -190,14 +212,21 @@ async function handleSubmit(text: string) {
  * invalidated before the provider request is stopped.
  */
 function handleStop() {
+  stopAskUser()
   abandonTurn('stop button')
   void chat.value?.stop()
+}
+
+function handleAskUserAnswer(answer: string, selectedOption: string | null): void {
+  answerAskUser(answer, selectedOption)
 }
 
 async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
   // Durable and independent from the task-agent branch below: implicit notes
   // proceed, explicit notes retry, but both are evidence for the user model.
-  void observeFeedbackNotes(userModelFeedbackBatch(result))
+  if (getStudyRuntime().updateUserModel) {
+    void observeFeedbackNotes(userModelFeedbackBatch(result))
+  }
 
   if (!hasExplicitStepFeedback(result)) {
     logFeedbackStep(
@@ -287,6 +316,7 @@ async function handleCopyAcpLog() {
 }
 
 function handleClearChat() {
+  stopAskUser()
   chat.value = null
   resetChat()
   clearToolLogEntries()
@@ -323,10 +353,12 @@ function handleClearChat() {
 
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
-            <ChatMessage v-for="msg in visibleMessages" :key="msg.id" :message="msg" />
-
-            <!-- Mid-run messages the user queued while the agent is working -->
-            <ChatMessage v-for="msg in queuedMessages" :key="msg.id" :message="msg" />
+            <ChatMessage
+              v-for="item in timelineMessages"
+              :key="item.key"
+              :message="item.message"
+              :variant="item.variant"
+            />
 
             <!-- Persistent run activity, including background Meta Agent review. -->
             <div
@@ -400,7 +432,14 @@ function handleClearChat() {
         </AppTextButton>
       </div>
 
-      <ChatInput :status="status" @submit="handleSubmit" @stop="handleStop" />
+      <AskUserCard
+        v-if="askUserQuestion"
+        compact
+        :question="askUserQuestion"
+        @answer="handleAskUserAnswer"
+        @stop="handleStop"
+      />
+      <ChatInput v-else :status="status" @submit="handleSubmit" @stop="handleStop" />
 
       <AcpPermissionDialog />
     </template>

@@ -24,7 +24,8 @@ function toolLabel(name: string): string {
   const labels: Record<string, string> = {
     google_search: 'Google Search',
     code_execution: 'Code execution',
-    url_context: 'URL context'
+    url_context: 'URL context',
+    ask_user: 'Ask user'
   }
   return labels[name] ?? name.replaceAll('_', ' ')
 }

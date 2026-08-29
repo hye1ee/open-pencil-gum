@@ -57,18 +57,27 @@ export const CONVERSATION_TOOL_OPTIONS = [
 export type ConversationToolId = (typeof CONVERSATION_TOOL_OPTIONS)[number]['id']
 type ConversationToolSelection = Record<ConversationToolId, boolean>
 
+const DEFAULT_CONVERSATION_TOOL_SELECTION: ConversationToolSelection = {
+  google_search: true,
+  code_execution: true,
+  url_context: true
+}
+
 export const conversationToolsEnabled = useLocalStorage<ConversationToolSelection>(
   'open-pencil:conversation:tools',
-  {
-    google_search: true,
-    code_execution: true,
-    url_context: true
-  },
+  DEFAULT_CONVERSATION_TOOL_SELECTION,
   { mergeDefaults: true }
 )
 
 export function conversationEnabledToolIds(): ConversationToolId[] {
-  return CONVERSATION_TOOL_OPTIONS.filter(
+  const selected = CONVERSATION_TOOL_OPTIONS.filter(
     (tool) => conversationToolsEnabled.value[tool.id]
   ).map((tool) => tool.id)
+  if (selected.length > 0) return selected
+
+  // LenChat's conditions share the same Gemini provider capabilities. Recover
+  // an empty persisted selection so Ask User adds its function tool to the
+  // normal provider tools instead of accidentally replacing them.
+  conversationToolsEnabled.value = { ...DEFAULT_CONVERSATION_TOOL_SELECTION }
+  return CONVERSATION_TOOL_OPTIONS.map((tool) => tool.id)
 }

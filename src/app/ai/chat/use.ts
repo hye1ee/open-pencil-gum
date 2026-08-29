@@ -82,6 +82,9 @@ export function useAIChat() {
     isConfigured,
     ensureChat: chatSession.ensureChat,
     noteUserRequest: chatSession.noteUserRequest,
-    resetChat: chatSession.resetChat
+    resetChat: chatSession.resetChat,
+    askUserQuestion: chatSession.askUserQuestion,
+    answerAskUser: chatSession.answerAskUser,
+    stopAskUser: chatSession.stopAskUser
   }
 }

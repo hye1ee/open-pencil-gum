@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useHead } from '@unhead/vue'
 
+import AskUserCard from '@/components/Conversation/AskUserCard.vue'
 import Composer from '@/components/Conversation/Composer.vue'
 import ConversationShell from '@/components/Conversation/ConversationShell.vue'
 import MessageList from '@/components/Conversation/MessageList.vue'
@@ -31,7 +32,7 @@ import type { ConversationFeedbackItem } from '@/app/conversation/types'
 useHead({
   title: 'LenChat',
   titleTemplate: null,
-  link: [{ rel: 'icon', type: 'image/svg+xml', href: '/lenchat.svg' }]
+  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lenchat.svg' }]
 })
 
 const route = useRoute()
@@ -55,6 +56,7 @@ const {
   feedbackNotes,
   feedbackPending,
   feedbackGenerating,
+  askUserQuestion,
   revising,
   learning,
   propositions,
@@ -96,6 +98,10 @@ async function applySettings(): Promise<void> {
 function reviseFromFeedback(id: string, items: ConversationFeedbackItem[]): void {
   store.reviseFromFeedback(id, items)
 }
+
+function answerAskUser(answer: string, selectedOption: string | null): void {
+  store.answerAskUser(answer, selectedOption)
+}
 </script>
 
 <template>
@@ -126,7 +132,14 @@ function reviseFromFeedback(id: string, items: ConversationFeedbackItem[]): void
       <div v-if="lastError" class="mx-auto w-full max-w-3xl px-6 pb-2 text-xs text-red-600">
         {{ lastError }}
       </div>
+      <AskUserCard
+        v-if="askUserQuestion"
+        :question="askUserQuestion"
+        @answer="answerAskUser"
+        @stop="store.stop()"
+      />
       <Composer
+        v-else
         :status="status"
         :configured="configured"
         :blocked="feedbackPending"

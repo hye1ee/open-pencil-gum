@@ -5,6 +5,18 @@ export interface ReasoningObserver {
   settled(streamId: number): Promise<void>
 }
 
+/**
+ * Used by study conditions that deliberately do not run the Meta Agent.
+ * Keeping the same observer contract lets the provider stream stay shared
+ * without accidentally invoking a host-specific monitor.
+ */
+export const NOOP_REASONING_OBSERVER: ReasoningObserver = {
+  start: () => undefined,
+  chunk: () => undefined,
+  end: () => undefined,
+  settled: async () => undefined
+}
+
 export interface ReasoningChunkReview<Context> {
   context: Context
   streamId: number
