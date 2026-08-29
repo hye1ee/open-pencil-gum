@@ -53,8 +53,10 @@ import {
   clearUserModel as clearSharedUserModel,
   initializeUserModel,
   observeAskUserAnswers,
-  observeFeedbackNotes
+  observeFeedbackNotes,
+  observeUserInitiatedFeedback
 } from '@/app/user-model/use'
+import { reasoningFeedbackBatch } from '@/app/user-model/user-initiated/batch'
 
 interface ConversationStoreOptions {
   apiKey(): string
@@ -698,6 +700,14 @@ export class ConversationStore {
 
     this.gate.clearDeferredAbandon()
     this.resetMetaAgentMonitor()
+    if (this.chatRef.value !== chat || this.revisionRun !== revisionRun) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+
+    if (this.options.runtime().updateUserModel) {
+      await observeUserInitiatedFeedback(reasoningFeedbackBatch(requestMessage.id, null, outcomes))
+    }
     if (this.chatRef.value !== chat || this.revisionRun !== revisionRun) {
       this.reasoningRevisionScheduled = false
       return

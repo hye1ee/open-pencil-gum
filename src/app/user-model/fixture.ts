@@ -45,7 +45,7 @@ const ITEMS = [
     ''
   ],
   [
-    'Uses imagery only when it adds atmosphere or information that the layout and copy cannot convey alone.',
+    'Uses imagery only when it adds atmosphere or information that layout and copy cannot convey alone.',
     0.47,
     ''
   ],
@@ -86,7 +86,7 @@ const ITEMS = [
     ''
   ],
   [
-    'Uses facilitator credentials and participant work as evidence of credibility instead of generic testimonials.',
+    'Uses facilitator credentials and participant work as credibility evidence instead of generic testimonials.',
     0.38,
     ''
   ],

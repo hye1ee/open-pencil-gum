@@ -37,7 +37,8 @@ import {
   didHitStepLimit
 } from '@/app/ai/tools'
 import { currentMetaRequest } from '@/app/meta-agent/hosts/lencanvas/use'
-import { observeFeedbackNotes } from '@/app/user-model/use'
+import { reasoningFeedbackBatch } from '@/app/user-model/user-initiated/batch'
+import { observeFeedbackNotes, observeUserInitiatedFeedback } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { getStudyRuntime } from '@/app/study/runtime'
 import { renderReasoningFeedbackReport } from '@/app/study/user-initiated/report'
@@ -369,6 +370,12 @@ async function retryFromReasoningFeedback(
   try {
     const store = getActiveEditorStore()
     const replayStep = currentRunStepNumber(store)
+    if (getStudyRuntime().updateUserModel) {
+      const streamId = outcomes[0]?.review.streamId ?? 0
+      await observeUserInitiatedFeedback(
+        reasoningFeedbackBatch(`lencanvas:${streamId}:step-${replayStep}`, replayStep, outcomes)
+      )
+    }
     activeChat.messages = withoutDanglingToolCalls(activeChat.messages)
     continueRunSteps(store)
     noteUserRequest(request)

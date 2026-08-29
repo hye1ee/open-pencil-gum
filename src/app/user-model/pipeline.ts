@@ -22,6 +22,16 @@ import {
   reviseUserPrompt
 } from '@/app/user-model/prompt'
 import type { ChangedProposition, ReviseNeighbour } from '@/app/user-model/prompt'
+import {
+  FEEDBACK_SYSTEM_USER_INITIATED,
+  RATIONALE_SYSTEM_USER_INITIATED,
+  feedbackUserInitiatedPrompt,
+  rationaleUserInitiatedPrompt
+} from '@/app/user-model/user-initiated/prompt'
+import type {
+  UserInitiatedRetrievalTrace,
+  UserModelReasoningFeedbackBatch
+} from '@/app/user-model/user-initiated/types'
 
 export interface Proposition {
   id: string
@@ -85,7 +95,11 @@ interface CandidateProposition {
 
 /** Passed out so the caller can route the two differently: a timer-driven read
  * and a person's own words are not worth the same money. */
-export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback' | 'revise-from-ask-user'
+export type RevisionPurpose =
+  | 'revise-from-frames'
+  | 'revise-from-feedback'
+  | 'revise-from-ask-user'
+  | 'revise-from-user-initiated'
 
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
@@ -213,6 +227,8 @@ export interface UserModelOptions {
   onFeedbackRetrieval?: (trace: FeedbackRetrievalTrace) => void
   /** Embedding neighbours shown to FEEDBACK_SYSTEM_ASKUSER. */
   onAskUserRetrieval?: (trace: AskUserRetrievalTrace) => void
+  /** Per-feedback neighbours shown to FEEDBACK_SYSTEM_USER_INITIATED. */
+  onUserInitiatedRetrieval?: (trace: UserInitiatedRetrievalTrace) => void
   onStage?: (stage: PipelineStage) => void
   /** A batch dropped because the screen had not moved, with how far it did. */
   onIdle?: (pixelChange: number) => void
@@ -232,6 +248,8 @@ export interface UserModel {
   observeFeedback(batch: UserModelFeedbackBatch): Promise<void>
   /** Explicit Q&A collected by the ask_user condition during one request. */
   observeAskUser(batch: UserModelAskUserBatch): Promise<void>
+  /** Explicit feedback collected from reviewed reasoning checkpoints. */
+  observeUserInitiated(batch: UserModelReasoningFeedbackBatch): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -713,7 +731,10 @@ export function createUserModel(options: UserModelOptions): UserModel {
     rationaleSystem: string
     rationalePrompt(changed: ChangedProposition[]): string
     evidenceTexts: readonly string[]
-    purpose: Extract<RevisionPurpose, 'revise-from-feedback' | 'revise-from-ask-user'>
+    purpose: Extract<
+      RevisionPurpose,
+      'revise-from-feedback' | 'revise-from-ask-user' | 'revise-from-user-initiated'
+    >
     stamp: string
   }
 
@@ -871,6 +892,59 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
+  /** Each feedback item retrieves neighbours independently. Their union is
+   * then updated in one proposition call and one rationale call so feedback on
+   * separate checkpoints can jointly refine the same underlying claim. */
+  async function observeUserInitiated(batch: UserModelReasoningFeedbackBatch): Promise<void> {
+    if (batch.items.length === 0) return
+    if (frameRun) await frameRun
+    if (running) return
+    running = true
+    try {
+      stage('revising')
+      const now = Date.now()
+      const shown = new Map<string, Proposition>()
+      const vectors = await deps.embed(
+        batch.items.map((item) =>
+          [
+            `Original request: ${batch.request}`,
+            `Feedback target: ${item.selectedReasoning ?? item.reasoningChunk}`,
+            `Final user feedback: ${item.feedback}`
+          ].join('\n')
+        )
+      )
+      const items = batch.items.map((item, index) => {
+        const embedding = nearestPropositionScores(vectors[index] ?? [], propositions, now).map(
+          (near) => {
+            shown.set(near.proposition.id, near.proposition)
+            return { id: near.proposition.id, score: near.score }
+          }
+        )
+        return { reviewId: item.reviewId, embedding }
+      })
+      options.onUserInitiatedRetrieval?.({ items, shownIds: [...shown.keys()] })
+
+      const stamp = new Date(now).toISOString()
+      await reviseFromExplicitEvidence({
+        propositionSystem: FEEDBACK_SYSTEM_USER_INITIATED,
+        propositionPrompt: feedbackUserInitiatedPrompt(
+          batch,
+          [...shown.values()].map((proposition) => describe(proposition, now))
+        ),
+        rationaleSystem: RATIONALE_SYSTEM_USER_INITIATED,
+        rationalePrompt: (changed) => rationaleUserInitiatedPrompt(batch, changed, propositions),
+        evidenceTexts: batch.items.map((item) => item.feedback),
+        purpose: 'revise-from-user-initiated',
+        stamp
+      })
+    } catch (error) {
+      options.onError?.(error)
+    } finally {
+      running = false
+      stage('idle')
+    }
+  }
+
   return {
     get propositions() {
       return propositions
@@ -878,6 +952,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
 
     observeFeedback,
     observeAskUser,
+    observeUserInitiated,
 
     load(saved) {
       // A file predating drift tracking has no original, so take where it is

@@ -19,6 +19,8 @@ import {
 } from '@/app/user-model/pipeline'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
+import { logUserInitiatedRetrieval } from '@/app/user-model/user-initiated/log'
+import type { UserModelReasoningFeedbackBatch } from '@/app/user-model/user-initiated/types'
 
 /** The app-specific half: what this app knows about the moment a frame was taken,
  * and where the propositions are kept. `pipeline.ts` knows none of it. */
@@ -86,6 +88,30 @@ export async function observeAskUserAnswers(batch: UserModelAskUserBatch): Promi
     })
   } catch (error) {
     logUserModelFeedback(0, 'failed', error instanceof Error ? error.message : String(error))
+  }
+}
+
+export async function observeUserInitiatedFeedback(
+  batch: UserModelReasoningFeedbackBatch
+): Promise<void> {
+  if (batch.items.length === 0 || !canUpdateUserModelFromFeedback()) return
+  current ??= createPropositionSink('user-initiated')
+  logUserModelFeedback(
+    batch.step ?? 0,
+    'queued',
+    `condition=user-initiated request=${batch.requestId} feedback=${batch.items.length}`
+  )
+  try {
+    await enqueueObservation(async () => {
+      await currentReady
+      await current?.observeUserInitiated(batch)
+    })
+  } catch (error) {
+    logUserModelFeedback(
+      batch.step ?? 0,
+      'failed',
+      error instanceof Error ? error.message : String(error)
+    )
   }
 }
 
@@ -162,6 +188,8 @@ export function createPropositionSink(sessionId: string): UserModel {
         `shown-to-ask-user-model → ${trace.shownIds.join(', ') || '(none)'}`
       )
     },
+
+    onUserInitiatedRetrieval: logUserInitiatedRetrieval,
 
     onRevision: logPropositionChange,
 
