@@ -7,12 +7,14 @@ import type { ConversationToolId } from '@/app/conversation/settings'
 import type { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { withChatModelTrace } from '@/app/meta-agent/hosts/lenchat/model-trace'
 import type { ChatReasoningObserver } from '@/app/meta-agent/hosts/lenchat/types'
+import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import type { Proposition } from '@/app/user-model/pipeline'
 
 interface ConversationTransportOptions {
   apiKey: string
   modelId: string
   enabledTools: readonly ConversationToolId[]
+  runtime: StudyRuntimeConfig
   observer: ChatReasoningObserver
   awaitReasoningReviews: boolean
   isSilentRevision(): boolean
@@ -45,6 +47,7 @@ export function createConversationTransport(
     awaitResume: (point) => options.gate.awaitResume(point)
   })
   const enabledTools = new Set(options.enabledTools)
+  const runtime = options.runtime
   const tools = {
     ...(enabledTools.has('google_search') ? { google_search: google.tools.googleSearch({}) } : {}),
     ...(enabledTools.has('code_execution')
@@ -61,7 +64,9 @@ export function createConversationTransport(
     maxOutputTokens: 8192,
     providerOptions: { google: { thinkingConfig: { includeThoughts: true } } },
     prepareCall: (call) => {
-      const instructions = CHAT_TASK_SYSTEM + preferenceInstructions(options.getPropositions())
+      const instructions = runtime.taskAgentUsesUserModel
+        ? CHAT_TASK_SYSTEM + preferenceInstructions(options.getPropositions())
+        : CHAT_TASK_SYSTEM
       const revision = options.takeRevisionFeedback()
       if (!revision) return { ...call, instructions }
 

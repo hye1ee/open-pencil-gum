@@ -2,6 +2,12 @@ import { normalizePath, type Plugin, type ServerOptions } from 'vite'
 
 const WATCHED_MARKDOWN_ROOTS = ['/src/', '/packages/core/src/', '/packages/vue/src/']
 
+const STUDY_CONDITION_LINKS = [
+  { label: 'UserLens', path: 'userlens' },
+  { label: 'Ask User', path: 'ask-user' },
+  { label: 'User Initiated', path: 'user-initiated' }
+] as const
+
 function ignoreMarkdownOutsideSource(path: string): boolean {
   const normalized = normalizePath(path)
   if (!normalized.endsWith('.md')) return false
@@ -54,8 +60,17 @@ export function devRouteLinksPlugin(): Plugin {
         const rootUrl = server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0]
         if (!rootUrl) return
 
-        server.config.logger.info(`  ➜  Chat:   ${new URL('/chat', rootUrl).href}`)
-        server.config.logger.info(`  ➜  Canvas: ${new URL('/canvas', rootUrl).href}`)
+        const printHostLinks = (label: string, route: 'chat' | 'canvas'): void => {
+          server.config.logger.info(`  ➜  ${label}`)
+          for (const condition of STUDY_CONDITION_LINKS) {
+            const url = new URL(`/${route}/${condition.path}`, rootUrl).href
+            server.config.logger.info(`     ${condition.label.padEnd(14)} ${url}`)
+          }
+        }
+
+        server.config.logger.info('')
+        printHostLinks('LenChat', 'chat')
+        printHostLinks('LenCanvas', 'canvas')
       }
     }
   }

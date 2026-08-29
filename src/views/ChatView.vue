@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useHead } from '@unhead/vue'
 
 import Composer from '@/components/Conversation/Composer.vue'
@@ -20,6 +21,11 @@ import {
   CONVERSATION_TOOL_OPTIONS
 } from '@/app/conversation/settings'
 import { fadeOutGlobalLoader } from '@/app/editor/canvas/loader-overlay'
+import {
+  createStudyRuntimeConfig,
+  resolveStudyCondition,
+  setStudyRuntime
+} from '@/app/study/runtime'
 import type { ConversationFeedbackItem } from '@/app/conversation/types'
 
 useHead({
@@ -28,10 +34,17 @@ useHead({
   link: [{ rel: 'icon', type: 'image/svg+xml', href: '/lenchat.svg' }]
 })
 
+const route = useRoute()
+const runtime = computed(() =>
+  createStudyRuntimeConfig('lenchat', resolveStudyCondition(route.meta.studyCondition))
+)
+setStudyRuntime('lenchat', runtime.value.condition)
+
 const store = new ConversationStore({
   apiKey: conversationApiKeyValue,
   modelId: conversationModelIdValue,
-  enabledTools: conversationEnabledToolIds
+  enabledTools: conversationEnabledToolIds,
+  runtime: () => runtime.value
 })
 const {
   initialized,
@@ -68,6 +81,11 @@ onMounted(() => {
   // intentionally mounts no canvas, so it owns the equivalent ready handoff.
   fadeOutGlobalLoader()
   void store.initialize()
+})
+
+watch(runtime, async (next) => {
+  setStudyRuntime('lenchat', next.condition)
+  if (initialized.value) await store.reconfigure()
 })
 
 async function applySettings(): Promise<void> {

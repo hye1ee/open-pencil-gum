@@ -15,6 +15,7 @@ import {
   logRunContinue,
   logRunEnd,
   logRunStart,
+  logStudyRuntime,
   logStep,
   logTurnAbandoned,
   logUsage,
@@ -48,9 +49,13 @@ import {
   resetRunSteps
 } from '@/app/ai/tools'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
-import { completeFeedbackReplay, currentFeedbackReplayStep } from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
 import { noteAgentPlan } from '@/app/meta-agent/hosts/lencanvas/events'
+import {
+  completeFeedbackReplay,
+  currentFeedbackReplayStep
+} from '@/app/meta-agent/hosts/lencanvas/feedback-note/session'
 import { runUserModel, startMetaAgentTurn } from '@/app/meta-agent/hosts/lencanvas/use'
+import type { StudyRuntimeConfig } from '@/app/study/runtime'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -65,12 +70,14 @@ type ChatSessionOptions = {
   providerID: Ref<AIProviderID>
   maxOutputTokens: Ref<number>
   getActiveEditorStore: () => EditorStore
+  getStudyRuntime: () => StudyRuntimeConfig
 }
 
 type ToolLoopTransportOptions = {
   store: EditorStore
   maxOutputTokens: number
   takeRequest: () => string
+  studyRuntime: StudyRuntimeConfig
 }
 
 const ANTHROPIC_CACHE_CONTROL = {
@@ -191,7 +198,8 @@ export async function createACPTransport(providerID: AIProviderID) {
 export function createToolLoopTransport({
   store,
   maxOutputTokens,
-  takeRequest
+  takeRequest,
+  studyRuntime
 }: ToolLoopTransportOptions) {
   const tools = createAITools(store)
   const intervention = createInterventionTracker(store)
@@ -243,6 +251,7 @@ export function createToolLoopTransport({
         // the transport rather than changing mid-run.
         logModelRouting(describeModelRouting())
       }
+      logStudyRuntime(studyRuntime.host, studyRuntime.condition)
       resetRunSteps(store)
       intervention.reset()
       vision.reset()
@@ -253,11 +262,13 @@ export function createToolLoopTransport({
       const userModelPropositions = renderUserModelPropositions(runUserModel())
       if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       showAgentCursor(store)
+      const instructions =
+        studyRuntime.taskAgentUsesUserModel && userModelPropositions
+          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
+          : SYSTEM_PROMPT
       return {
         ...options,
-        instructions: userModelPropositions
-          ? `${SYSTEM_PROMPT}\n\n${userModelPropositions}`
-          : SYSTEM_PROMPT,
+        instructions,
         maxOutputTokens,
         providerOptions: callProviderOptions
       }
@@ -387,7 +398,8 @@ export function createChatSessionManager({
   isACPProvider,
   providerID,
   maxOutputTokens,
-  getActiveEditorStore
+  getActiveEditorStore,
+  getStudyRuntime
 }: ChatSessionOptions) {
   let transportDirty = false
   let currentChatStore: EditorStore | null = null
@@ -420,6 +432,7 @@ export function createChatSessionManager({
     return createToolLoopTransport({
       store,
       maxOutputTokens: maxOutputTokens.value,
+      studyRuntime: getStudyRuntime(),
       takeRequest: () => {
         const value = pendingRequests.get(store) ?? ''
         pendingRequests.delete(store)

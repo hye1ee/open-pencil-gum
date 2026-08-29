@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, provide, ref } from 'vue'
+import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useEventListener, useUrlSearchParams } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useHead } from '@unhead/vue'
@@ -18,6 +18,7 @@ import { appMenuShortcut } from '@/app/shell/menu/shortcut'
 import { createDemoShapes } from '@/app/demo/document'
 import { useEditorStore } from '@/app/editor/active-store'
 import { createTab, activeTab, getActiveStore, tabCount } from '@/app/tabs'
+import { setStudyRuntime } from '@/app/study/runtime'
 
 import CollabPanel from '@/components/CollabPanel/CollabPanel.vue'
 import EditorCanvas from '@/components/EditorCanvas.vue'
@@ -31,6 +32,11 @@ import Tip from '@/components/ui/Tip.vue'
 import Toolbar from '@/components/Toolbar/Toolbar.vue'
 
 const route = useRoute()
+setStudyRuntime('lencanvas', route.meta.studyCondition ?? 'userlens')
+watch(
+  () => route.meta.studyCondition,
+  (condition) => setStudyRuntime('lencanvas', condition ?? 'userlens')
+)
 const params = useUrlSearchParams('history')
 const showChrome = !('no-chrome' in params)
 
@@ -44,7 +50,11 @@ if (createdInitialTab && route.meta.demo && !('test' in params)) {
   createDemoShapes(firstTab.store)
 }
 
-useHead({ title: route.meta.demo ? 'Demo' : undefined })
+useHead({
+  title: route.meta.demo ? 'Demo' : 'LenCanvas',
+  titleTemplate: null,
+  link: [{ rel: 'icon', type: 'image/svg+xml', href: '/lencanvas.svg' }]
+})
 useKeyboard()
 useMenu()
 usePageCapture()
@@ -192,7 +202,7 @@ onUnmounted(() => {
           v-if="!isMobile"
           class="absolute top-7 left-7 z-10 flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm"
         >
-          <img src="/favicon-32.png" class="size-4" alt="OpenPencil" />
+          <img src="/lencanvas.svg" class="size-4" alt="" />
           <span data-test-id="editor-document-name" class="text-xs text-surface">{{
             store.state.documentName
           }}</span>

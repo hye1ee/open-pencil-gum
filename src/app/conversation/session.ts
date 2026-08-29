@@ -9,6 +9,7 @@ import {
   logChatFeedbackLifecycle,
   logMetaAgentLifecycle,
   logRunStart,
+  logStudyRuntime,
   logUserModelFeedback
 } from '@/app/ai/chat/agent-log'
 import type { ConversationToolId } from '@/app/conversation/settings'
@@ -35,6 +36,7 @@ import { FEEDBACK_NOTE_REPRESENTATION_PROVIDER } from '@/app/meta-agent/feedback
 import { lenChatFeedbackHistory } from '@/app/meta-agent/hosts/lenchat/feedback-note/history'
 import { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
+import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import { canUpdateUserModelFromFeedback } from '@/app/user-model/calls'
 import { propositions as sharedPropositions } from '@/app/user-model/store'
 import {
@@ -47,6 +49,7 @@ interface ConversationStoreOptions {
   apiKey(): string
   modelId(): string
   enabledTools(): readonly ConversationToolId[]
+  runtime(): StudyRuntimeConfig
 }
 
 function messageText(message: UIMessage): string {
@@ -142,8 +145,10 @@ export class ConversationStore {
     this.feedbackGenerating.value = false
     this.resetMetaAgentMonitor()
     logRunStart(clean)
+    const runtime = this.options.runtime()
+    logStudyRuntime(runtime.host, runtime.condition)
     logMetaAgentLifecycle(
-      `host=LenChat mode=interactive-gate propositions=${this.propositions.value.length}`
+      `host=LenChat condition=${runtime.condition} mode=interactive-gate propositions=${this.propositions.value.length}`
     )
     const chat = this.chatRef.value
     if (!chat) return
@@ -310,6 +315,7 @@ export class ConversationStore {
       apiKey: this.options.apiKey(),
       modelId: this.options.modelId(),
       enabledTools: this.options.enabledTools(),
+      runtime: this.options.runtime(),
       observer: monitor.observer,
       awaitReasoningReviews: true,
       isSilentRevision: () => this.revising.value,

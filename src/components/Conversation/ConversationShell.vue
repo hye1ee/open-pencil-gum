@@ -20,7 +20,7 @@ defineEmits<{
   >
     <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50/80 md:flex">
       <div class="flex h-12 items-center gap-2 border-b border-slate-200 px-4">
-        <icon-lucide-glasses data-test-id="lenchat-logo" class="size-5 text-blue-600" />
+        <icon-lucide-message-square data-test-id="lenchat-logo" class="size-5 text-blue-600" />
         <span class="text-sm font-semibold tracking-tight">LenChat</span>
       </div>
       <div class="border-b border-slate-200">

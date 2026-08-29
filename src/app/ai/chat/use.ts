@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
@@ -22,6 +22,7 @@ import { createChatSessionManager } from '@/app/ai/chat/transports'
 import { resolveModelSlot } from '@/app/ai/model-routing'
 import { exposeChatTransportOverride } from '@/app/browser-bridge'
 import { getActiveEditorStore } from '@/app/editor/active-store'
+import { getStudyRuntime, studyRuntime } from '@/app/study/runtime'
 
 /** The right-hand panel's tabs. `user-model` only exists in dev builds. */
 export type PanelTab = 'design' | 'code' | 'ai' | 'user-model'
@@ -50,8 +51,11 @@ const chatSession = createChatSessionManager({
   isACPProvider: useACPTransport,
   providerID,
   maxOutputTokens,
-  getActiveEditorStore
+  getActiveEditorStore,
+  getStudyRuntime
 })
+
+watch(studyRuntime, chatSession.markTransportDirty, { flush: 'sync' })
 
 registerAIChatEffects(chatSession.markTransportDirty)
 

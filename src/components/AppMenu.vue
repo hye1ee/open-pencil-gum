@@ -59,8 +59,19 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
 
 <template>
   <div class="shrink-0 border-b border-border">
+    <div
+      data-test-id="lencanvas-brand"
+      class="flex h-12 items-center gap-2 border-b border-border px-4"
+    >
+      <img src="/lencanvas.svg" class="size-5" alt="" />
+      <span class="text-sm font-semibold tracking-tight text-surface">LenCanvas</span>
+    </div>
     <div class="flex items-center gap-2 px-2 py-1.5">
-      <img data-test-id="app-logo" src="/favicon-32.png" class="size-4" alt="OpenPencil" />
+      <icon-lucide-file-pen-line
+        data-test-id="app-logo"
+        class="size-4 shrink-0 text-muted"
+        aria-hidden="true"
+      />
       <input
         v-if="editingName"
         ref="nameInput"

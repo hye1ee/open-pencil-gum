@@ -236,6 +236,10 @@ export function logMetaAgentLifecycle(event: string): void {
   write('META-LIFE', event)
 }
 
+export function logStudyRuntime(host: string, condition: string): void {
+  write('CONDITION', `host=${host} condition=${condition}`)
+}
+
 /** One raw LenChat provider delta sent to the shared Meta Agent. */
 export function logChatMetaAgentReasoning(
   streamId: number,
