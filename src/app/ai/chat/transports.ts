@@ -65,6 +65,7 @@ import {
   formatAskUserLifecycleEvent
 } from '@/app/study/ask-user'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
+import { observeAskUserAnswers } from '@/app/user-model/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
 
@@ -238,6 +239,8 @@ export function createToolLoopTransport({
   // This run's design directive. Owned here rather than written by the agent
   // into its own transcript, so it can be re-injected every step.
   let plan: string | null = null
+  let askUserRequestId = ''
+  let askUserRequest = ''
 
   const conditionInstructions = studyRuntime.askUserEnabled
     ? `${SYSTEM_PROMPT}\n\n${ASK_USER_AGENT_INSTRUCTIONS}\n\n${LENCANVAS_ASK_USER_INSTRUCTIONS}`
@@ -258,8 +261,11 @@ export function createToolLoopTransport({
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
       const submittedRequest = takeRequest() || lastUserText(sent)
-      if (studyRuntime.askUserEnabled) askUserSession.beginRequest(crypto.randomUUID())
-      else askUserSession.endRequest('condition-disabled')
+      if (studyRuntime.askUserEnabled) {
+        askUserRequestId = crypto.randomUUID()
+        askUserRequest = submittedRequest
+        askUserSession.beginRequest(askUserRequestId)
+      } else askUserSession.endRequest('condition-disabled')
       // Read before `resetRunSteps`, which consumes the flag. A restart appends
       // to the log rather than truncating it: the half of the build that led to
       // the feedback is the part worth having.
@@ -406,7 +412,15 @@ export function createToolLoopTransport({
       recordStepUsage(recorded, store)
     },
     onFinish: ({ finishReason, steps }) => {
+      const answers = askUserSession.takeAnswers()
       askUserSession.endRequest('request-finished')
+      if (studyRuntime.updateUserModel && answers.length > 0) {
+        void observeAskUserAnswers({
+          requestId: askUserRequestId,
+          request: askUserRequest,
+          answers
+        })
+      }
       // Also flushes the buffer, so the file is complete the moment a run ends.
       logRunEnd(`${finishReason}  ${steps.length} steps`)
     }

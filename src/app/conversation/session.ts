@@ -47,6 +47,7 @@ import { propositions as sharedPropositions } from '@/app/user-model/store'
 import {
   clearUserModel as clearSharedUserModel,
   initializeUserModel,
+  observeAskUserAnswers,
   observeFeedbackNotes
 } from '@/app/user-model/use'
 
@@ -157,6 +158,7 @@ export class ConversationStore {
     // request. Save it now so Recent survives failed or interrupted generation.
     await this.checkpoint([...chat.messages])
     await response
+    this.queueAskUserLearn(userMessage.id, clean)
   }
 
   async stop(): Promise<void> {
@@ -413,6 +415,23 @@ export class ConversationStore {
     this.preferenceUpdate = this.preferenceUpdate
       .catch(() => undefined)
       .then(() => this.learn(note))
+  }
+
+  private queueAskUserLearn(requestId: string, request: string): void {
+    const answers = this.askUserSession.takeAnswers()
+    if (answers.length === 0 || !this.options.runtime().updateUserModel) return
+    this.preferenceUpdate = this.preferenceUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        this.learning.value = true
+        try {
+          await observeAskUserAnswers({ requestId, request, answers })
+        } catch (error) {
+          console.warn('[conversation-user-model] ask_user update failed:', error)
+        } finally {
+          this.learning.value = false
+        }
+      })
   }
 
   private addFeedbackNote(note: FeedbackNote): void {

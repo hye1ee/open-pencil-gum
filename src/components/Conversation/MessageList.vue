@@ -160,7 +160,10 @@ watch(
       v-if="messages.length === 0"
       class="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center px-6 py-16 text-center"
     >
-      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">LenChat</h1>
+      <div class="flex items-center gap-4">
+        <img src="/lenchat.svg" alt="" class="size-8" />
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">LenChat</h1>
+      </div>
     </div>
     <div v-else class="pb-4">
       <template v-for="message in messages" :key="message.id">

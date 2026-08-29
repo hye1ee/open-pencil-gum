@@ -3,106 +3,106 @@ import type { Proposition } from '@/app/user-model/pipeline'
 const AT = '2026-01-01T00:00:00.000Z'
 
 const ITEMS = [
-  // General travel preferences
+  // General design-process preferences
   [
-    'Balances well-known highlights with local neighborhoods and everyday experiences.',
-    0.86,
+    'Defines the page hierarchy and primary user action before refining decorative styling.',
+    0.82,
     ''
   ],
   [
-    'Groups activities by geographic area to avoid unnecessary backtracking.',
-    0.94,
-    ''
-  ],
-  [
-    'Uses realistic travel times and recently updated operating information when planning a route.',
-    0.91,
-    ''
-  ],
-  [
-    'Limits each half-day to one major anchor activity with nearby supporting stops.',
-    0.72,
-    ''
-  ],
-  [
-    'Leaves buffer time for meals, queues, transit delays, and spontaneous discoveries.',
-    0.83,
-    ''
-  ],
-  [
-    'Prefers a concise itinerary overview followed by optional practical details.',
-    0.67,
-    ''
-  ],
-  [
-    'Wants important route, cost, and activity trade-offs explained instead of receiving only a list of places.',
-    0.88,
-    ''
-  ],
-  [
-    'Wants affordable alternatives shown alongside higher-cost attractions or experiences.',
-    0.7,
-    ''
-  ],
-  [
-    'Prefers walking and public transit when they are practical, but accepts taxis when they materially simplify the route.',
-    0.61,
-    ''
-  ],
-  [
-    'Includes an indoor or weather-safe alternative for outdoor-heavy itinerary blocks.',
+    'Starts with one representative section to establish the visual direction before expanding the full page.',
     0.56,
     ''
   ],
-  // Daejeon-specific preferences
   [
-    'Wants a Daejeon trip to reflect the city’s science and technology identity rather than resemble a generic city itinerary.',
-    0.9,
+    'Prefers a clear, restrained composition over filling every available area with content.',
+    0.76,
     ''
   ],
   [
-    'Treats the National Science Museum, Expo Science Park, Expo Bridge, and Hanbat Arboretum as one connected itinerary area.',
-    0.93,
+    'Uses visible contrast and hierarchy rather than lengthy copy to communicate importance.',
+    0.64,
     ''
   ],
   [
-    'Includes Seongsimdang as one purposeful food stop without repeatedly building the itinerary around bakery queues.',
-    0.78,
+    'Wants meaningful design alternatives explained when several directions are equally plausible.',
+    0.43,
     ''
   ],
   [
-    'Wants representative Daejeon foods such as kalguksu and dubuchigi considered alongside famous bakery items.',
-    0.65,
+    'Prefers reusable components and consistent spacing instead of one-off styling decisions.',
+    0.87,
     ''
   ],
   [
-    'Prefers using the Yuseong hot spring area as a slower evening or recovery block rather than a rushed daytime stop.',
-    0.59,
+    'Treats mobile readability and responsive behavior as part of the initial design rather than later cleanup.',
+    0.68,
     ''
   ],
   [
-    'Groups Daejeon Station, Jungang Market, and the Jungang-ro or Euneungjeongi area into the same downtown route.',
-    0.81,
+    'Keeps interactive controls accessible with legible type, sufficient contrast, and clear states.',
+    0.92,
     ''
   ],
   [
-    'Wants at least one place that communicates Daejeon’s history or local character beyond its modern science attractions.',
-    0.53,
-    ''
-  ],
-  [
-    'Pairs Hanbat Arboretum with a nearby indoor science or cultural option so the day remains useful in bad weather.',
-    0.74,
-    ''
-  ],
-  [
-    'Avoids distant regional detours outside Daejeon unless they offer a clear benefit over attractions within the city.',
+    'Uses imagery only when it adds atmosphere or information that the layout and copy cannot convey alone.',
     0.47,
     ''
   ],
   [
-    'Prefers the final day to finish near Daejeon Station when departing by train.',
-    0.69,
+    'Prefers concise interface copy with concrete labels and calls to action.',
+    0.71,
+    ''
+  ],
+  // Workshop landing-page preferences
+  [
+    'Designs workshop landing pages for curious beginners rather than assuming expert knowledge.',
+    0.61,
+    ''
+  ],
+  [
+    'Prefers a warm, energetic workshop identity rather than a formal corporate presentation.',
+    0.49,
+    ''
+  ],
+  [
+    'Uses a light neutral base with one vivid accent color for workshop landing pages.',
+    0.58,
+    ''
+  ],
+  [
+    'Makes registration the single dominant call to action and avoids competing primary buttons.',
+    0.84,
+    ''
+  ],
+  [
+    'Shows the workshop outcome and what participants will make before presenting the detailed schedule.',
+    0.73,
+    ''
+  ],
+  [
+    'Presents the schedule as a compact sequence that is easy to scan rather than a dense timetable.',
+    0.66,
+    ''
+  ],
+  [
+    'Uses facilitator credentials and participant work as evidence of credibility instead of generic testimonials.',
+    0.38,
+    ''
+  ],
+  [
+    'Prefers authentic workshop photography over abstract stock illustrations.',
+    0.52,
+    ''
+  ],
+  [
+    'Keeps essential logistics such as date, location, duration, capacity, and price visible near registration.',
+    0.79,
+    ''
+  ],
+  [
+    'Uses generous spacing and a clear section rhythm so the workshop page feels inviting rather than crowded.',
+    0.63,
     ''
   ]
 ] as const
@@ -116,7 +116,7 @@ export const USER_MODEL_FIXTURE: Proposition[] = ITEMS.map(
       // A deterministic development fixture must remain retrievable regardless
       // of the date on which the scenario is rerun.
       decay: 0,
-      reasoning: 'Stable test proposition for feedback-note evaluation.',
+      reasoning: 'Stable test proposition for controlled user-model update evaluation.',
       rationale,
       rationaleGrounds: '',
       rationaleFrom: [],

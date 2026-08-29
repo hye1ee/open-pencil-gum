@@ -21,7 +21,7 @@ const EMBEDDING_MODEL = 'text-embedding-3-small'
 const EMBEDDING_DIMENSIONS = 512
 
 function reviseSlot(purpose: RevisionPurpose): ModelSlot {
-  return purpose === 'revise-from-feedback' ? 'feedback' : 'user-model-revise'
+  return purpose === 'revise-from-frames' ? 'user-model-revise' : 'feedback'
 }
 
 /** Generous because thinking comes out of this budget: a measured call spent 898

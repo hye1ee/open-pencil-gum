@@ -7,7 +7,10 @@ export function formatAskUserLifecycleEvent(event: AskUserLifecycleEvent): strin
     case 'question-asked':
       return `request=${event.question.requestId} question=${event.question.sequence} asked: ${event.question.question}`
     case 'question-answered':
-      return `request=${event.question.requestId} question=${event.question.sequence} answered: ${event.answer}`
+      return (
+        `request=${event.question.requestId} question=${event.question.sequence} ` +
+        `selected=${event.selectedOption ?? 'custom'} answered: ${event.answer}`
+      )
     case 'question-cancelled':
       return `request=${event.question.requestId} question=${event.question.sequence} cancelled: ${event.reason}`
     case 'question-rejected':

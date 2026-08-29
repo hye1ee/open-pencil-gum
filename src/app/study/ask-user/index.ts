@@ -4,6 +4,7 @@ export { ASK_USER_AGENT_INSTRUCTIONS } from '@/app/study/ask-user/prompt'
 export { AskUserSession } from '@/app/study/ask-user/session'
 export { createAskUserTool } from '@/app/study/ask-user/tool'
 export type {
+  AskUserAnswer,
   AskUserInput,
   AskUserLifecycleEvent,
   AskUserQuestion,

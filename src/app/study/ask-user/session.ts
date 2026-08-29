@@ -1,4 +1,5 @@
 import type {
+  AskUserAnswer,
   AskUserInput,
   AskUserLifecycleEvent,
   AskUserLifecycleListener,
@@ -49,6 +50,7 @@ export class AskUserSession {
   private activeRequestId: string | null = null
   private nextSequence = 0
   private pending: PendingQuestion | null = null
+  private completed: AskUserAnswer[] = []
 
   constructor(options: AskUserSessionOptions = {}) {
     this.onEvent = options.onEvent
@@ -61,6 +63,7 @@ export class AskUserSession {
     this.cancel('request-replaced')
     this.activeRequestId = cleanRequestId
     this.nextSequence = 0
+    this.completed = []
     this.emit({ type: 'request-started', requestId: cleanRequestId })
     this.notify()
   }
@@ -105,6 +108,12 @@ export class AskUserSession {
     if (cleanSelection && !pending.question.options.includes(cleanSelection)) return false
 
     this.pending = null
+    this.completed.push({
+      question: copyQuestion(pending.question),
+      answer: cleanAnswer,
+      selectedOption: cleanSelection,
+      answeredAt: Date.now()
+    })
     pending.resolve({
       status: 'answered',
       questionId: pending.question.id,
@@ -114,7 +123,8 @@ export class AskUserSession {
     this.emit({
       type: 'question-answered',
       question: copyQuestion(pending.question),
-      answer: cleanAnswer
+      answer: cleanAnswer,
+      selectedOption: cleanSelection
     })
     this.notify()
     return true
@@ -139,6 +149,17 @@ export class AskUserSession {
     this.activeRequestId = null
     this.nextSequence = 0
     this.notify()
+  }
+
+  /** Moves the completed Q&A out of the session once a host has finished the
+   * request. Ending a request deliberately does not discard these records. */
+  takeAnswers(): AskUserAnswer[] {
+    const answers = this.completed.map((entry) => ({
+      ...entry,
+      question: copyQuestion(entry.question)
+    }))
+    this.completed = []
+    return answers
   }
 
   snapshot(): AskUserSessionSnapshot {

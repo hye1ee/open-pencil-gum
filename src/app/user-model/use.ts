@@ -4,6 +4,7 @@ import {
   logUserModelFeedback,
   logUserModelStage
 } from '@/app/ai/chat/agent-log'
+import type { UserModelAskUserBatch } from '@/app/user-model/ask-user/types'
 import {
   canBuildUserModel,
   canUpdateUserModelFromFeedback,
@@ -70,6 +71,24 @@ export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promi
   }
 }
 
+export async function observeAskUserAnswers(batch: UserModelAskUserBatch): Promise<void> {
+  if (batch.answers.length === 0 || !canUpdateUserModelFromFeedback()) return
+  current ??= createPropositionSink('ask-user')
+  logUserModelFeedback(
+    0,
+    'queued',
+    `condition=ask-user request=${batch.requestId} questions=${batch.answers.length}`
+  )
+  try {
+    await enqueueObservation(async () => {
+      await currentReady
+      await current?.observeAskUser(batch)
+    })
+  } catch (error) {
+    logUserModelFeedback(0, 'failed', error instanceof Error ? error.message : String(error))
+  }
+}
+
 /** Makes the shared app User Model available to hosts that do not start the
  * screen-capture lifecycle. LenCanvas capture and LenChat feedback must reuse
  * this one instance because they read and write the same proposition store. */
@@ -124,6 +143,23 @@ export function createPropositionSink(sessionId: string): UserModel {
       logUserModelStage(
         'retrieval',
         `shown-to-feedback-model → ${trace.shownIds.join(', ') || '(none)'}`
+      )
+    },
+
+    onAskUserRetrieval: (trace) => {
+      for (const question of trace.questions) {
+        logUserModelStage(
+          'retrieval',
+          `ask-user ${question.questionId} embedding → ${
+            question.embedding
+              .map((candidate) => `${candidate.id}:${candidate.score.toFixed(3)}`)
+              .join(', ') || '(none above threshold)'
+          }`
+        )
+      }
+      logUserModelStage(
+        'retrieval',
+        `shown-to-ask-user-model → ${trace.shownIds.join(', ') || '(none)'}`
       )
     },
 

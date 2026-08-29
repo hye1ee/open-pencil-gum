@@ -6,6 +6,13 @@
  */
 
 import {
+  FEEDBACK_SYSTEM_ASKUSER,
+  RATIONALE_SYSTEM_ASKUSER,
+  feedbackAskUserPrompt,
+  rationaleAskUserPrompt
+} from '@/app/user-model/ask-user/prompt'
+import type { AskUserRetrievalTrace, UserModelAskUserBatch } from '@/app/user-model/ask-user/types'
+import {
   FEEDBACK_SYSTEM,
   PROPOSE_SYSTEM,
   RATIONALE_SYSTEM,
@@ -78,7 +85,7 @@ interface CandidateProposition {
 
 /** Passed out so the caller can route the two differently: a timer-driven read
  * and a person's own words are not worth the same money. */
-export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback'
+export type RevisionPurpose = 'revise-from-frames' | 'revise-from-feedback' | 'revise-from-ask-user'
 
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
@@ -204,6 +211,8 @@ export interface UserModelOptions {
   onCandidates?: (candidates: CandidateProposition[]) => void
   /** Direct citations and embedding neighbours shown to FEEDBACK_SYSTEM. */
   onFeedbackRetrieval?: (trace: FeedbackRetrievalTrace) => void
+  /** Embedding neighbours shown to FEEDBACK_SYSTEM_ASKUSER. */
+  onAskUserRetrieval?: (trace: AskUserRetrievalTrace) => void
   onStage?: (stage: PipelineStage) => void
   /** A batch dropped because the screen had not moved, with how far it did. */
   onIdle?: (pixelChange: number) => void
@@ -221,6 +230,8 @@ export interface UserModel {
   addFrame(frame: Blob, meta?: FrameMeta): void
   /** Interactive Feedback Notes in their current Step → Note → item shape. */
   observeFeedback(batch: UserModelFeedbackBatch): Promise<void>
+  /** Explicit Q&A collected by the ask_user condition during one request. */
+  observeAskUser(batch: UserModelAskUserBatch): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -313,11 +324,8 @@ interface RequestedRationaleResult {
 
 function readRequestedRationales(
   raw: string,
-  feedback: UserModelFeedbackBatch
+  evidenceTexts: readonly string[]
 ): RequestedRationaleResult {
-  const explicitFeedback = feedback.notes.flatMap((note) =>
-    note.feedbackItems.map((item) => item.feedback)
-  )
   const accepted: RequestedRationale[] = []
   const rejected: string[] = []
   for (const [index, item] of parseJsonArray(raw).entries()) {
@@ -340,7 +348,7 @@ function readRequestedRationales(
       rejected.push(`entry ${index + 1}: missing ${missing.join(', ')}`)
       continue
     }
-    if (!explicitFeedback.some((text) => text.includes(purposeEvidenceQuote))) {
+    if (!evidenceTexts.some((text) => text.includes(purposeEvidenceQuote))) {
       rejected.push(`entry ${index + 1}: purpose quote is not an exact feedback substring`)
       continue
     }
@@ -699,6 +707,45 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
+  interface ExplicitEvidenceRevision {
+    propositionSystem: string
+    propositionPrompt: string
+    rationaleSystem: string
+    rationalePrompt(changed: ChangedProposition[]): string
+    evidenceTexts: readonly string[]
+    purpose: Extract<RevisionPurpose, 'revise-from-feedback' | 'revise-from-ask-user'>
+    stamp: string
+  }
+
+  /** Feedback Notes and ask_user answers have different evidence semantics and
+   * prompts, but once a model requests operations they share the same guarded
+   * proposition and rationale application machinery. */
+  async function reviseFromExplicitEvidence(input: ExplicitEvidenceRevision): Promise<void> {
+    const raw = await deps.revise({
+      system: input.propositionSystem,
+      purpose: input.purpose,
+      prompt: input.propositionPrompt
+    })
+    const asked = readRequestedRevisions(raw).filter((revision) =>
+      validFeedbackRevision(revision, propositions)
+    )
+    const changed = applyRevisions(asked, input.stamp)
+    if (changed.length > 0) await reEmbed(changed)
+
+    stage('reasoning')
+    const rawRationales = await deps.revise({
+      system: input.rationaleSystem,
+      purpose: input.purpose,
+      prompt: input.rationalePrompt(changed.map(describeChange))
+    })
+    const rationaleResult = readRequestedRationales(rawRationales, input.evidenceTexts)
+    for (const reason of rationaleResult.rejected) options.onRationaleDropped?.(reason)
+    const rationales = applyRationales(rationaleResult.accepted, input.stamp)
+
+    // `reEmbed` is what normally saves, and a rationale changes no wording.
+    if (rationales.length > 0) options.onChange([...propositions])
+  }
+
   /** One call, no propose step. Directly cited propositions establish why a
    * note was created, while embedding neighbours expose adjacent claims that
    * may also need refinement and prevent near-duplicate creation. */
@@ -746,38 +793,76 @@ export function createUserModel(options: UserModelOptions): UserModel {
       }
       options.onFeedbackRetrieval?.({ notes: retrievalNotes, shownIds: [...shown.keys()] })
 
-      const raw = await deps.revise({
-        system: FEEDBACK_SYSTEM,
-        purpose: 'revise-from-feedback',
-        prompt: feedbackUserPrompt(
+      const stamp = new Date(now).toISOString()
+      await reviseFromExplicitEvidence({
+        propositionSystem: FEEDBACK_SYSTEM,
+        propositionPrompt: feedbackUserPrompt(
           batch,
           [...shown.values()].map((p) => describe(p, now))
-        )
-      })
-      const stamp = new Date(now).toISOString()
-      // Explicit feedback may refine the scope or conditions of an existing
-      // proposition. FEEDBACK_SYSTEM keeps implicit acceptance and mere
-      // paraphrases from rewriting it.
-      const asked = readRequestedRevisions(raw).filter((revision) =>
-        validFeedbackRevision(revision, propositions)
-      )
-      const changed = applyRevisions(asked, stamp)
-      if (changed.length > 0) await reEmbed(changed)
-
-      // A second call: the why is answered better knowing the what, and it is
-      // written across the whole model, which the first call must not see.
-      stage('reasoning')
-      const rawRationales = await deps.revise({
-        system: RATIONALE_SYSTEM,
+        ),
+        rationaleSystem: RATIONALE_SYSTEM,
+        rationalePrompt: (changed) => rationaleUserPrompt(batch, changed, propositions),
+        evidenceTexts: batch.notes.flatMap((note) =>
+          note.feedbackItems.map((item) => item.feedback)
+        ),
         purpose: 'revise-from-feedback',
-        prompt: rationaleUserPrompt(batch, changed.map(describeChange), propositions)
+        stamp
       })
-      const rationaleResult = readRequestedRationales(rawRationales, batch)
-      for (const reason of rationaleResult.rejected) options.onRationaleDropped?.(reason)
-      const rationales = applyRationales(rationaleResult.accepted, stamp)
+    } catch (error) {
+      options.onError?.(error)
+    } finally {
+      running = false
+      stage('idle')
+    }
+  }
 
-      // `reEmbed` is what normally saves, and a rationale changes no wording.
-      if (rationales.length > 0) options.onChange([...propositions])
+  /** Ask User has no directly linked proposition ids. Each explicit answer is
+   * embedded independently, then the union of related propositions is shown to
+   * one request-level update call alongside every question and option. */
+  async function observeAskUser(batch: UserModelAskUserBatch): Promise<void> {
+    if (batch.answers.length === 0) return
+    if (frameRun) await frameRun
+    if (running) return
+    running = true
+    try {
+      stage('revising')
+      const now = Date.now()
+      const shown = new Map<string, Proposition>()
+      const vectors = await deps.embed(
+        batch.answers.map((entry) =>
+          [
+            `Question: ${entry.question.question}`,
+            entry.selectedOption ? `Selected option: ${entry.selectedOption}` : '',
+            `Final answer: ${entry.answer}`
+          ]
+            .filter(Boolean)
+            .join('\n')
+        )
+      )
+      const questions = batch.answers.map((entry, index) => {
+        const embedding = nearestPropositionScores(vectors[index] ?? [], propositions, now).map(
+          (near) => {
+            shown.set(near.proposition.id, near.proposition)
+            return { id: near.proposition.id, score: near.score }
+          }
+        )
+        return { questionId: entry.question.id, embedding }
+      })
+      options.onAskUserRetrieval?.({ questions, shownIds: [...shown.keys()] })
+
+      const stamp = new Date(now).toISOString()
+      await reviseFromExplicitEvidence({
+        propositionSystem: FEEDBACK_SYSTEM_ASKUSER,
+        propositionPrompt: feedbackAskUserPrompt(
+          batch,
+          [...shown.values()].map((proposition) => describe(proposition, now))
+        ),
+        rationaleSystem: RATIONALE_SYSTEM_ASKUSER,
+        rationalePrompt: (changed) => rationaleAskUserPrompt(batch, changed, propositions),
+        evidenceTexts: batch.answers.map((entry) => entry.answer),
+        purpose: 'revise-from-ask-user',
+        stamp
+      })
     } catch (error) {
       options.onError?.(error)
     } finally {
@@ -792,6 +877,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     },
 
     observeFeedback,
+    observeAskUser,
 
     load(saved) {
       // A file predating drift tracking has no original, so take where it is

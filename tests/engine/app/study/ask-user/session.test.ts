@@ -31,6 +31,18 @@ describe('ask_user session', () => {
       selectedOption: 'Official sources'
     })
     expect(session.snapshot().pendingQuestion).toBeNull()
+    expect(session.takeAnswers()).toEqual([
+      {
+        question: expect.objectContaining({
+          question: 'Which source type should I prioritize?',
+          options: ['Academic papers', 'Official sources', 'Recent news']
+        }),
+        answer: 'Use official sources.',
+        selectedOption: 'Official sources',
+        answeredAt: expect.any(Number)
+      }
+    ])
+    expect(session.takeAnswers()).toEqual([])
   })
 
   test('allows multiple sequential questions but only one pending question', async () => {
@@ -100,6 +112,11 @@ describe('ask_user session', () => {
       'question-asked',
       'question-answered'
     ])
+    expect(events[2]).toMatchObject({
+      type: 'question-answered',
+      answer: 'New researchers.',
+      selectedOption: null
+    })
     expect(formatAskUserLifecycleEvent(events[1])).toContain('question=1 asked')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('exactly one concise, actionable question')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('exactly three')
