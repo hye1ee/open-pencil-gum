@@ -32,7 +32,7 @@ describe('study runtime', () => {
     const userInitiated = createStudyRuntimeConfig('lencanvas', 'user-initiated')
     expect(userInitiated.metaAgentEnabled).toBeFalse()
     expect(userInitiated.askUserEnabled).toBeFalse()
-    expect(userInitiated.showRawReasoning).toBeTrue()
+    expect(userInitiated.showRawReasoning).toBeFalse()
     expect(userInitiated.allowFreeIntervention).toBeTrue()
   })
 

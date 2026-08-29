@@ -54,7 +54,9 @@ export function createConversationTransport(
     observer: options.observer,
     awaitReasoningReviews: options.awaitReasoningReviews,
     reasoningMode: () => ({
-      observe: runtime.metaAgentEnabled && !options.isSilentRevision(),
+      observe:
+        (runtime.metaAgentEnabled || runtime.allowFreeIntervention) &&
+        !options.isSilentRevision(),
       reveal: runtime.showRawReasoning && !options.isSilentRevision()
     }),
     awaitResume: (point) => options.gate.awaitResume(point)

@@ -53,7 +53,7 @@ if (createdInitialTab && route.meta.demo && !('test' in params)) {
 useHead({
   title: route.meta.demo ? 'Demo' : 'LenCanvas',
   titleTemplate: null,
-  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lencanvas.svg' }]
+  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lencanvas.svg?v=8' }]
 })
 useKeyboard()
 useMenu()
@@ -202,7 +202,7 @@ onUnmounted(() => {
           v-if="!isMobile"
           class="absolute top-7 left-7 z-10 flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm"
         >
-          <img src="/lencanvas.svg" class="size-4" alt="" />
+          <img src="/lencanvas.svg?v=8" class="size-4" alt="" />
           <span data-test-id="editor-document-name" class="text-xs text-surface">{{
             store.state.documentName
           }}</span>

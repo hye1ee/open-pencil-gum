@@ -42,6 +42,11 @@ import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
 import { AskUserSession, formatAskUserLifecycleEvent } from '@/app/study/ask-user'
 import type { AskUserQuestion } from '@/app/study/ask-user'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
+import {
+  createReasoningReviewSession,
+  type ReasoningFeedbackOutcome
+} from '@/app/study/user-initiated/reasoning-review'
+import { renderReasoningFeedbackReport } from '@/app/study/user-initiated/report'
 import { canUpdateUserModelFromFeedback } from '@/app/user-model/calls'
 import { propositions as sharedPropositions } from '@/app/user-model/store'
 import {
@@ -63,9 +68,15 @@ export class ConversationStore {
   private readonly askUserSession: AskUserSession
   private readonly chatRef = shallowRef<Chat<UIMessage> | null>(null)
   private gate = new ChatTurnGate()
+  private readonly reasoningReviewSession = createReasoningReviewSession({
+    hold: () => this.gate.hold(),
+    release: () => this.gate.resume()
+  })
   private revisionFeedback: string | null = null
   private revisionRun = 0
   private revisionPending = false
+  private reasoningRevisionScheduled = false
+  private reasoningFeedbackOutcomes: ReasoningFeedbackOutcome[] = []
   private activeChatRequest: Promise<void> | null = null
   private preferenceUpdate: Promise<void> = Promise.resolve()
   private resetMetaAgentMonitor: () => void = () => undefined
@@ -83,6 +94,7 @@ export class ConversationStore {
   readonly revising = ref(false)
   readonly actions = ref<string[]>([])
   readonly reasoningChunks = shallowRef<ConversationReasoningChunk[]>([])
+  readonly reasoningReviews = this.reasoningReviewSession.reviews
   readonly askUserQuestion = shallowRef<AskUserQuestion | null>(null)
   readonly lastError = ref('')
 
@@ -93,8 +105,10 @@ export class ConversationStore {
     () => this.status.value === 'submitted' || this.status.value === 'streaming'
   )
   readonly configured = computed(() => this.options.apiKey().trim() !== '')
-  readonly feedbackPending = computed(() =>
-    this.feedbackNotes.value.some((note) => note.status === 'pending')
+  readonly feedbackPending = computed(
+    () =>
+      this.feedbackNotes.value.some((note) => note.status === 'pending') ||
+      this.reasoningReviewSession.hasPending()
   )
 
   constructor(options: ConversationStoreOptions) {
@@ -129,8 +143,13 @@ export class ConversationStore {
     this.revisionRun += 1
     this.revising.value = false
     this.revisionPending = false
+    this.reasoningRevisionScheduled = false
+    this.reasoningFeedbackOutcomes = []
     this.actions.value = []
     this.reasoningChunks.value = []
+    this.reasoningReviewSession.reset()
+    this.reasoningReviewSession.setObserving(true)
+    this.reasoningReviewSession.beginRequest(clean)
     this.feedbackNotes.value = []
     lenChatFeedbackHistory.reset()
     this.monitorActive.value = false
@@ -163,6 +182,9 @@ export class ConversationStore {
 
   async stop(): Promise<void> {
     this.gate.abandon()
+    this.reasoningReviewSession.reset()
+    this.reasoningRevisionScheduled = false
+    this.reasoningFeedbackOutcomes = []
     this.feedbackNotes.value = []
     this.revisionRun += 1
     this.revisionPending = false
@@ -177,9 +199,27 @@ export class ConversationStore {
     return this.askUserSession.answer(answer, selectedOption)
   }
 
+  continueReasoningReview(reviewId: string): void {
+    this.reasoningReviewSession.continueReview(reviewId)
+  }
+
+  reviseFromReasoning(reviewId: string, feedback: string, selectedReasoning: string | null): void {
+    const outcome = this.reasoningReviewSession.submitFeedback(
+      reviewId,
+      feedback,
+      selectedReasoning
+    )
+    if (!outcome) return
+    this.reasoningFeedbackOutcomes.push(outcome)
+    this.gate.deferAbandonAtCommit()
+    if (this.reasoningRevisionScheduled) return
+    this.reasoningRevisionScheduled = true
+    void this.finishReasoningFeedback(this.activeChatRequest)
+  }
+
   continueFromFeedback(noteId: string): void {
     const note = this.feedbackNotes.value.find((candidate) => candidate.id === noteId)
-    if (!note || note.status !== 'pending') return
+    if (note?.status !== 'pending') return
     const continuedNote: ConversationFeedbackNote = { ...note, status: 'continued' }
     this.feedbackNotes.value = this.feedbackNotes.value.map((candidate) =>
       candidate.id === noteId ? continuedNote : candidate
@@ -204,7 +244,7 @@ export class ConversationStore {
           ]
         : []
     })
-    if (!note || note.status !== 'pending' || cleanItems.length === 0) return
+    if (note?.status !== 'pending' || cleanItems.length === 0) return
     const reply = cleanItems.map((item) => item.text).join('\n')
     const answeredNote: ConversationFeedbackNote = {
       ...note,
@@ -227,11 +267,14 @@ export class ConversationStore {
     this.currentId.value = crypto.randomUUID()
     this.createdAt = Date.now()
     this.feedbackNotes.value = []
+    this.reasoningReviewSession.reset()
     lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
     this.reasoningChunks.value = []
     this.revisionFeedback = null
+    this.reasoningRevisionScheduled = false
+    this.reasoningFeedbackOutcomes = []
     this.buildChat([])
   }
 
@@ -243,6 +286,9 @@ export class ConversationStore {
     this.currentId.value = record.id
     this.createdAt = record.createdAt
     this.feedbackNotes.value = []
+    this.reasoningReviewSession.reset()
+    this.reasoningRevisionScheduled = false
+    this.reasoningFeedbackOutcomes = []
     lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
@@ -285,6 +331,9 @@ export class ConversationStore {
   private buildChat(messages: UIMessage[]): void {
     this.askUserSession.endRequest('chat-reconfigured')
     this.feedbackNotes.value = []
+    this.reasoningReviewSession.reset()
+    this.reasoningRevisionScheduled = false
+    this.reasoningFeedbackOutcomes = []
     this.revisionPending = true
     this.resetMetaAgentMonitor()
     this.reasoningChunks.value = []
@@ -292,8 +341,8 @@ export class ConversationStore {
     this.revisionPending = false
     this.revising.value = false
     this.gate.abandon()
-    this.gate = new ChatTurnGate()
     const runtime = this.options.runtime()
+    this.gate = new ChatTurnGate(runtime.allowFreeIntervention)
     const monitor = runtime.metaAgentEnabled
       ? createChatMonitor({
           getContext: () => ({
@@ -329,8 +378,10 @@ export class ConversationStore {
       enabledTools: this.options.enabledTools(),
       runtime,
       askUserSession: this.askUserSession,
-      observer: monitor?.observer ?? NOOP_REASONING_OBSERVER,
-      awaitReasoningReviews: runtime.metaAgentEnabled,
+      observer: runtime.allowFreeIntervention
+        ? this.reasoningReviewSession.observer
+        : (monitor?.observer ?? NOOP_REASONING_OBSERVER),
+      awaitReasoningReviews: runtime.metaAgentEnabled || runtime.allowFreeIntervention,
       isSilentRevision: () => this.revising.value,
       gate: this.gate,
       getPropositions: () => this.propositions.value,
@@ -564,7 +615,7 @@ export class ConversationStore {
       `waiting for ${this.feedbackNotes.value.length} reviewed notes to update the user model`
     )
     await this.preferenceUpdate.catch(() => undefined)
-    if (this.chatRef.value !== chat || this.revisionRun !== handoffRun || !this.revisionPending) {
+    if (this.chatRef.value !== chat || this.revisionRun !== handoffRun) {
       return
     }
     const revisionRun = ++this.revisionRun
@@ -606,6 +657,77 @@ export class ConversationStore {
           'retry-complete',
           `silent retry finished; status=${chat.status} answer=${revisedAnswerLength} chars`
         )
+        this.revising.value = false
+        this.revisionPending = false
+      }
+    }
+  }
+
+  private async finishReasoningFeedback(firstRequest: Promise<void> | null): Promise<void> {
+    const chat = this.chatRef.value
+    if (!chat) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+    const handoffRun = this.revisionRun
+    await firstRequest?.catch(() => undefined)
+    if (this.chatRef.value !== chat || this.revisionRun !== handoffRun) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+    const outcomes = [...this.reasoningFeedbackOutcomes]
+    if (outcomes.length === 0 || this.revisionPending) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+    const requestMessage = [...chat.messages].reverse().find((message) => message.role === 'user')
+    if (!requestMessage) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+
+    this.revisionPending = true
+    const revisionRun = ++this.revisionRun
+    this.revising.value = true
+    this.reasoningReviewSession.setObserving(false)
+    this.revisionFeedback = renderReasoningFeedbackReport(outcomes)
+    logChatFeedbackLifecycle(
+      'retry',
+      `reasoning-reviews=${outcomes.length}; first run reached commit boundary; silently retrying`
+    )
+
+    this.gate.clearDeferredAbandon()
+    this.resetMetaAgentMonitor()
+    if (this.chatRef.value !== chat || this.revisionRun !== revisionRun) {
+      this.reasoningRevisionScheduled = false
+      return
+    }
+
+    this.actions.value = []
+    this.reasoningChunks.value = []
+    this.feedbackNotes.value = []
+    this.reasoningReviewSession.reset()
+    this.reasoningReviewSession.beginRequest(outcomes[0]?.review.request ?? '')
+    this.reasoningFeedbackOutcomes = []
+
+    let revisedAnswerLength = 0
+    try {
+      await this.trackChatRequest(chat.regenerate({ messageId: requestMessage.id }))
+      const revisedAnswer = [...chat.messages]
+        .reverse()
+        .find((message) => message.role === 'assistant')
+      revisedAnswerLength = revisedAnswer ? messageText(revisedAnswer).length : 0
+      if (!chat.error && revisedAnswerLength === 0) {
+        this.lastError.value = 'The revised response was empty. Please try again.'
+      }
+    } finally {
+      if (this.revisionRun === revisionRun) {
+        logChatFeedbackLifecycle(
+          'retry-complete',
+          `reasoning feedback retry finished; status=${chat.status} answer=${revisedAnswerLength} chars`
+        )
+        this.reasoningReviewSession.setObserving(true)
+        this.reasoningRevisionScheduled = false
         this.revising.value = false
         this.revisionPending = false
       }

@@ -14,6 +14,7 @@ import {
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { propositions as currentUserModelPropositions } from '@/app/user-model/store'
 import { awaitUserModelSettled } from '@/app/user-model/use'
+import { getStudyRuntime } from '@/app/study/runtime'
 
 let request = ''
 let runPropositions: Proposition[] = []
@@ -54,6 +55,7 @@ export async function startMetaAgentTurn(
 // Registered here because the reasoning tap must not import model setup.
 installReasoningObserver({
   isEnabled: () => enabled,
+  isUserInitiated: () => getStudyRuntime().condition === 'user-initiated',
   getStore: () => runStore,
   getRequest: () => request,
   getPlan: currentPlan,

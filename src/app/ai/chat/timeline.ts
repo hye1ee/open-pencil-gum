@@ -7,11 +7,27 @@ export type MidRunUserMessage = {
   afterPartCount: number | null
 }
 
-export type ChatTimelineItem = {
+export type ChatTimelineMessageItem = {
+  kind: 'message'
   key: string
   message: UIMessage
   variant: 'default' | 'additional-feedback'
 }
+
+export type ChatTimelineInsertion<Value> = {
+  key: string
+  anchorMessageId: string
+  afterPartCount: number | null
+  value: Value
+}
+
+export type ChatTimelineItem<Value = never> =
+  | ChatTimelineMessageItem
+  | {
+      kind: 'insertion'
+      key: string
+      value: Value
+    }
 
 function userMessage(item: MidRunUserMessage): UIMessage {
   return {
@@ -21,12 +37,38 @@ function userMessage(item: MidRunUserMessage): UIMessage {
   }
 }
 
-function defaultItem(message: UIMessage): ChatTimelineItem {
-  return { key: message.id, message, variant: 'default' }
+function defaultItem(message: UIMessage): ChatTimelineMessageItem {
+  return { kind: 'message', key: message.id, message, variant: 'default' }
 }
 
-function feedbackItem(item: MidRunUserMessage): ChatTimelineItem {
-  return { key: item.id, message: userMessage(item), variant: 'additional-feedback' }
+function feedbackItem(item: MidRunUserMessage): ChatTimelineMessageItem {
+  return {
+    kind: 'message',
+    key: item.id,
+    message: userMessage(item),
+    variant: 'additional-feedback'
+  }
+}
+
+type AnchoredEvent<Value> =
+  | {
+      kind: 'feedback'
+      key: string
+      afterPartCount: number | null
+      value: MidRunUserMessage
+      order: number
+    }
+  | {
+      kind: 'insertion'
+      key: string
+      afterPartCount: number | null
+      value: Value
+      order: number
+    }
+
+function eventItem<Value>(event: AnchoredEvent<Value>): ChatTimelineItem<Value> {
+  if (event.kind === 'feedback') return feedbackItem(event.value)
+  return { kind: 'insertion', key: event.key, value: event.value }
 }
 
 /**
@@ -34,20 +76,47 @@ function feedbackItem(item: MidRunUserMessage): ChatTimelineItem {
  * sent. This only changes presentation: the task-agent transcript continues to
  * receive these messages through the step-boundary intervention channel.
  */
-export function composeChatTimeline(
+export function composeChatTimeline<Value = never>(
   messages: readonly UIMessage[],
-  midRunMessages: readonly MidRunUserMessage[]
-): ChatTimelineItem[] {
-  if (midRunMessages.length === 0) return messages.map(defaultItem)
+  midRunMessages: readonly MidRunUserMessage[],
+  insertions: readonly ChatTimelineInsertion<Value>[] = []
+): ChatTimelineItem<Value>[] {
+  if (midRunMessages.length === 0 && insertions.length === 0) return messages.map(defaultItem)
 
-  const byAnchor = new Map<string, MidRunUserMessage[]>()
-  for (const item of midRunMessages) {
-    const anchored = byAnchor.get(item.anchorMessageId)
-    if (anchored) anchored.push(item)
-    else byAnchor.set(item.anchorMessageId, [item])
+  const byAnchor = new Map<string, AnchoredEvent<Value>[]>()
+  const addEvent = (anchorMessageId: string, event: AnchoredEvent<Value>): void => {
+    const anchored = byAnchor.get(anchorMessageId)
+    if (anchored) anchored.push(event)
+    else byAnchor.set(anchorMessageId, [event])
+  }
+  midRunMessages.forEach((item, order) => {
+    addEvent(item.anchorMessageId, {
+      kind: 'feedback',
+      key: item.id,
+      afterPartCount: item.afterPartCount,
+      value: item,
+      order
+    })
+  })
+  insertions.forEach((item, index) => {
+    addEvent(item.anchorMessageId, {
+      kind: 'insertion',
+      key: item.key,
+      afterPartCount: item.afterPartCount,
+      value: item.value,
+      order: midRunMessages.length + index
+    })
+  })
+
+  for (const events of byAnchor.values()) {
+    events.sort((a, b) => {
+      const aBoundary = a.afterPartCount ?? Number.MAX_SAFE_INTEGER
+      const bBoundary = b.afterPartCount ?? Number.MAX_SAFE_INTEGER
+      return aBoundary - bBoundary || a.order - b.order
+    })
   }
 
-  const timeline: ChatTimelineItem[] = []
+  const timeline: ChatTimelineItem<Value>[] = []
   const inserted = new Set<string>()
 
   for (const message of messages) {
@@ -59,29 +128,29 @@ export function composeChatTimeline(
 
     if (message.role !== 'assistant') {
       timeline.push(defaultItem(message))
-      for (const item of anchored) {
-        timeline.push(feedbackItem(item))
-        inserted.add(item.id)
+      for (const event of anchored) {
+        timeline.push(eventItem(event))
+        inserted.add(event.key)
       }
       continue
     }
 
     let partStart = 0
     let segment = 0
-    for (const item of anchored) {
-      const requestedEnd = item.afterPartCount ?? message.parts.length
+    for (const event of anchored) {
+      const requestedEnd = event.afterPartCount ?? message.parts.length
       const partEnd = Math.max(partStart, Math.min(requestedEnd, message.parts.length))
       if (partEnd > partStart) {
         const fragment: UIMessage = {
           ...message,
-          id: `${message.id}:before-${item.id}`,
+          id: `${message.id}:before-${event.key}`,
           parts: message.parts.slice(partStart, partEnd)
         }
-        timeline.push({ key: fragment.id, message: fragment, variant: 'default' })
+        timeline.push({ kind: 'message', key: fragment.id, message: fragment, variant: 'default' })
         segment++
       }
-      timeline.push(feedbackItem(item))
-      inserted.add(item.id)
+      timeline.push(eventItem(event))
+      inserted.add(event.key)
       partStart = partEnd
     }
 
@@ -91,7 +160,7 @@ export function composeChatTimeline(
         id: `${message.id}:after-${segment}`,
         parts: message.parts.slice(partStart)
       }
-      timeline.push({ key: fragment.id, message: fragment, variant: 'default' })
+      timeline.push({ kind: 'message', key: fragment.id, message: fragment, variant: 'default' })
     }
   }
 
@@ -99,6 +168,11 @@ export function composeChatTimeline(
   // provider stream was being repaired or replaced.
   for (const item of midRunMessages) {
     if (!inserted.has(item.id)) timeline.push(feedbackItem(item))
+  }
+  for (const item of insertions) {
+    if (!inserted.has(item.key)) {
+      timeline.push({ kind: 'insertion', key: item.key, value: item.value })
+    }
   }
 
   return timeline

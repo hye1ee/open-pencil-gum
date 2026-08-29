@@ -32,7 +32,7 @@ import type { ConversationFeedbackItem } from '@/app/conversation/types'
 useHead({
   title: 'LenChat',
   titleTemplate: null,
-  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lenchat.svg' }]
+  link: [{ key: 'app-favicon', rel: 'icon', type: 'image/svg+xml', href: '/lenchat.svg?v=2' }]
 })
 
 const route = useRoute()
@@ -56,6 +56,7 @@ const {
   feedbackNotes,
   feedbackPending,
   feedbackGenerating,
+  reasoningReviews,
   askUserQuestion,
   revising,
   learning,
@@ -99,6 +100,10 @@ function reviseFromFeedback(id: string, items: ConversationFeedbackItem[]): void
   store.reviseFromFeedback(id, items)
 }
 
+function reviseFromReasoning(id: string, feedback: string, selectedReasoning: string | null): void {
+  store.reviseFromReasoning(id, feedback, selectedReasoning)
+}
+
 function answerAskUser(answer: string, selectedOption: string | null): void {
   store.answerAskUser(answer, selectedOption)
 }
@@ -124,10 +129,13 @@ function answerAskUser(answer: string, selectedOption: string | null): void {
         :status="status"
         :feedback-notes="feedbackNotes"
         :feedback-generating="feedbackGenerating"
+        :reasoning-reviews="reasoningReviews"
         :revising="revising"
         :propositions="propositions"
         @continue="store.continueFromFeedback($event)"
         @feedback="reviseFromFeedback"
+        @continue-reasoning="store.continueReasoningReview($event)"
+        @reasoning-feedback="reviseFromReasoning"
       />
       <div v-if="lastError" class="mx-auto w-full max-w-3xl px-6 pb-2 text-xs text-red-600">
         {{ lastError }}

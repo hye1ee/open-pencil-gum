@@ -1,16 +1,26 @@
 <script setup lang="ts">
 import { ScrollAreaRoot, ScrollAreaScrollbar, ScrollAreaThumb, ScrollAreaViewport } from 'reka-ui'
 import { refAutoReset } from '@vueuse/core'
-import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
 import { getAcpDebugText, clearAcpDebugLog, hasAcpDebugEntries } from '@/app/ai/acp/transport'
 import { hideAgentCursor, showAgentCursor } from '@/app/ai/chat/agent-cursor'
 import { agentActivity } from '@/app/ai/chat/agent-activity'
 import { logFeedbackAnswer, logFeedbackStep, logUserMessage } from '@/app/ai/chat/agent-log'
-import { abandonTurn, agentTurn, resumeTurn, setTurnRunning } from '@/app/ai/chat/agent-turn'
+import {
+  abandonTurn,
+  abandonTurnAtCommit,
+  agentTurn,
+  resumeTurn,
+  setTurnRunning
+} from '@/app/ai/chat/agent-turn'
 import { enqueueUserMessage } from '@/app/ai/chat/user-messages'
 import { withoutDanglingToolCalls } from '@/app/ai/chat/transcript'
-import { composeChatTimeline, type MidRunUserMessage } from '@/app/ai/chat/timeline'
+import {
+  composeChatTimeline,
+  type ChatTimelineInsertion,
+  type MidRunUserMessage
+} from '@/app/ai/chat/timeline'
 import { copyChatLog } from '@/app/ai/debug'
 import { renderStepFeedbackReport } from '@/app/meta-agent/hosts/lencanvas/feedback-note/report'
 import { userModelFeedbackBatch } from '@/app/meta-agent/hosts/lencanvas/feedback-note/user-model'
@@ -30,19 +40,26 @@ import { currentMetaRequest } from '@/app/meta-agent/hosts/lencanvas/use'
 import { observeFeedbackNotes } from '@/app/user-model/use'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { getStudyRuntime } from '@/app/study/runtime'
+import { renderReasoningFeedbackReport } from '@/app/study/user-initiated/report'
 import { activeTab } from '@/app/tabs'
 import AcpPermissionDialog from '@/components/chat/AcpPermissionDialog.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import AskUserCard from '@/components/Conversation/AskUserCard.vue'
+import ReasoningReviewCard from '@/components/Conversation/ReasoningReviewCard.vue'
 import AppTextButton from '@/components/ui/AppTextButton.vue'
 import ProviderSetup from '@/components/chat/ProviderSetup.vue'
 import { useAIChat } from '@/app/ai/chat/use'
 import { toast } from '@/app/shell/ui'
+import { lencanvasReasoningReviews } from '@/app/meta-agent/hosts/lencanvas/user-initiated'
 import { useI18n } from '@open-pencil/vue'
 
 import type { Chat } from '@ai-sdk/vue'
 import type { UIMessage } from 'ai'
+import type {
+  ReasoningFeedbackOutcome,
+  ReasoningReview
+} from '@/app/study/user-initiated/reasoning-review'
 
 const IS_DEV = import.meta.env.DEV
 
@@ -57,7 +74,7 @@ const {
 } = useAIChat()
 const { dialogs } = useI18n()
 
-const chat = ref<Chat<UIMessage> | null>(null)
+const chat = shallowRef<Chat<UIMessage> | null>(null)
 
 ensureChat().then((c) => {
   if (c) chat.value = markRaw(c)
@@ -67,6 +84,7 @@ const debugCopied = refAutoReset(false, 1500)
 const acpLogCopied = refAutoReset(false, 1500)
 
 const messages = computed(() => chat.value?.messages ?? [])
+const reasoningReviews = lencanvasReasoningReviews.reviews
 const visibleMessages = computed(() =>
   messages.value.filter((message) => {
     const metadata = message.metadata
@@ -77,6 +95,10 @@ const status = computed(() => chat.value?.status ?? 'ready')
 const isRunning = computed(() => status.value === 'streaming' || status.value === 'submitted')
 const retryHandoffToken = ref<number | null>(null)
 let nextRetryHandoffToken = 1
+let activeChatRequest: Promise<void> | null = null
+let reasoningRevisionScheduled = false
+let reasoningFeedbackOutcomes: ReasoningFeedbackOutcome[] = []
+let reasoningCommitBoundary: Promise<void> | null = null
 const logicallyRunning = computed(
   () => isRunning.value || retryHandoffToken.value !== null || agentTurn.paused
 )
@@ -84,8 +106,60 @@ const logicallyRunning = computed(
 // Messages the user typed while a run was in progress. They're injected into the
 // running loop (not the persisted history), so we echo them here optimistically.
 const queuedBubbles = ref<MidRunUserMessage[]>([])
+type ReasoningReviewAnchor = {
+  reviewId: string
+  anchorMessageId: string
+  afterPartCount: number | null
+}
+const reasoningReviewAnchors = ref<ReasoningReviewAnchor[]>([])
+watch(
+  reasoningReviews,
+  (reviews) => {
+    if (reviews.length === 0) {
+      reasoningReviewAnchors.value = []
+      return
+    }
+    const anchored = new Set(reasoningReviewAnchors.value.map((item) => item.reviewId))
+    const additions: ReasoningReviewAnchor[] = []
+    for (const review of reviews) {
+      if (anchored.has(review.id)) continue
+      const anchor = visibleMessages.value.at(-1)
+      if (!anchor) continue
+      additions.push({
+        reviewId: review.id,
+        anchorMessageId: anchor.id,
+        afterPartCount: anchor.role === 'assistant' ? anchor.parts.length : null
+      })
+    }
+    if (additions.length > 0) {
+      reasoningReviewAnchors.value = [...reasoningReviewAnchors.value, ...additions]
+    }
+  },
+  { flush: 'sync', immediate: true }
+)
+const reasoningReviewInsertions = computed<ChatTimelineInsertion<ReasoningReview>[]>(() => {
+  const reviews = new Map(reasoningReviews.value.map((review) => [review.id, review]))
+  return reasoningReviewAnchors.value.flatMap((anchor) => {
+    const review = reviews.get(anchor.reviewId)
+    if (!review) return []
+    return [
+      {
+        key: `review-${review.id}`,
+        anchorMessageId: anchor.anchorMessageId,
+        afterPartCount: anchor.afterPartCount,
+        value: review
+      }
+    ]
+  })
+})
 const timelineMessages = computed(() =>
-  composeChatTimeline(visibleMessages.value, queuedBubbles.value)
+  composeChatTimeline(visibleMessages.value, queuedBubbles.value, reasoningReviewInsertions.value)
+)
+const anchoredReasoningReviewIds = computed(
+  () => new Set(reasoningReviewInsertions.value.map((item) => item.value.id))
+)
+const unanchoredReasoningReviews = computed(() =>
+  reasoningReviews.value.filter((review) => !anchoredReasoningReviewIds.value.has(review.id))
 )
 let nextQueuedBubbleId = 1
 // Counted off the run rather than off the last assistant message. A build
@@ -123,6 +197,14 @@ function finishRetryHandoff(token: number): void {
   setTurnRunning(isRunning.value)
 }
 
+function trackChatRequest(request: Promise<void>): Promise<void> {
+  const tracked = request.finally(() => {
+    if (activeChatRequest === tracked) activeChatRequest = null
+  })
+  activeChatRequest = tracked
+  return tracked
+}
+
 const showContinue = computed(() => {
   if (status.value !== 'ready') return false
   if (messages.value.length === 0) return false
@@ -138,6 +220,7 @@ function scrollToBottom() {
 
 watch(messages, scrollToBottom, { deep: true })
 watch(activityText, scrollToBottom)
+watch(reasoningReviews, scrollToBottom, { deep: true })
 watch(
   () => chat.value?.error,
   (error) => {
@@ -166,6 +249,7 @@ onMounted(() => showAgentCursor(getActiveEditorStore()))
 onUnmounted(() => {
   hideAgentCursor(getActiveEditorStore())
   setStepFeedbackHandler(null)
+  lencanvasReasoningReviews.reset()
 })
 
 async function handleSubmit(text: string) {
@@ -190,6 +274,11 @@ async function handleSubmit(text: string) {
   }
 
   queuedBubbles.value = []
+  reasoningRevisionScheduled = false
+  reasoningFeedbackOutcomes = []
+  reasoningCommitBoundary = null
+  lencanvasReasoningReviews.setObserving(true)
+  lencanvasReasoningReviews.beginRequest(text)
   try {
     const c = await ensureChat()
     if (c) chat.value = markRaw(c)
@@ -199,7 +288,9 @@ async function handleSubmit(text: string) {
     return
   }
   noteUserRequest(text)
-  chat.value?.sendMessage({ text }).catch((e: unknown) => {
+  const activeChat = chat.value
+  if (!activeChat) return
+  void trackChatRequest(activeChat.sendMessage({ text })).catch((e: unknown) => {
     console.error('Chat error:', e)
     toast.error(e instanceof Error ? e.message : String(e))
   })
@@ -213,12 +304,103 @@ async function handleSubmit(text: string) {
  */
 function handleStop() {
   stopAskUser()
+  reasoningRevisionScheduled = false
+  reasoningFeedbackOutcomes = []
+  reasoningCommitBoundary = null
   abandonTurn('stop button')
   void chat.value?.stop()
 }
 
 function handleAskUserAnswer(answer: string, selectedOption: string | null): void {
   answerAskUser(answer, selectedOption)
+}
+
+function handleReasoningFeedback(
+  reviewId: string,
+  feedback: string,
+  selectedReasoning: string | null
+): void {
+  const outcome = lencanvasReasoningReviews.submitFeedback(reviewId, feedback, selectedReasoning)
+  if (!outcome) return
+  reasoningFeedbackOutcomes.push(outcome)
+  if (!reasoningCommitBoundary) {
+    const activeChat = chat.value
+    reasoningCommitBoundary = abandonTurnAtCommit('reasoning feedback retry')
+    // The model stream has now exposed every reviewable reasoning chunk and
+    // reached this step's action/final boundary. Stop the discarded request so
+    // the SDK request promise settles, then the single step-level retry below
+    // can start with every explicit response collected for this step.
+    void reasoningCommitBoundary.then(async () => {
+      if (chat.value !== activeChat) return
+      await activeChat?.stop()
+    })
+  }
+  scheduleReasoningFeedbackRetry()
+}
+
+function scheduleReasoningFeedbackRetry(): void {
+  if (reasoningRevisionScheduled || reasoningFeedbackOutcomes.length === 0) return
+  reasoningRevisionScheduled = true
+  void retryFromReasoningFeedback(chat.value, activeChatRequest)
+}
+
+async function retryFromReasoningFeedback(
+  activeChat: Chat<UIMessage> | null,
+  firstRequest: Promise<void> | null
+): Promise<void> {
+  if (!activeChat) {
+    reasoningRevisionScheduled = false
+    return
+  }
+  await firstRequest?.catch(() => undefined)
+  if (chat.value !== activeChat || retryHandoffToken.value !== null) {
+    reasoningRevisionScheduled = false
+    return
+  }
+  const outcomes = [...reasoningFeedbackOutcomes]
+  if (outcomes.length === 0) {
+    reasoningRevisionScheduled = false
+    return
+  }
+  const request = outcomes[0]?.review.request || currentMetaRequest()
+  const handoffToken = beginRetryHandoff()
+  reasoningCommitBoundary = null
+
+  try {
+    const store = getActiveEditorStore()
+    const replayStep = currentRunStepNumber(store)
+    activeChat.messages = withoutDanglingToolCalls(activeChat.messages)
+    continueRunSteps(store)
+    noteUserRequest(request)
+    lencanvasReasoningReviews.reset()
+    lencanvasReasoningReviews.beginRequest(request)
+    beginFeedbackReplay(replayStep)
+
+    reasoningFeedbackOutcomes = []
+    const text = renderReasoningFeedbackReport(outcomes)
+    logFeedbackAnswer(
+      'resumed',
+      `${outcomes.length} reasoning reviews corrected; replaying step ${replayStep} without reasoning checkpoints`
+    )
+    logUserMessage(text)
+    await trackChatRequest(
+      activeChat.sendMessage({
+        text,
+        metadata: { internal: 'reasoning-feedback-retry' }
+      })
+    )
+  } catch (error) {
+    console.error('Reasoning feedback retry error:', error)
+    toast.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    finishRetryHandoff(handoffToken)
+    reasoningRevisionScheduled = false
+
+    // A later reasoning checkpoint can be answered while this retry request is
+    // still running. Its outcome stays in the queue above; start the next retry
+    // as soon as the current handoff has fully released instead of dropping it.
+    scheduleReasoningFeedbackRetry()
+  }
 }
 
 async function handleStepFeedback(result: StepFeedbackResult): Promise<void> {
@@ -317,6 +499,10 @@ async function handleCopyAcpLog() {
 
 function handleClearChat() {
   stopAskUser()
+  reasoningRevisionScheduled = false
+  reasoningFeedbackOutcomes = []
+  reasoningCommitBoundary = null
+  lencanvasReasoningReviews.reset()
   chat.value = null
   resetChat()
   clearToolLogEntries()
@@ -353,11 +539,24 @@ function handleClearChat() {
 
           <!-- Messages -->
           <div v-else data-test-id="chat-messages" class="flex flex-col gap-3">
-            <ChatMessage
-              v-for="item in timelineMessages"
-              :key="item.key"
-              :message="item.message"
-              :variant="item.variant"
+            <template v-for="item in timelineMessages" :key="item.key">
+              <ReasoningReviewCard
+                v-if="item.kind === 'insertion'"
+                compact
+                :review="item.value"
+                @continue="lencanvasReasoningReviews.continueReview($event)"
+                @feedback="handleReasoningFeedback"
+              />
+              <ChatMessage v-else :message="item.message" :variant="item.variant" />
+            </template>
+
+            <ReasoningReviewCard
+              v-for="review in unanchoredReasoningReviews"
+              :key="review.id"
+              compact
+              :review="review"
+              @continue="lencanvasReasoningReviews.continueReview($event)"
+              @feedback="handleReasoningFeedback"
             />
 
             <!-- Persistent run activity, including background Meta Agent review. -->

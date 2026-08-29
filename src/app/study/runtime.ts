@@ -42,7 +42,7 @@ const CONDITION_CONFIGS: Record<StudyCondition, ConditionConfig> = {
   'user-initiated': {
     metaAgentEnabled: false,
     askUserEnabled: false,
-    showRawReasoning: true,
+    showRawReasoning: false,
     allowFreeIntervention: true,
     taskAgentUsesUserModel: false,
     updateUserModel: true,

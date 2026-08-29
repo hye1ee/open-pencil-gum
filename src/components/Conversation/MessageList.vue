@@ -3,22 +3,34 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import InlineFeedbackNote from '@/components/Conversation/InlineFeedbackNote.vue'
 import MessageBubble from '@/components/Conversation/MessageBubble.vue'
+import ReasoningReviewCard from '@/components/Conversation/ReasoningReviewCard.vue'
 import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
+import type { ReasoningReview } from '@/app/study/user-initiated/reasoning-review'
 import type { Proposition } from '@/app/user-model/pipeline'
 import type { ChatStatus, UIMessage } from 'ai'
 
-const { messages, status, feedbackNotes, feedbackGenerating, revising, propositions } =
-  defineProps<{
-    messages: UIMessage[]
-    status: ChatStatus
-    feedbackNotes: ConversationFeedbackNote[]
-    feedbackGenerating: boolean
-    revising: boolean
-    propositions: Proposition[]
-  }>()
+const {
+  messages,
+  status,
+  feedbackNotes,
+  feedbackGenerating,
+  reasoningReviews,
+  revising,
+  propositions
+} = defineProps<{
+  messages: UIMessage[]
+  status: ChatStatus
+  feedbackNotes: ConversationFeedbackNote[]
+  feedbackGenerating: boolean
+  reasoningReviews: readonly ReasoningReview[]
+  revising: boolean
+  propositions: Proposition[]
+}>()
 const emit = defineEmits<{
   continue: [id: string]
   feedback: [id: string, items: ConversationFeedbackItem[]]
+  continueReasoning: [id: string]
+  reasoningFeedback: [id: string, feedback: string, selectedReasoning: string | null]
 }>()
 const scroller = ref<HTMLDivElement>()
 const activeNoteId = ref<string | null>(null)
@@ -38,11 +50,7 @@ function notesAfter(message: UIMessage): ConversationFeedbackNote[] {
 }
 
 function showGeneratingCard(message: UIMessage): boolean {
-  if (
-    !feedbackGenerating ||
-    message.role !== 'assistant' ||
-    message.id !== messages.at(-1)?.id
-  ) {
+  if (!feedbackGenerating || message.role !== 'assistant' || message.id !== messages.at(-1)?.id) {
     return false
   }
   const notes = notesAfter(message)
@@ -63,6 +71,14 @@ function activateNote(id: string): void {
 
 function relayFeedback(id: string, items: ConversationFeedbackItem[]): void {
   emit('feedback', id, items)
+}
+
+function relayReasoningFeedback(
+  id: string,
+  feedback: string,
+  selectedReasoning: string | null
+): void {
+  emit('reasoningFeedback', id, feedback, selectedReasoning)
 }
 
 function nearBottom(element: HTMLDivElement): boolean {
@@ -93,8 +109,7 @@ function centerActiveNote(): void {
     const carouselRect = carousel.getBoundingClientRect()
     const cardRect = card.getBoundingClientRect()
     const cardLeftInsideCarousel = carousel.scrollLeft + cardRect.left - carouselRect.left
-    const centeredLeft =
-      cardLeftInsideCarousel - (carousel.clientWidth - card.offsetWidth) / 2
+    const centeredLeft = cardLeftInsideCarousel - (carousel.clientWidth - card.offsetWidth) / 2
     const maximumLeft = Math.max(0, carousel.scrollWidth - carousel.clientWidth)
     carousel.scrollTo({
       left: Math.min(maximumLeft, Math.max(0, centeredLeft)),
@@ -136,7 +151,7 @@ watch(
 )
 
 watch(
-  () => [messages, feedbackNotes, feedbackGenerating, revising, status],
+  () => [messages, feedbackNotes, feedbackGenerating, reasoningReviews, revising, status],
   () =>
     nextTick(() => {
       const element = scroller.value
@@ -161,12 +176,26 @@ watch(
       class="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center px-6 py-16 text-center"
     >
       <div class="flex items-center gap-4">
-        <img src="/lenchat.svg" alt="" class="size-8" />
+        <img src="/lenchat.svg?v=2" alt="" class="size-8" />
         <h1 class="text-2xl font-semibold tracking-tight text-slate-900">LenChat</h1>
       </div>
     </div>
     <div v-else class="pb-4">
       <template v-for="message in messages" :key="message.id">
+        <section
+          v-if="reasoningReviews.length > 0 && message.id === lastAssistantId"
+          class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
+          aria-label="Reasoning reviews"
+        >
+          <ReasoningReviewCard
+            v-for="review in reasoningReviews"
+            :key="review.id"
+            :review="review"
+            :disabled="revising"
+            @continue="emit('continueReasoning', $event)"
+            @feedback="relayReasoningFeedback"
+          />
+        </section>
         <MessageBubble
           :message="message"
           :active="status === 'streaming' && message.id === messages.at(-1)?.id"
@@ -243,6 +272,20 @@ watch(
           </template>
         </MessageBubble>
       </template>
+      <section
+        v-if="reasoningReviews.length > 0 && lastAssistantId === null"
+        class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
+        aria-label="Reasoning reviews"
+      >
+        <ReasoningReviewCard
+          v-for="review in reasoningReviews"
+          :key="review.id"
+          :review="review"
+          :disabled="revising"
+          @continue="emit('continueReasoning', $event)"
+          @feedback="relayReasoningFeedback"
+        />
+      </section>
       <div
         v-if="status === 'submitted' || (revising && status === 'ready')"
         :data-test-id="revising ? 'conversation-revision-pending' : 'conversation-request-pending'"

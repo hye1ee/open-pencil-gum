@@ -35,4 +35,17 @@ describe('ChatTurnGate', () => {
     gate.abandon()
     expect(await pending).toBe(false)
   })
+
+  test('continues reviewing later reasoning chunks before abandoning the action', async () => {
+    const gate = new ChatTurnGate()
+    gate.hold()
+    gate.deferAbandonAtCommit()
+
+    expect(await gate.awaitResume('mid-thought')).toBe(true)
+    expect(await gate.awaitResume('mid-thought')).toBe(true)
+
+    const pendingAction = gate.awaitResume('before-action')
+    gate.resume()
+    expect(await pendingAction).toBe(false)
+  })
 })

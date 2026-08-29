@@ -1,7 +1,11 @@
 import { setReasoningObserver } from '@/app/ai/chat/model-trace'
 import { currentRunStepNumber } from '@/app/ai/tools'
 import type { EditorStore } from '@/app/editor/active-store'
-import { createSequencedReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
+import {
+  createSequencedReasoningObserver,
+  NOOP_REASONING_OBSERVER
+} from '@/app/meta-agent/core/reasoning-observer'
+import type { ReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
 import type { Proposition } from '@/app/meta-agent/core/types'
 import { considerFeedbackNotesForStep } from '@/app/meta-agent/hosts/lencanvas/feedback-note/meta'
 import {
@@ -13,6 +17,7 @@ import {
   currentFeedbackNoteGeneration,
   settleFeedbackNoteStep
 } from '@/app/meta-agent/hosts/lencanvas/feedback-note/use'
+import { lencanvasReasoningReviews } from '@/app/meta-agent/hosts/lencanvas/user-initiated'
 
 interface OpenPencilReasoningContext {
   enabled: boolean
@@ -26,6 +31,7 @@ interface OpenPencilReasoningContext {
 
 interface ReasoningObserverOptions {
   isEnabled(): boolean
+  isUserInitiated(): boolean
   getStore(): EditorStore | null
   getRequest(): string
   getPlan(): string | null
@@ -33,9 +39,21 @@ interface ReasoningObserverOptions {
 }
 
 let reasoningController: ReturnType<typeof createSequencedReasoningObserver> | null = null
+const streamObservers = new Map<number, ReasoningObserver>()
+
+function selectObserver(
+  options: ReasoningObserverOptions,
+  metaAgentObserver: ReasoningObserver
+): ReasoningObserver {
+  if (options.isUserInitiated()) return lencanvasReasoningReviews.observer
+  if (options.isEnabled()) return metaAgentObserver
+  return NOOP_REASONING_OBSERVER
+}
 
 export function resetFeedbackNoteStreams(): void {
   reasoningController?.reset()
+  streamObservers.clear()
+  lencanvasReasoningReviews.reset()
 }
 
 export function installReasoningObserver(options: ReasoningObserverOptions): void {
@@ -80,5 +98,23 @@ export function installReasoningObserver(options: ReasoningObserverOptions): voi
       await settleFeedbackNoteStep(context.step, context.generation, pendingReviews)
     }
   })
-  setReasoningObserver(reasoningController.observer)
+  const metaAgentObserver = reasoningController.observer
+  setReasoningObserver({
+    start: (streamId) => {
+      const observer = selectObserver(options, metaAgentObserver)
+      streamObservers.set(streamId, observer)
+      observer.start(streamId)
+    },
+    chunk: (streamId, reasoningChunk, reasoningSoFar) => {
+      streamObservers.get(streamId)?.chunk(streamId, reasoningChunk, reasoningSoFar)
+    },
+    end: (streamId, reasoning) => {
+      streamObservers.get(streamId)?.end(streamId, reasoning)
+    },
+    settled: async (streamId) => {
+      const observer = streamObservers.get(streamId)
+      await observer?.settled(streamId)
+      streamObservers.delete(streamId)
+    }
+  })
 }

@@ -2,6 +2,7 @@ export type ChatGatePoint = 'mid-thought' | 'before-action' | 'before-final-resp
 
 export class ChatTurnGate {
   private blocked = false
+  private abandonAtCommit = false
   private resolver: ((resume: boolean) => void) | null = null
   private result: Promise<boolean> | null = null
 
@@ -14,8 +15,20 @@ export class ChatTurnGate {
   }
 
   async awaitResume(point: ChatGatePoint): Promise<boolean> {
-    if (point === 'mid-thought' || !this.blocked || !this.result) return true
-    return this.result
+    // Reasoning must remain visible in real time. Only the action or final
+    // response derived from it waits for all review cards to be resolved.
+    if (point !== 'mid-thought' && this.blocked && this.result && !(await this.result)) {
+      return false
+    }
+    return point === 'mid-thought' || !this.abandonAtCommit
+  }
+
+  deferAbandonAtCommit(): void {
+    this.abandonAtCommit = true
+  }
+
+  clearDeferredAbandon(): void {
+    this.abandonAtCommit = false
   }
 
   resume(): void {
@@ -23,6 +36,7 @@ export class ChatTurnGate {
   }
 
   abandon(): void {
+    this.abandonAtCommit = false
     this.release(false)
   }
 

@@ -7,11 +7,9 @@ import { logTurnAbandoned, logTurnHeld } from '@/app/ai/chat/agent-log'
  * Feedback Note. A real pause, not an abort: the run stays alive and picks up
  * where it stopped. Single active agent assumed.
  *
- * It is honoured wherever the run can be held without leaving something half
- * done — between blocks of thinking, before a tool call, at a step boundary, and
- * while a change is still shown faint. A note is a chance to catch something
- * before it lands, which is worth nothing if the canvas moves while it is being
- * read.
+ * Reasoning itself keeps streaming so every review card can appear. The hold is
+ * honoured only at commit boundaries — before a tool call or final response —
+ * so nothing derived from unreviewed reasoning can land on the canvas.
  */
 
 interface AgentTurnState {
@@ -32,7 +30,7 @@ let resolvers: Array<() => void> = []
  * holds has to be the one who lets go. The Feedback Note session owns this hold
  * from note creation until every note in the step has been resolved.
  */
-export type TurnHold = 'feedback-note'
+export type TurnHold = 'feedback-note' | 'reasoning-review'
 
 const holds = new Set<TurnHold>()
 
@@ -45,15 +43,43 @@ const holds = new Set<TurnHold>()
 export type TurnGeneration = number
 
 let generation: TurnGeneration = 0
+interface DeferredAbandonment {
+  generation: TurnGeneration
+  reason: string
+  committed: Promise<void>
+  resolveCommitted(): void
+}
+
+let deferredAbandonment: DeferredAbandonment | null = null
 
 export function currentTurnGeneration(): TurnGeneration {
   return generation
 }
 
 export function abandonTurn(reason = 'unknown source'): void {
+  const deferred = deferredAbandonment
+  deferredAbandonment = null
   generation += 1
+  deferred?.resolveCommitted()
   logTurnAbandoned(`turn abandoned by ${reason} — the stream drops whatever it was holding`)
   resumeTurn()
+}
+
+/**
+ * Keep streaming reviewable reasoning, then invalidate the turn at the first
+ * action/final boundary. This lets the user review every chunk that precedes
+ * an action without allowing that action to execute after corrective feedback.
+ */
+export function abandonTurnAtCommit(reason = 'unknown source'): Promise<void> {
+  if (deferredAbandonment?.generation === generation) {
+    return deferredAbandonment.committed
+  }
+  let resolveCommitted = (): void => undefined
+  const committed = new Promise<void>((resolve) => {
+    resolveCommitted = resolve
+  })
+  deferredAbandonment = { generation, reason, committed, resolveCommitted }
+  return committed
 }
 
 /**
@@ -103,12 +129,24 @@ export function awaitTurnResume(
   expectedGeneration: TurnGeneration
 ): Promise<boolean> {
   if (expectedGeneration !== generation) return Promise.resolve(false)
-  if (!agentTurn.paused) return Promise.resolve(true)
+  // User-initiated reasoning review never serializes the reasoning stream. Its
+  // hold is for the following action/final boundary, after all cards appear.
+  // A Meta Agent Feedback Note keeps its existing mid-thought pause behavior.
+  if (where === 'mid-thought' && !holds.has('feedback-note')) return Promise.resolve(true)
+  if (!agentTurn.paused) return Promise.resolve(commitAllowed(where, expectedGeneration))
   const since = Date.now()
   return new Promise((resolve) => {
     resolvers.push(() => {
       logTurnHeld(where, Date.now() - since)
-      resolve(expectedGeneration === generation)
+      resolve(expectedGeneration === generation && commitAllowed(where, expectedGeneration))
     })
   })
+}
+
+function commitAllowed(where: string, expectedGeneration: TurnGeneration): boolean {
+  if (where === 'mid-thought') return true
+  if (deferredAbandonment?.generation !== expectedGeneration) return true
+  const { reason } = deferredAbandonment
+  abandonTurn(`${reason} at ${where}`)
+  return false
 }

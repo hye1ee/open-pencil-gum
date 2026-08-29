@@ -63,7 +63,7 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
       data-test-id="lencanvas-brand"
       class="flex h-12 items-center gap-2 border-b border-border px-4"
     >
-      <img src="/lencanvas.svg" class="size-5" alt="" />
+      <img src="/lencanvas.svg?v=8" class="size-5" alt="" />
       <span class="text-sm font-semibold tracking-tight text-surface">LenCanvas</span>
     </div>
     <div class="flex items-center gap-2 px-2 py-1.5">
