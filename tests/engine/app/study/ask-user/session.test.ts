@@ -120,14 +120,15 @@ describe('ask_user session', () => {
     expect(formatAskUserLifecycleEvent(events[1])).toContain('question=1 asked')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('exactly one concise, actionable question')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('exactly three')
-    expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('again later in the same request')
-    expect(ASK_USER_AGENT_INSTRUCTIONS).toContain(
-      'another independent user-specific decision remains unresolved'
-    )
+    expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('Use it actively')
+    expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('ask multiple sequential questions')
     expect(ASK_USER_AGENT_INSTRUCTIONS).not.toContain('materially change')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain('priorities, success criteria')
     expect(ASK_USER_AGENT_INSTRUCTIONS).toContain(
       'Ask the highest-impact unresolved decision first'
+    )
+    expect(ASK_USER_AGENT_INSTRUCTIONS).toContain(
+      'Treat an answer as resolving only the decision actually asked'
     )
     expect(LENCANVAS_ASK_USER_INSTRUCTIONS).toContain('independent layers')
     expect(LENCANVAS_ASK_USER_INSTRUCTIONS).toContain('multiple sequential questions')

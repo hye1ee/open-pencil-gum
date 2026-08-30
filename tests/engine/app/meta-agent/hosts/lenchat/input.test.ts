@@ -88,5 +88,13 @@ describe('LenChat Meta Agent input', () => {
     expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain('text: the decision is primarily semantic')
     expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain('code-visual: structure, relationships')
     expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain('image: the visual subject itself')
+    expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain(
+      'repeated applications of one preference are one decision family'
+    )
+    expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain(
+      'If any PREVIOUS FEEDBACK NOTE cites any of those proposition_ids, do not call a tool'
+    )
+    expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain('Alignment alone is not enough')
+    expect(CHAT_FEEDBACK_NOTE_SYSTEM).toContain('an urban day versus a day trip is a comparison')
   })
 })

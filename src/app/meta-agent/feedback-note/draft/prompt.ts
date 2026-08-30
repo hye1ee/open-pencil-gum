@@ -6,7 +6,9 @@ import type {
 } from '@/app/meta-agent/feedback-note/draft/types'
 import type { FeedbackNote } from '@/app/meta-agent/feedback-note/types'
 
-export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion in the user's voice. It is a hypothesis the user can accept or revise.
+export const FEEDBACK_DRAFT_SYSTEM = `Write one short, editable feedback suggestion as a direct message from the user to the agent. It is a hypothesis the user can accept or revise.
+
+Write the user's preferences in first person with "I" or "my." The CURRENT NOTE speaks to the user, so convert phrases such as "your preference" rather than copying them. Never describe the user in second or third person. You may address the agent as "you" only when asking it to change something.
 
 Ground it in the selected target, the current note, relevant user-model propositions and their rationales, and feedback the user previously confirmed.
 

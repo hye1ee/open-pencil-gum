@@ -144,6 +144,7 @@ describe('interactive feedback note', () => {
     expect(FEEDBACK_DRAFT_SYSTEM).toContain(
       'a mark signals attention rather than approval or disapproval'
     )
+    expect(FEEDBACK_DRAFT_SYSTEM).toContain('preferences in first person')
     expect(FEEDBACK_DRAFT_SYSTEM).toContain('at most 25 words')
   })
 
@@ -439,8 +440,7 @@ describe('interactive feedback note', () => {
   })
 
   test('accepts reasoning evidence that omits markdown decoration', () => {
-    const reasoning =
-      "I've identified *kalguksu*, knife-cut noodles, as a key example for Daejeon."
+    const reasoning = "I've identified *kalguksu*, knife-cut noodles, as a key example for Daejeon."
     const plainEvidence =
       "I've identified kalguksu, knife-cut noodles, as a key example for Daejeon."
     const note = readFeedbackNote({

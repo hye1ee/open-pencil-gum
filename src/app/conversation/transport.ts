@@ -55,11 +55,15 @@ export function createConversationTransport(
     awaitReasoningReviews: options.awaitReasoningReviews,
     reasoningMode: () => ({
       observe:
-        (runtime.metaAgentEnabled || runtime.allowFreeIntervention) &&
-        !options.isSilentRevision(),
+        (runtime.metaAgentEnabled || runtime.allowFreeIntervention) && !options.isSilentRevision(),
       reveal: runtime.showRawReasoning && !options.isSilentRevision()
     }),
-    awaitResume: (point) => options.gate.awaitResume(point)
+    awaitResume: (point) => options.gate.awaitResume(point),
+    // Ask User can leave the next provider request vulnerable to a transient
+    // browser SSE connection close after the user has spent time answering.
+    // Keep recovery scoped to this study condition so already-tested LenChat
+    // conditions and every LenCanvas transport retain their existing behavior.
+    retryInitialNetworkFailure: runtime.condition === 'ask-user'
   })
   const enabledTools = new Set(options.enabledTools)
   const tools = {

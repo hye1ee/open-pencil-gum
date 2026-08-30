@@ -23,6 +23,16 @@ Do not call a tool for status narration, requested facts, tool preparation, low-
 
 const CHAT_HISTORY_GUIDANCE = `Review PREVIOUS FEEDBACK NOTES and their outcomes before calling a tool. Treat the user's recorded selection or feedback as authoritative during this run. Once the user reviews the same subject and decision property, do not ask again by changing wording, representation, relationship, example, or specificity. Applying the reviewed answer downstream is not a new user-model question.
 
+Apply this mandatory duplicate gate before every tool call:
+1. Identify the proposition_ids that would support the candidate note.
+2. If any PREVIOUS FEEDBACK NOTE cites any of those proposition_ids, do not call a tool. This remains a duplicate regardless of a different topic key, relationship, representation, place, day, item, recommendation, or wording, and regardless of whether the earlier note is active, answered, or continued.
+3. Never ask the user to reconfirm explicit feedback. If later reasoning conflicts with an answered note, the recorded feedback already determines what the agent should do; skip rather than asking again.
+4. The only exception is a materially new condition that the current reasoning states explicitly, that makes the earlier outcome genuinely inapplicable, and that representation_goal names precisely. A new example or downstream application is not such a condition.
+
+For uncovered decisions without proposition_ids, compare the underlying decision property rather than the topic label. If prior feedback can answer the candidate question, skip it. In long answers such as itineraries, plans, comparisons, or multi-part recommendations, repeated applications of one preference are one decision family, not separate questions for every place, day, option, or paragraph. Most reasoning chunks should produce no tool; surface only a small number of independent decisions whose answers would change later agent behavior.
+
+Alignment alone is not enough. Do not create a note merely because reasoning follows, confirms, illustrates, or applies a shown proposition. Create an alignment note only when the reasoning exposes a consequential ambiguity about the proposition's meaning or boundary that previous feedback has not resolved.
+
 Reopen it only when the reasoning introduces a materially different audience, risk, task phase, evidence condition, or other context that could reverse the outcome. State that condition in representation_goal. A related subject may still contain a genuinely different property: source credibility does not settle answer length or recommendation criteria.
 
 When a previous note remains pending, do not produce a second note that competes for the same decision. When several earlier outcomes bear on the current reasoning, follow the most explicit and context-specific user feedback. Give each note a short stable topic key for the underlying decision, such as evidence-source-strategy.`
@@ -33,7 +43,7 @@ const CHAT_REPRESENTATION_GUIDANCE = `- text: the decision is primarily semantic
 
 Do not use code-visual merely to decorate a verbal decision. Do not use image for a table, diagram, timeline, or simple comparison. Preserve all three representations and choose the one that makes the decision easiest to inspect.
 
-Use text when language exposes the full consequence. Do not force abstract preferences into anonymous boxes or choose text merely because it is cheaper when the user must compare structured alternatives, inspect dependencies, or understand a quantitative trade-off.
+Use text when the decision has no useful visual structure beyond its wording. When the grounded context contains two or more concrete alternatives, an ordered sequence or dependency, or a bounded range or quantity that the person can compare or mark, prefer code-visual even if prose could describe it. For a travel plan, an urban day versus a day trip is a comparison, a daily budget range is a spectrum, and competing itinerary organizations can be a comparison or artifact. Do not force abstract preferences into anonymous boxes or choose text merely because it is cheaper when the user must compare structured alternatives, inspect dependencies, or understand a quantitative trade-off.
 
 A code-visual is a compact feedback artifact, not a slide or decorative summary. It may visualize an outline, research plan, evidence map, timeline, decision tree, ranking, or concept relationship. Expose one decision and only the labels, values, and dependencies needed to respond.
 

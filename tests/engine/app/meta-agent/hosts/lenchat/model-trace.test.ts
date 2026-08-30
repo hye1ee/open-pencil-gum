@@ -75,7 +75,77 @@ function providerToolModel() {
   })
 }
 
+function transientNetworkModel(calls: { count: number }) {
+  return new MockLanguageModelV3({
+    doStream: async () => {
+      calls.count += 1
+      if (calls.count === 1) throw new TypeError('Failed to fetch')
+      return {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'Recovered answer' },
+            { type: 'text-end', id: 'text-1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: {
+                inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+                outputTokens: { total: 1, text: 1, reasoning: undefined }
+              }
+            }
+          ]
+        })
+      }
+    }
+  })
+}
+
 describe('LenChat model trace', () => {
+  test('retries an initial browser network failure only when explicitly enabled', async () => {
+    const calls = { count: 0 }
+    const result = streamText({
+      model: withChatModelTrace(transientNetworkModel(calls), {
+        observer: {
+          start: () => undefined,
+          chunk: () => undefined,
+          end: () => undefined,
+          settled: async () => undefined
+        },
+        awaitReasoningReviews: false,
+        reasoningMode: () => ({ observe: false, reveal: false }),
+        awaitResume: async () => true,
+        retryInitialNetworkFailure: true
+      }),
+      prompt: 'Continue after the answer.'
+    })
+
+    expect(await result.text).toBe('Recovered answer')
+    expect(calls.count).toBe(2)
+  })
+
+  test('does not retry an initial browser network failure by default', async () => {
+    const calls = { count: 0 }
+    const result = streamText({
+      model: withChatModelTrace(transientNetworkModel(calls), {
+        observer: {
+          start: () => undefined,
+          chunk: () => undefined,
+          end: () => undefined,
+          settled: async () => undefined
+        },
+        awaitReasoningReviews: false,
+        reasoningMode: () => ({ observe: false, reveal: false }),
+        awaitResume: async () => true
+      }),
+      prompt: 'Keep the default behavior.',
+      onError: () => undefined
+    })
+
+    await result.consumeStream()
+    expect(calls.count).toBe(1)
+  })
+
   test('holds final output after reasoning until the feedback gate resumes', async () => {
     const gate = new ChatTurnGate()
     gate.hold()

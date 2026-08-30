@@ -1,3 +1,4 @@
+import { promiseTimeout } from '@vueuse/core'
 import { wrapLanguageModel } from 'ai'
 import type { LanguageModelMiddleware } from 'ai'
 
@@ -7,6 +8,7 @@ import type { ChatReasoningMode, ChatReasoningObserver } from '@/app/meta-agent/
 
 type ProviderModel = Parameters<typeof wrapLanguageModel>[0]['model']
 type WrapStream = NonNullable<LanguageModelMiddleware['wrapStream']>
+type DoStream = Parameters<WrapStream>[0]['doStream']
 type StreamPart =
   Awaited<ReturnType<WrapStream>>['stream'] extends ReadableStream<infer Part> ? Part : never
 
@@ -15,15 +17,36 @@ interface ChatModelTraceOptions {
   awaitResume(point: ChatGatePoint): Promise<boolean>
   awaitReasoningReviews: boolean
   reasoningMode(): ChatReasoningMode
+  retryInitialNetworkFailure?: boolean
 }
 
 let nextStreamId = 1
+
+function isInitialNetworkFailure(error: unknown): boolean {
+  return error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch')
+}
+
+async function startProviderStream(
+  doStream: DoStream,
+  retryInitialNetworkFailure: boolean
+): Promise<Awaited<ReturnType<DoStream>>> {
+  try {
+    return await doStream()
+  } catch (error) {
+    if (!retryInitialNetworkFailure || !isInitialNetworkFailure(error)) throw error
+    await promiseTimeout(250)
+    return doStream()
+  }
+}
 
 function createChatMiddleware(options: ChatModelTraceOptions): LanguageModelMiddleware {
   return {
     specificationVersion: 'v3',
     wrapStream: async ({ doStream }) => {
-      const { stream, ...rest } = await doStream()
+      const { stream, ...rest } = await startProviderStream(
+        doStream,
+        options.retryInitialNetworkFailure === true
+      )
       const streamId = nextStreamId++
       const reasoningMode = options.reasoningMode()
       let streamSequence = 0

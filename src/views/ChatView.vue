@@ -8,6 +8,7 @@ import Composer from '@/components/Conversation/Composer.vue'
 import ConversationShell from '@/components/Conversation/ConversationShell.vue'
 import MessageList from '@/components/Conversation/MessageList.vue'
 import UserModelDrawer from '@/components/Conversation/UserModelDrawer.vue'
+import StudyScenarioPanel from '@/components/StudyScenario/StudyScenarioPanel.vue'
 import { ConversationStore } from '@/app/conversation/session'
 import {
   conversationApiKey,
@@ -285,4 +286,5 @@ function answerAskUser(answer: string, selectedOption: string | null): void {
       @clear="store.clearUserModel()"
     />
   </ConversationShell>
+  <StudyScenarioPanel host="lenchat" :condition="runtime.condition" />
 </template>

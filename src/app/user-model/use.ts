@@ -14,16 +14,17 @@ import { hydrateMissingPropositionEmbeddings } from '@/app/user-model/embeddings
 import { userModelFixtureEnabled } from '@/app/user-model/fixture'
 import {
   createUserModel,
+  type Proposition,
   type UserModel,
   type UserModelFeedbackBatch
 } from '@/app/user-model/pipeline'
+import { hydrateUserModelReplacement } from '@/app/user-model/replacement'
 import { appendAudit, clearSaved, load, save } from '@/app/user-model/storage'
 import { noteError, noteIdleBatch, noteStage, setPropositions } from '@/app/user-model/store'
 import { logUserInitiatedRetrieval } from '@/app/user-model/user-initiated/log'
 import type { UserModelReasoningFeedbackBatch } from '@/app/user-model/user-initiated/types'
 
-/** The app-specific half: what this app knows about the moment a frame was taken,
- * and where the propositions are kept. `pipeline.ts` knows none of it. */
+/** App-specific wiring for where observations come from and propositions live. */
 
 export { canBuildUserModel }
 
@@ -242,6 +243,17 @@ export async function clearUserModel(): Promise<void> {
   current?.clear()
   setPropositions([])
   await clearSaved()
+}
+
+export async function replaceUserModel(items: readonly Proposition[]): Promise<void> {
+  await initializeUserModel()
+  await (pending ?? Promise.resolve()).catch(() => undefined)
+  const deps = modelCalls()
+  const next = await hydrateUserModelReplacement(items, (texts) => deps.embed(texts), noteError)
+  current?.load(next)
+  const loaded = (current?.propositions ?? next).map((item) => structuredClone(item))
+  setPropositions(loaded)
+  await save(loaded)
 }
 
 export { clearSaved }

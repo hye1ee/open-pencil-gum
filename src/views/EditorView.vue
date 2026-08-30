@@ -18,7 +18,7 @@ import { appMenuShortcut } from '@/app/shell/menu/shortcut'
 import { createDemoShapes } from '@/app/demo/document'
 import { useEditorStore } from '@/app/editor/active-store'
 import { createTab, activeTab, getActiveStore, tabCount } from '@/app/tabs'
-import { setStudyRuntime } from '@/app/study/runtime'
+import { resolveStudyCondition, setStudyRuntime } from '@/app/study/runtime'
 
 import CollabPanel from '@/components/CollabPanel/CollabPanel.vue'
 import EditorCanvas from '@/components/EditorCanvas.vue'
@@ -27,15 +27,20 @@ import MobileDrawer from '@/components/MobileDrawer.vue'
 import MobileHud from '@/components/MobileHud/MobileHud.vue'
 import PropertiesPanel from '@/components/PropertiesPanel.vue'
 import SafariBanner from '@/components/SafariBanner.vue'
+import StudyScenarioPanel from '@/components/StudyScenario/StudyScenarioPanel.vue'
 import TabBar from '@/components/TabBar.vue'
 import Tip from '@/components/ui/Tip.vue'
 import Toolbar from '@/components/Toolbar/Toolbar.vue'
 
 const route = useRoute()
-setStudyRuntime('lencanvas', route.meta.studyCondition ?? 'userlens')
+const studyCondition = ref(resolveStudyCondition(route.meta.studyCondition))
+setStudyRuntime('lencanvas', studyCondition.value)
 watch(
   () => route.meta.studyCondition,
-  (condition) => setStudyRuntime('lencanvas', condition ?? 'userlens')
+  (condition) => {
+    studyCondition.value = resolveStudyCondition(condition)
+    setStudyRuntime('lencanvas', studyCondition.value)
+  }
 )
 const params = useUrlSearchParams('history')
 const showChrome = !('no-chrome' in params)
@@ -230,4 +235,5 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+  <StudyScenarioPanel host="lencanvas" :condition="studyCondition" />
 </template>

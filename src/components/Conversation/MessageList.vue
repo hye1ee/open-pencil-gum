@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
-import InlineFeedbackNote from '@/components/Conversation/InlineFeedbackNote.vue'
+import FeedbackNoteCarousel from '@/components/Conversation/FeedbackNoteCarousel.vue'
 import MessageBubble from '@/components/Conversation/MessageBubble.vue'
 import ReasoningReviewCard from '@/components/Conversation/ReasoningReviewCard.vue'
 import type { ConversationFeedbackItem, ConversationFeedbackNote } from '@/app/conversation/types'
@@ -33,44 +33,11 @@ const emit = defineEmits<{
   reasoningFeedback: [id: string, feedback: string, selectedReasoning: string | null]
 }>()
 const scroller = ref<HTMLDivElement>()
-const activeNoteId = ref<string | null>(null)
 const followOutput = ref(true)
 let lastScrollTop = 0
-const lastAssistantId = computed(
-  () => [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null
-)
 const lastUserId = computed(
   () => [...messages].reverse().find((message) => message.role === 'user')?.id ?? null
 )
-
-function notesAfter(message: UIMessage): ConversationFeedbackNote[] {
-  if (message.role !== 'assistant') return []
-  return feedbackNotes.filter(
-    (note) =>
-      note.messageId === message.id ||
-      (note.messageId === null && lastAssistantId.value === message.id)
-  )
-}
-
-function showGeneratingCard(message: UIMessage): boolean {
-  if (!feedbackGenerating || message.role !== 'assistant' || message.id !== messages.at(-1)?.id) {
-    return false
-  }
-  const notes = notesAfter(message)
-  if (notes.length === 0) return true
-  const activeIndex = notes.findIndex((note) => note.id === activeNoteId.value)
-  return activeIndex === -1 || activeIndex === notes.length - 1
-}
-
-function notePhase(note: ConversationFeedbackNote): 'reviewed' | 'current' | 'waiting' {
-  if (note.status !== 'pending') return 'reviewed'
-  return note.id === activeNoteId.value ? 'current' : 'waiting'
-}
-
-function activateNote(id: string): void {
-  if (!feedbackNotes.some((note) => note.id === id && note.status === 'pending')) return
-  activeNoteId.value = id
-}
 
 function relayFeedback(id: string, items: ConversationFeedbackItem[]): void {
   emit('feedback', id, items)
@@ -102,55 +69,11 @@ function handleScroll(): void {
   lastScrollTop = element.scrollTop
 }
 
-function centerActiveNote(): void {
-  const id = activeNoteId.value
-  if (!id) return
-  void nextTick(() => {
-    const card = scroller.value?.querySelector<HTMLElement>(`[data-note-id="${id}"]`)
-    const carousel = card?.closest<HTMLElement>('[data-feedback-carousel]')
-    if (!card || !carousel) return
-    const carouselRect = carousel.getBoundingClientRect()
-    const cardRect = card.getBoundingClientRect()
-    const cardLeftInsideCarousel = carousel.scrollLeft + cardRect.left - carouselRect.left
-    const centeredLeft = cardLeftInsideCarousel - (carousel.clientWidth - card.offsetWidth) / 2
-    const maximumLeft = Math.max(0, carousel.scrollWidth - carousel.clientWidth)
-    carousel.scrollTo({
-      left: Math.min(maximumLeft, Math.max(0, centeredLeft)),
-      behavior: 'smooth'
-    })
-  })
-}
-
 watch(
   () => messages.length,
   (count, previousCount) => {
     if (count > previousCount && messages.at(-1)?.role === 'user') followOutput.value = true
   }
-)
-
-// Registered before the note watcher below so its immediate run, which can pick
-// the first active note, still reaches this.
-watch(activeNoteId, (id, previousId) => {
-  // The first note replaces the already-centered loading card, so scrolling it
-  // would fight the enter/move transition. Later changes are explicit carousel
-  // navigation and need one horizontal-only centering operation.
-  if (id && previousId) centerActiveNote()
-})
-
-watch(
-  () => feedbackNotes,
-  (notes) => {
-    const activeStillPending = notes.some(
-      (note) => note.id === activeNoteId.value && note.status === 'pending'
-    )
-    if (!activeStillPending) {
-      activeNoteId.value = notes.find((note) => note.status === 'pending')?.id ?? null
-    }
-    // Centering belongs to the activeNoteId watcher alone. Scrolling on every
-    // note change would run while TransitionGroup animates an inserted card,
-    // and the FLIP offsets would then carry the scroll shift.
-  },
-  { deep: true, immediate: true }
 )
 
 watch(
@@ -189,77 +112,16 @@ watch(
           :message="message"
           :active="status === 'streaming' && message.id === messages.at(-1)?.id"
         >
-          <template #meta-agent>
-            <section
-              v-if="
-                notesAfter(message).length > 0 ||
-                (feedbackGenerating &&
-                  message.role === 'assistant' &&
-                  message.id === messages.at(-1)?.id)
-              "
-              class="my-6"
-              aria-label="Feedback notes"
-            >
-              <div class="mb-1 flex items-center justify-between gap-3 px-1">
-                <p class="text-xs font-semibold tracking-wide text-slate-500">Feedback notes</p>
-                <p class="text-[11px] text-slate-400">
-                  {{ notesAfter(message).filter((note) => note.status !== 'pending').length }} of
-                  {{ notesAfter(message).length }} reviewed
-                </p>
-              </div>
-              <TransitionGroup
-                tag="div"
-                data-feedback-carousel
-                class="flex snap-x snap-proximity items-start gap-8 overflow-x-auto pt-7 pb-9 [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                enter-active-class="transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                enter-from-class="translate-x-6 opacity-0"
-                leave-active-class="transition-[transform,opacity] duration-300 ease-in"
-                leave-to-class="-translate-x-6 opacity-0"
-              >
-                <div
-                  :key="`feedback-start-${message.id}`"
-                  class="w-[max(1rem,calc(50%_-_13rem))] shrink-0"
-                  aria-hidden="true"
-                />
-                <InlineFeedbackNote
-                  v-for="note in notesAfter(message)"
-                  :key="note.id"
-                  :note="note"
-                  :phase="notePhase(note)"
-                  :disabled="revising"
-                  :propositions="propositions"
-                  @activate="activateNote"
-                  @continue="emit('continue', $event)"
-                  @feedback="relayFeedback"
-                />
-                <div
-                  v-if="showGeneratingCard(message)"
-                  :key="`feedback-generating-${message.id}`"
-                  data-test-id="conversation-feedback-generating"
-                  class="w-88 max-w-[calc(100vw-6rem)] shrink-0 snap-center rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4"
-                  aria-live="polite"
-                >
-                  <div class="mb-4 flex items-center gap-2 text-xs font-semibold text-violet-700">
-                    <icon-lucide-loader-circle class="size-4 animate-spin" />
-                    Generating feedback note…
-                  </div>
-                  <div class="space-y-2.5" aria-hidden="true">
-                    <div class="h-4 w-11/12 animate-pulse rounded bg-violet-100" />
-                    <div class="h-4 w-8/12 animate-pulse rounded bg-violet-100" />
-                    <div
-                      class="mt-4 h-12 animate-pulse rounded-lg bg-white ring-1 ring-violet-100"
-                    />
-                  </div>
-                </div>
-                <div
-                  :key="`feedback-end-${message.id}`"
-                  class="w-[max(1rem,calc(50%_-_13rem))] shrink-0"
-                  aria-hidden="true"
-                />
-              </TransitionGroup>
-            </section>
-          </template>
         </MessageBubble>
+        <FeedbackNoteCarousel
+          v-if="message.id === lastUserId && (feedbackNotes.length > 0 || feedbackGenerating)"
+          :notes="feedbackNotes"
+          :generating="feedbackGenerating"
+          :disabled="revising"
+          :propositions="propositions"
+          @continue="emit('continue', $event)"
+          @feedback="relayFeedback"
+        />
         <section
           v-if="reasoningReviews.length > 0 && message.id === lastUserId"
           class="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-5 sm:px-6"
@@ -276,7 +138,11 @@ watch(
         </section>
       </template>
       <div
-        v-if="status === 'submitted' || (revising && status === 'ready')"
+        v-if="
+          (status === 'submitted' || (revising && status === 'ready')) &&
+          feedbackNotes.length === 0 &&
+          !feedbackGenerating
+        "
         :data-test-id="revising ? 'conversation-revision-pending' : 'conversation-request-pending'"
         class="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-5 sm:px-6"
         aria-live="polite"
