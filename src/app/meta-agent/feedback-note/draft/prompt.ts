@@ -1,4 +1,5 @@
 import { feedbackSelectionLabel } from '@/app/meta-agent/feedback-note/draft/selection'
+import { koreanOutputInstruction } from '@/app/study/language'
 import type {
   ConfirmedFeedback,
   FeedbackDraftProposition,
@@ -20,7 +21,7 @@ When the supplied user-model rationale or prior confirmed feedback provides enou
 
 If the evidence supports only what the user wants and not why, omit the reason. Never force a reason or fill missing context with generic design advice.
 
-Use one natural sentence and at most 25 words. Return only the suggestion. Do not use quotation marks, labels, or preamble.`
+Use one natural sentence and at most 25 words. Return only the suggestion. Do not use quotation marks, labels, or preamble.${koreanOutputInstruction()}`
 
 const CHOICE_CUE_PATTERN =
   /\b(?:choose|select|pick|which|prefer(?:red)?|decide|confirm|resolve|mark)\b/i

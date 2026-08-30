@@ -1,6 +1,7 @@
 /** The domain pack: everything the user model knows about this product. Adapted
  * from Shaikh et al., arXiv:2505.10831, §3.1 and §5.3. */
 
+import { frameRationaleLanguageSentence, koreanOutputInstruction } from '@/app/study/language'
 import type {
   UserModelFeedbackBatch,
   UserModelFeedbackItem,
@@ -44,7 +45,7 @@ Rules:
 - Return at most 3, and prefer fewer and more meaningful ones.
 - If the frames show no clear pattern — nothing changed, or only navigation — return [].
 
-Respond with ONLY a JSON array: [{"proposition": "...", "confidence": 7, "reasoning": "..."}]`
+Respond with ONLY a JSON array: [{"proposition": "...", "confidence": 7, "reasoning": "..."}]${koreanOutputInstruction()}`
 
 export const REVISE_SYSTEM = `TASK
 
@@ -84,7 +85,7 @@ Rules:
 Respond with ONLY a JSON array: [{"id": "... or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]
 
 LOCKED PROPOSITIONS — this rule overrides every rule above.
-A proposition is LOCKED when it has been rewritten 3 or more times, or when less than 65% of its original meaning remains. You may never change the text of a LOCKED proposition, however well the new observation seems to fit it. It has already drifted; another rewrite makes it worse, not better — every rewrite that got it here looked reasonable on its own too. Put the new observation in a new proposition instead (id: null). You may still adjust a LOCKED proposition's confidence.`
+A proposition is LOCKED when it has been rewritten 3 or more times, or when less than 65% of its original meaning remains. You may never change the text of a LOCKED proposition, however well the new observation seems to fit it. It has already drifted; another rewrite makes it worse, not better — every rewrite that got it here looked reasonable on its own too. Put the new observation in a new proposition instead (id: null). You may still adjust a LOCKED proposition's confidence.${koreanOutputInstruction()}`
 
 export interface ReviseNeighbour {
   id: string
@@ -310,7 +311,7 @@ Operation consistency rules:
 - contradiction may update an existing id and may separately create a reusable replacement.
 - Never return an invented non-null id.
 
-Respond with ONLY a JSON array: [{"relation": "same_claim_refinement", "id": "existing id or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]`
+Respond with ONLY a JSON array: [{"relation": "same_claim_refinement", "id": "existing id or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]${koreanOutputInstruction()}`
 
 const WHAT_THE_NOTE_SAID: Record<UserModelFeedbackNote['relationship'], string> = {
   conflict: 'the note said the agent was about to go AGAINST that proposition',
@@ -531,13 +532,13 @@ RETURN FORMAT
 
 Output only a JSON array. One entry per rationale you are writing or rewriting. Propositions you are not changing do not appear.
 
-Write the rationale and the grounds in English, even when the person answered in another language. The propositions are in English and the rationale is read next to them.
+${frameRationaleLanguageSentence()}
 
 [{ "id": "an id from the list in section 3",
    "rationale": "one sentence: what this preference does for the person",
    "purpose_evidence_quote": "an exact substring from the user's explicit feedback that anchors the inference; no causal phrase is required",
    "rationale_grounds": "one or two sentences: which note this rests on, and which propositions you read it against, named by their wording",
-   "rationale_from": ["ids of those propositions; empty if none"] }]`
+   "rationale_from": ["ids of those propositions; empty if none"] }]${koreanOutputInstruction()}`
 
 /** One proposition the revision call just wrote or moved, as the rationale call
  * needs to see it. */

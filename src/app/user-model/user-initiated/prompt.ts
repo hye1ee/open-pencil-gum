@@ -1,3 +1,4 @@
+import { koreanOutputInstruction } from '@/app/study/language'
 import type { Proposition } from '@/app/user-model/pipeline'
 import type { ChangedProposition, ReviseNeighbour } from '@/app/user-model/prompt'
 import type { UserModelReasoningFeedbackBatch } from '@/app/user-model/user-initiated/types'
@@ -65,7 +66,7 @@ For each proposition you change, return:
 - relation: confirmation | same_claim_refinement | contextual_exception | contradiction | new_claim.
 
 Return ONLY a JSON array:
-[{"id":"... or null","text":"...","confidence":8,"decay":3,"reasoning":"...","relation":"confirmation"}]`
+[{"id":"... or null","text":"...","confidence":8,"decay":3,"reasoning":"...","relation":"confirmation"}]${koreanOutputInstruction()}`
 
 export function feedbackUserInitiatedPrompt(
   batch: UserModelReasoningFeedbackBatch,
@@ -103,7 +104,7 @@ For every rationale returned:
 - rationale_from: ids of any other propositions read alongside it; may be empty.
 
 Return ONLY a JSON array. Returning [] is correct when the feedback reveals what but not why:
-[{"id":"...","rationale":"...","purpose_evidence_quote":"exact feedback substring","rationale_grounds":"...","rationale_from":[]}]`
+[{"id":"...","rationale":"...","purpose_evidence_quote":"exact feedback substring","rationale_grounds":"...","rationale_from":[]}]${koreanOutputInstruction()}`
 
 function renderChange(change: ChangedProposition): string {
   return (

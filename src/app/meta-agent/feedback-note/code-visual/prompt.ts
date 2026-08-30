@@ -1,3 +1,4 @@
+import { koreanOutputInstruction } from '@/app/study/language'
 import type { CodeVisualBrief, FeedbackNoteCodeVisualType } from '@/app/meta-agent/feedback-note/types'
 
 export const CODE_VISUAL_SYSTEM = `You are the Code Visual Composer for one feedback note.
@@ -39,7 +40,7 @@ Visual quality:
 - Avoid generic identical cards when the artifact itself can be rendered.
 - Do not repeat the feedback cue inside the artifact.
 
-Return no prose.`
+Return no prose.${koreanOutputInstruction()}`
 
 export function renderCodeVisualComposerPrompt(input: {
   visualType: FeedbackNoteCodeVisualType

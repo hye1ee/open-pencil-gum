@@ -1,3 +1,4 @@
+import { koreanOutputInstruction } from '@/app/study/language'
 import {
   renderChange,
   renderNeighbour,
@@ -58,7 +59,7 @@ For each proposition you change, return:
 - relation: confirmation | same_claim_refinement | contextual_exception | contradiction | new_claim.
 
 Return ONLY a JSON array:
-[{"id":"... or null","text":"...","confidence":8,"decay":3,"reasoning":"...","relation":"confirmation"}]`
+[{"id":"... or null","text":"...","confidence":8,"decay":3,"reasoning":"...","relation":"confirmation"}]${koreanOutputInstruction()}`
 
 export function feedbackMidRunFeedbackPrompt(
   batch: UserModelMidRunFeedbackBatch,
@@ -92,7 +93,7 @@ For every rationale returned:
 - rationale_from: ids of any other propositions read alongside it; may be empty.
 
 Return ONLY a JSON array. Returning [] is correct when the messages reveal what but not why:
-[{"id":"...","rationale":"...","purpose_evidence_quote":"exact message substring","rationale_grounds":"...","rationale_from":[]}]`
+[{"id":"...","rationale":"...","purpose_evidence_quote":"exact message substring","rationale_grounds":"...","rationale_from":[]}]${koreanOutputInstruction()}`
 
 export function rationaleMidRunFeedbackPrompt(
   batch: UserModelMidRunFeedbackBatch,

@@ -1,4 +1,5 @@
 import type { FeedbackNoteHistoryItem, Proposition } from '@/app/meta-agent/core/types'
+import { koreanOutputInstruction } from '@/app/study/language'
 
 export interface MetaAgentContextSection {
   heading: string
@@ -56,15 +57,17 @@ const CORE_OUTPUT_RULES = `evidence_from_reasoning must be an exact quote from S
 Return no prose. Never call more than one tool.`
 
 export function composeMetaAgentSystemPrompt(profile: MetaAgentSystemPromptProfile): string {
-  return [
-    CORE_INTRO,
-    profile.decisionGuidance,
-    profile.historyGuidance,
-    `${CORE_REPRESENTATION_OPENING}\n${profile.representationGuidance}`,
-    CORE_CUE_GUIDANCE,
-    profile.anchorGuidance,
-    CORE_OUTPUT_RULES
-  ].join('\n\n')
+  return (
+    [
+      CORE_INTRO,
+      profile.decisionGuidance,
+      profile.historyGuidance,
+      `${CORE_REPRESENTATION_OPENING}\n${profile.representationGuidance}`,
+      CORE_CUE_GUIDANCE,
+      profile.anchorGuidance,
+      CORE_OUTPUT_RULES
+    ].join('\n\n') + koreanOutputInstruction()
+  )
 }
 
 function renderPropositions(propositions: readonly Proposition[]): string {
