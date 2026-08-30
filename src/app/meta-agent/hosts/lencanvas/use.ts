@@ -14,7 +14,7 @@ import {
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { propositions as currentUserModelPropositions } from '@/app/user-model/store'
 import { awaitUserModelSettled } from '@/app/user-model/use'
-import { getStudyRuntime } from '@/app/study/runtime'
+import { getStudyRuntime, isHandsOffDelegationCondition } from '@/app/study/runtime'
 
 let request = ''
 let runPropositions: Proposition[] = []
@@ -56,6 +56,7 @@ export async function startMetaAgentTurn(
 installReasoningObserver({
   isEnabled: () => enabled,
   isUserInitiated: () => getStudyRuntime().condition === 'user-initiated',
+  isHandsOffDelegation: () => isHandsOffDelegationCondition(getStudyRuntime().condition),
   getStore: () => runStore,
   getRequest: () => request,
   getPlan: currentPlan,

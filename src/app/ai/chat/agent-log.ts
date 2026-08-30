@@ -244,6 +244,21 @@ export function logAskUserLifecycle(detail: string): void {
   write('ASK-USER', detail)
 }
 
+export function logHandsOffPhase(detail: string): void {
+  write('HANDS-OFF', `phase      ${detail}`)
+}
+
+export function logHandsOffAnnotation(detail: string): void {
+  write('HANDS-OFF', `annotation ${truncate(detail)}`)
+}
+
+export function logHandsOffRunSummary(detail: string): void {
+  write('HANDS-OFF', `summary    ${detail}`)
+  // The summary is the measurement of record for a hands-off run; make sure it
+  // reaches the file even if the tab closes right after.
+  flush()
+}
+
 /** Provider and function tools the LenChat agent actually called in one step. */
 export function logChatToolActions(tools: readonly string[]): void {
   write('CHAT-TOOL', tools.join(', '))

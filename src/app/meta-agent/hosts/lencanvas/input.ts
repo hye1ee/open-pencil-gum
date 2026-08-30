@@ -80,7 +80,7 @@ function summariseCanvas(store: EditorStore): string {
 }
 
 /** Mutating calls made this run, reduced to names and targets. */
-function actionsSoFar(store: EditorStore): string[] {
+export function actionsSoFar(store: EditorStore): string[] {
   return getToolLogEntries(store)
     .filter((entry) => entry.mutates && !entry.error)
     .map((entry) => {

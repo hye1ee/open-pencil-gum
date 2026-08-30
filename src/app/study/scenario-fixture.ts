@@ -75,6 +75,28 @@ const PROPOSITIONS: Record<`${StudyHost}:${StudyCondition}`, readonly string[]> 
     'Likes one memorable splurge meal rather than several expensive dinners.',
     'Wants to be able to correct the planner’s assumptions during the planning process.'
   ],
+  'lenchat:hands-off': [
+    'Prefers long weekends built around one city rather than multi-stop routes.',
+    'Wants the first day kept light to absorb arrival fatigue.',
+    'Chooses accommodation with easy access to a metro or tram line.',
+    'Prefers markets and food halls for casual lunches.',
+    'Enjoys viewpoints reached by a short walk more than paid observation decks.',
+    'Wants museum visits limited to one per day.',
+    'Prefers plans that name specific places instead of generic categories.',
+    'Avoids activities that require standing in long ticket lines.',
+    'Likes waterfront or riverside evening walks.',
+    'Wants a coffee stop suggested for every morning.',
+    'Prefers dinner spots within walking distance of the accommodation.',
+    'Enjoys neighborhoods known for independent shops and studios.',
+    'Wants backup indoor options listed for weather-dependent days.',
+    'Prefers a printed-style day summary with times and locations.',
+    'Avoids organized group tours larger than ten people.',
+    'Likes trying one regional specialty dish per destination.',
+    'Wants total daily walking distance kept under ten kilometers.',
+    'Prefers paying with card and avoids cash-only venues when possible.',
+    'Enjoys a mid-afternoon break built into each day.',
+    'Wants the plan to state which bookings must be made in advance.'
+  ],
   'lencanvas:userlens': [
     'Prefers UI components with a quiet neutral palette and one purposeful accent color.',
     'Uses an 8-point spacing system for component layout.',
@@ -140,6 +162,28 @@ const PROPOSITIONS: Record<`${StudyHost}:${StudyCondition}`, readonly string[]> 
     'Prefers previewing visual changes before committing them.',
     'Wants reset actions scoped to a section rather than the entire product.',
     'Likes to annotate and correct the design agent’s reasoning when a decision misses context.'
+  ],
+  'lencanvas:hands-off': [
+    'Prefers landing sections with a single clear headline and one supporting line.',
+    'Wants the primary call-to-action visible without scrolling.',
+    'Uses warm off-white backgrounds instead of pure white for marketing surfaces.',
+    'Prefers one display typeface paired with a neutral body typeface.',
+    'Wants imagery that shows the activity rather than abstract decoration.',
+    'Prefers generous vertical spacing between page sections.',
+    'Uses at most two font sizes within a hero section.',
+    'Wants event details grouped into a compact schedule block.',
+    'Prefers rounded rectangular buttons with sentence-case labels.',
+    'Avoids full-width text lines longer than seventy characters.',
+    'Wants pricing presented plainly without countdown urgency devices.',
+    'Prefers testimonials attributed with a name and a short descriptor.',
+    'Uses a soft accent color drawn from the page imagery.',
+    'Wants section headings to describe content rather than tease it.',
+    'Prefers a short three-step overview of how to participate.',
+    'Avoids autoplaying or animated backgrounds on informational pages.',
+    'Wants contact and location details repeated near the final call-to-action.',
+    'Prefers icons only in the benefits or feature list.',
+    'Wants the footer kept minimal with essential links only.',
+    'Prefers layouts that survive at tablet width without redesign.'
   ]
 }
 
@@ -147,9 +191,11 @@ const PROMPTS: Record<`${StudyHost}:${StudyCondition}`, string> = {
   'lenchat:userlens': 'Plan a 5-day trip to Lisbon for me.',
   'lenchat:ask-user': 'Plan a 5-day trip to Copenhagen for me.',
   'lenchat:user-initiated': 'Plan a 5-day trip to Barcelona for me.',
+  'lenchat:hands-off': 'Plan a 3-day trip to Porto for me.',
   'lencanvas:userlens': 'Create a notification settings card component.',
   'lencanvas:ask-user': 'Create a project summary card component.',
-  'lencanvas:user-initiated': 'Create an account privacy settings component.'
+  'lencanvas:user-initiated': 'Create an account privacy settings component.',
+  'lencanvas:hands-off': 'Create a landing page hero section for a weekend pottery workshop.'
 }
 
 function makePropositions(key: `${StudyHost}:${StudyCondition}`): Proposition[] {

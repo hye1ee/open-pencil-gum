@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   createStudyRuntimeConfig,
+  isHandsOffDelegationCondition,
   resolveStudyCondition,
   setStudyRuntime
 } from '@/app/study/runtime'
@@ -34,6 +35,22 @@ describe('study runtime', () => {
     expect(userInitiated.askUserEnabled).toBeFalse()
     expect(userInitiated.showRawReasoning).toBeFalse()
     expect(userInitiated.allowFreeIntervention).toBeTrue()
+  })
+
+  test('runs hands-off delegation with the injected model and no interventions', () => {
+    expect(createStudyRuntimeConfig('lencanvas', 'hands-off')).toEqual({
+      host: 'lencanvas',
+      condition: 'hands-off',
+      metaAgentEnabled: false,
+      askUserEnabled: false,
+      showRawReasoning: false,
+      allowFreeIntervention: false,
+      taskAgentUsesUserModel: true,
+      updateUserModel: false,
+      feedbackExecution: 'no-intervention'
+    })
+    expect(isHandsOffDelegationCondition('hands-off')).toBeTrue()
+    expect(isHandsOffDelegationCondition('userlens')).toBeFalse()
   })
 
   test('falls back to UserLens for an unknown route condition', () => {

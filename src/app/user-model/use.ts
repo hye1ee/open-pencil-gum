@@ -5,6 +5,7 @@ import {
   logUserModelStage
 } from '@/app/ai/chat/agent-log'
 import type { UserModelAskUserBatch } from '@/app/user-model/ask-user/types'
+import type { UserModelMidRunFeedbackBatch } from '@/app/user-model/mid-run-feedback/types'
 import {
   canBuildUserModel,
   canUpdateUserModelFromFeedback,
@@ -50,46 +51,57 @@ async function enqueueObservation(observe: () => Promise<void>): Promise<void> {
   }
 }
 
-export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promise<void> {
-  if (batch.notes.length === 0 || !canUpdateUserModelFromFeedback()) return
-  current ??= createPropositionSink('feedback-notes')
-  const explicit = batch.notes.filter((note) => note.resolution === 'explicit-feedback').length
-  const items = batch.notes.reduce((sum, note) => sum + note.feedbackItems.length, 0)
-  logUserModelFeedback(
-    batch.step ?? 0,
-    'queued',
-    `notes=${batch.notes.length} explicit=${explicit} implicit=${batch.notes.length - explicit} items=${items}`
-  )
+/** Shared observation lifecycle: log queued, run serialized, log failures. */
+async function observeExplicitEvidence(
+  stepNumber: number,
+  queuedDetail: string,
+  observe: () => Promise<void>
+): Promise<void> {
+  logUserModelFeedback(stepNumber, 'queued', queuedDetail)
   try {
     await enqueueObservation(async () => {
       await currentReady
-      await current?.observeFeedback(batch)
+      await observe()
     })
   } catch (error) {
     logUserModelFeedback(
-      batch.step ?? 0,
+      stepNumber,
       'failed',
       error instanceof Error ? error.message : String(error)
     )
   }
 }
 
+export async function observeFeedbackNotes(batch: UserModelFeedbackBatch): Promise<void> {
+  if (batch.notes.length === 0 || !canUpdateUserModelFromFeedback()) return
+  current ??= createPropositionSink('feedback-notes')
+  const explicit = batch.notes.filter((note) => note.resolution === 'explicit-feedback').length
+  const items = batch.notes.reduce((sum, note) => sum + note.feedbackItems.length, 0)
+  await observeExplicitEvidence(
+    batch.step ?? 0,
+    `notes=${batch.notes.length} explicit=${explicit} implicit=${batch.notes.length - explicit} items=${items}`,
+    async () => current?.observeFeedback(batch)
+  )
+}
+
 export async function observeAskUserAnswers(batch: UserModelAskUserBatch): Promise<void> {
   if (batch.answers.length === 0 || !canUpdateUserModelFromFeedback()) return
   current ??= createPropositionSink('ask-user')
-  logUserModelFeedback(
+  await observeExplicitEvidence(
     0,
-    'queued',
-    `condition=ask-user request=${batch.requestId} questions=${batch.answers.length}`
+    `condition=ask-user request=${batch.requestId} questions=${batch.answers.length}`,
+    async () => current?.observeAskUser(batch)
   )
-  try {
-    await enqueueObservation(async () => {
-      await currentReady
-      await current?.observeAskUser(batch)
-    })
-  } catch (error) {
-    logUserModelFeedback(0, 'failed', error instanceof Error ? error.message : String(error))
-  }
+}
+
+export async function observeMidRunFeedback(batch: UserModelMidRunFeedbackBatch): Promise<void> {
+  if (batch.messages.length === 0 || !canUpdateUserModelFromFeedback()) return
+  current ??= createPropositionSink('mid-run-feedback')
+  await observeExplicitEvidence(
+    batch.stepNumber,
+    `condition=ask-user channel=mid-run-feedback request=${batch.requestId} messages=${batch.messages.length}`,
+    async () => current?.observeMidRunFeedback(batch)
+  )
 }
 
 export async function observeUserInitiatedFeedback(
@@ -97,23 +109,11 @@ export async function observeUserInitiatedFeedback(
 ): Promise<void> {
   if (batch.items.length === 0 || !canUpdateUserModelFromFeedback()) return
   current ??= createPropositionSink('user-initiated')
-  logUserModelFeedback(
+  await observeExplicitEvidence(
     batch.step ?? 0,
-    'queued',
-    `condition=user-initiated request=${batch.requestId} feedback=${batch.items.length}`
+    `condition=user-initiated request=${batch.requestId} feedback=${batch.items.length}`,
+    async () => current?.observeUserInitiated(batch)
   )
-  try {
-    await enqueueObservation(async () => {
-      await currentReady
-      await current?.observeUserInitiated(batch)
-    })
-  } catch (error) {
-    logUserModelFeedback(
-      batch.step ?? 0,
-      'failed',
-      error instanceof Error ? error.message : String(error)
-    )
-  }
 }
 
 /** Makes the shared app User Model available to hosts that do not start the

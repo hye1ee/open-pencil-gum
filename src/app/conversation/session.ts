@@ -41,6 +41,9 @@ import { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
 import { AskUserSession, formatAskUserLifecycleEvent } from '@/app/study/ask-user'
 import type { AskUserQuestion } from '@/app/study/ask-user'
+import { createHandsOffChatSession } from '@/app/study/hands-off/chat-session'
+import type { HandsOffChatTextSelection } from '@/app/study/hands-off/chat-session'
+import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import {
   createReasoningReviewSession,
@@ -74,6 +77,7 @@ export class ConversationStore {
     hold: () => this.gate.hold(),
     release: () => this.gate.resume()
   })
+  private readonly handsOffSession = createHandsOffChatSession()
   private revisionFeedback: string | null = null
   private revisionRun = 0
   private revisionPending = false
@@ -98,6 +102,11 @@ export class ConversationStore {
   readonly reasoningChunks = shallowRef<ConversationReasoningChunk[]>([])
   readonly reasoningReviews = this.reasoningReviewSession.reviews
   readonly askUserQuestion = shallowRef<AskUserQuestion | null>(null)
+  readonly handsOffPhase = this.handsOffSession.phase
+  readonly handsOffReasoningBlocks = this.handsOffSession.reasoningBlocks
+  readonly handsOffAnnotations = this.handsOffSession.annotations
+  readonly handsOffFinalAnswerText = this.handsOffSession.finalAnswerText
+  readonly handsOffAnnotationPending = computed(() => this.handsOffSession.isAnnotationPending())
   readonly lastError = ref('')
 
   readonly messages = computed(() => this.chatRef.value?.messages ?? [])
@@ -159,6 +168,7 @@ export class ConversationStore {
     this.resetMetaAgentMonitor()
     logRunStart(clean)
     const runtime = this.options.runtime()
+    if (isHandsOffDelegationCondition(runtime.condition)) this.handsOffSession.beginRun(clean)
     const enabledTools = this.options.enabledTools()
     const activeTools = [...enabledTools, ...(runtime.askUserEnabled ? ['ask_user'] : [])]
     logStudyRuntime(runtime.host, runtime.condition)
@@ -185,6 +195,7 @@ export class ConversationStore {
   async stop(): Promise<void> {
     this.gate.abandon()
     this.reasoningReviewSession.reset()
+    this.handsOffSession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     this.feedbackNotes.value = []
@@ -203,6 +214,23 @@ export class ConversationStore {
 
   continueReasoningReview(reviewId: string): void {
     this.reasoningReviewSession.continueReview(reviewId)
+  }
+
+  addHandsOffAnnotation(selection: HandsOffChatTextSelection): void {
+    this.handsOffSession.addAnnotation(selection)
+  }
+
+  finishHandsOffReasoningAnnotation(): void {
+    const lastAssistantMessage = [...this.messages.value]
+      .reverse()
+      .find((message) => message.role === 'assistant')
+    this.handsOffSession.finishReasoningAnnotation(
+      lastAssistantMessage ? messageText(lastAssistantMessage) : ''
+    )
+  }
+
+  finishHandsOffFinalAnswerAnnotation(): void {
+    this.handsOffSession.finishFinalAnswerAnnotation()
   }
 
   reviseFromReasoning(reviewId: string, feedback: string, selectedReasoning: string | null): void {
@@ -270,6 +298,7 @@ export class ConversationStore {
     this.createdAt = Date.now()
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
+    this.handsOffSession.reset()
     lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
@@ -289,6 +318,7 @@ export class ConversationStore {
     this.createdAt = record.createdAt
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
+    this.handsOffSession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     lenChatFeedbackHistory.reset()
@@ -334,6 +364,7 @@ export class ConversationStore {
     this.askUserSession.endRequest('chat-reconfigured')
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
+    this.handsOffSession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     this.revisionPending = true
@@ -374,15 +405,19 @@ export class ConversationStore {
         })
       : null
     this.resetMetaAgentMonitor = monitor ? () => monitor.reset() : () => undefined
+    let observer = monitor?.observer ?? NOOP_REASONING_OBSERVER
+    if (isHandsOffDelegationCondition(runtime.condition)) {
+      observer = this.handsOffSession.observer
+    } else if (runtime.allowFreeIntervention) {
+      observer = this.reasoningReviewSession.observer
+    }
     const transport = createConversationTransport({
       apiKey: this.options.apiKey(),
       modelId: this.options.modelId(),
       enabledTools: this.options.enabledTools(),
       runtime,
       askUserSession: this.askUserSession,
-      observer: runtime.allowFreeIntervention
-        ? this.reasoningReviewSession.observer
-        : (monitor?.observer ?? NOOP_REASONING_OBSERVER),
+      observer,
       awaitReasoningReviews: runtime.metaAgentEnabled || runtime.allowFreeIntervention,
       isSilentRevision: () => this.revising.value,
       gate: this.gate,
@@ -414,6 +449,9 @@ export class ConversationStore {
               : 'request-finished'
           )
           if (event.isAbort || event.isDisconnect || event.isError) return
+          if (isHandsOffDelegationCondition(this.options.runtime().condition)) {
+            this.handsOffSession.completeAgentRun()
+          }
           void this.checkpoint(event.messages)
         }
       })

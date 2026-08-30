@@ -6,6 +6,7 @@ import { useHead } from '@unhead/vue'
 import AskUserCard from '@/components/Conversation/AskUserCard.vue'
 import Composer from '@/components/Conversation/Composer.vue'
 import ConversationShell from '@/components/Conversation/ConversationShell.vue'
+import HandsOffAnnotationStage from '@/components/Conversation/HandsOffAnnotationStage.vue'
 import MessageList from '@/components/Conversation/MessageList.vue'
 import UserModelDrawer from '@/components/Conversation/UserModelDrawer.vue'
 import StudyScenarioPanel from '@/components/StudyScenario/StudyScenarioPanel.vue'
@@ -25,10 +26,12 @@ import {
 import { fadeOutGlobalLoader } from '@/app/editor/canvas/loader-overlay'
 import {
   createStudyRuntimeConfig,
+  isHandsOffDelegationCondition,
   resolveStudyCondition,
   setStudyRuntime
 } from '@/app/study/runtime'
 import type { ConversationFeedbackItem } from '@/app/conversation/types'
+import type { HandsOffChatTextSelection } from '@/app/study/hands-off/chat-session'
 
 useHead({
   title: 'LenChat',
@@ -63,8 +66,19 @@ const {
   learning,
   propositions,
   configured,
+  handsOffPhase,
+  handsOffReasoningBlocks,
+  handsOffAnnotations,
+  handsOffFinalAnswerText,
+  handsOffAnnotationPending,
   lastError
 } = store
+
+const handsOffActive = computed(() => isHandsOffDelegationCondition(runtime.value.condition))
+const handsOffStageVisible = computed(
+  () =>
+    handsOffActive.value && handsOffPhase.value !== 'idle' && handsOffPhase.value !== 'completed'
+)
 
 const settingsOpen = ref(false)
 const userModelOpen = ref(false)
@@ -108,6 +122,15 @@ function reviseFromReasoning(id: string, feedback: string, selectedReasoning: st
 function answerAskUser(answer: string, selectedOption: string | null): void {
   store.answerAskUser(answer, selectedOption)
 }
+
+function addHandsOffAnnotation(selection: HandsOffChatTextSelection): void {
+  store.addHandsOffAnnotation(selection)
+}
+
+function finishHandsOffStage(): void {
+  if (handsOffPhase.value === 'annotating-reasoning') store.finishHandsOffReasoningAnnotation()
+  else store.finishHandsOffFinalAnswerAnnotation()
+}
 </script>
 
 <template>
@@ -133,6 +156,7 @@ function answerAskUser(answer: string, selectedOption: string | null): void {
         :reasoning-reviews="reasoningReviews"
         :revising="revising"
         :propositions="propositions"
+        :hide-assistant-messages="handsOffActive && handsOffPhase !== 'completed'"
         @continue="store.continueFromFeedback($event)"
         @feedback="reviseFromFeedback"
         @continue-reasoning="store.continueReasoningReview($event)"
@@ -141,6 +165,15 @@ function answerAskUser(answer: string, selectedOption: string | null): void {
       <div v-if="lastError" class="mx-auto w-full max-w-3xl px-6 pb-2 text-xs text-red-600">
         {{ lastError }}
       </div>
+      <HandsOffAnnotationStage
+        v-if="handsOffStageVisible"
+        :phase="handsOffPhase"
+        :reasoning-blocks="handsOffReasoningBlocks"
+        :final-answer-text="handsOffFinalAnswerText"
+        :annotations="handsOffAnnotations"
+        @annotate="addHandsOffAnnotation"
+        @done="finishHandsOffStage"
+      />
       <AskUserCard
         v-if="askUserQuestion"
         :question="askUserQuestion"
@@ -151,7 +184,7 @@ function answerAskUser(answer: string, selectedOption: string | null): void {
         v-else
         :status="status"
         :configured="configured"
-        :blocked="feedbackPending"
+        :blocked="feedbackPending || handsOffAnnotationPending"
         :model-name="currentModelName"
         @submit="store.send($event)"
         @stop="store.stop()"

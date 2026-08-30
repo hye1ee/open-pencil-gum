@@ -30,7 +30,7 @@ let resolvers: Array<() => void> = []
  * holds has to be the one who lets go. The Feedback Note session owns this hold
  * from note creation until every note in the step has been resolved.
  */
-export type TurnHold = 'feedback-note' | 'reasoning-review'
+export type TurnHold = 'feedback-note' | 'reasoning-review' | 'hands-off-annotation'
 
 const holds = new Set<TurnHold>()
 

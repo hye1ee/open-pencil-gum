@@ -5,7 +5,8 @@ const WATCHED_MARKDOWN_ROOTS = ['/src/', '/packages/core/src/', '/packages/vue/s
 const STUDY_CONDITION_LINKS = [
   { label: 'UserLens', path: 'userlens' },
   { label: 'Ask User', path: 'ask-user' },
-  { label: 'User Initiated', path: 'user-initiated' }
+  { label: 'User Initiated', path: 'user-initiated' },
+  { label: 'Hands-off', path: 'hands-off' }
 ] as const
 
 function ignoreMarkdownOutsideSource(path: string): boolean {

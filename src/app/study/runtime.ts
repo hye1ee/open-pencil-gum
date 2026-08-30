@@ -1,10 +1,10 @@
 import { readonly, shallowRef } from 'vue'
 
-export const STUDY_CONDITIONS = ['userlens', 'ask-user', 'user-initiated'] as const
+export const STUDY_CONDITIONS = ['userlens', 'ask-user', 'user-initiated', 'hands-off'] as const
 
 export type StudyCondition = (typeof STUDY_CONDITIONS)[number]
 export type StudyHost = 'lenchat' | 'lencanvas'
-export type StudyFeedbackExecution = 'silent-retry' | 'tool-resume'
+export type StudyFeedbackExecution = 'silent-retry' | 'tool-resume' | 'no-intervention'
 
 export interface StudyRuntimeConfig {
   host: StudyHost
@@ -47,7 +47,20 @@ const CONDITION_CONFIGS: Record<StudyCondition, ConditionConfig> = {
     taskAgentUsesUserModel: false,
     updateUserModel: true,
     feedbackExecution: 'silent-retry'
+  },
+  'hands-off': {
+    metaAgentEnabled: false,
+    askUserEnabled: false,
+    showRawReasoning: false,
+    allowFreeIntervention: false,
+    taskAgentUsesUserModel: true,
+    updateUserModel: false,
+    feedbackExecution: 'no-intervention'
   }
+}
+
+export function isHandsOffDelegationCondition(condition: StudyCondition): boolean {
+  return condition === 'hands-off'
 }
 
 export function isStudyCondition(value: unknown): value is StudyCondition {

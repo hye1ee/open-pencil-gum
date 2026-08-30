@@ -16,7 +16,8 @@ const {
   feedbackGenerating,
   reasoningReviews,
   revising,
-  propositions
+  propositions,
+  hideAssistantMessages = false
 } = defineProps<{
   messages: UIMessage[]
   status: ChatStatus
@@ -25,6 +26,9 @@ const {
   reasoningReviews: readonly ReasoningReview[]
   revising: boolean
   propositions: Proposition[]
+  /** Hands-off delegation keeps the agent's answer out of view until the
+   * participant has finished annotating the reasoning. */
+  hideAssistantMessages?: boolean
 }>()
 const emit = defineEmits<{
   continue: [id: string]
@@ -109,6 +113,7 @@ watch(
     <div v-else class="pb-4">
       <template v-for="message in messages" :key="message.id">
         <MessageBubble
+          v-if="!(hideAssistantMessages && message.role === 'assistant')"
           :message="message"
           :active="status === 'streaming' && message.id === messages.at(-1)?.id"
         >

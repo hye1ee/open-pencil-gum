@@ -4,7 +4,7 @@ import type { ChangedProposition, ReviseNeighbour } from '@/app/user-model/promp
 
 const outOfTen = (value: number) => (value * 9 + 1).toFixed(0)
 
-function renderNeighbour(proposition: ReviseNeighbour): string {
+export function renderNeighbour(proposition: ReviseNeighbour): string {
   const seen = proposition.ageDays < 1 ? 'today' : `${Math.round(proposition.ageDays)} days ago`
   return (
     `- id: ${proposition.id}\n` +
@@ -109,14 +109,14 @@ For every rationale returned:
 Return ONLY a JSON array. Returning [] is correct when the answers reveal what but not why:
 [{"id":"...","rationale":"...","purpose_evidence_quote":"exact answer substring","rationale_grounds":"...","rationale_from":[]}]`
 
-function renderChange(change: ChangedProposition): string {
+export function renderChange(change: ChangedProposition): string {
   return (
     `- ${change.wasNew ? 'created' : 'updated'}: "${change.text}" ` +
     `(confidence ${outOfTen(change.confidence)}/10)\n  revision reason: ${change.reasoning}`
   )
 }
 
-function renderProposition(proposition: Proposition): string {
+export function renderProposition(proposition: Proposition): string {
   return (
     `- id: ${proposition.id}\n` +
     `  proposition: "${proposition.text}"\n` +

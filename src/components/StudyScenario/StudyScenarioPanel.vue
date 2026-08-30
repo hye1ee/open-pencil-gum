@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue'
 import { useClipboard, useTimeoutFn } from '@vueuse/core'
 
+import { replaceUserModelFromJson } from '@/app/study/hands-off/user-model-injection'
 import { seedStudyUserModel, studyScenarioFixture } from '@/app/study/scenario-fixture'
+import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyCondition, StudyHost } from '@/app/study/runtime'
 
 const { host, condition } = defineProps<{
@@ -32,6 +34,26 @@ async function seed(): Promise<void> {
 
 function selectPrompt(event: FocusEvent): void {
   if (event.currentTarget instanceof HTMLTextAreaElement) event.currentTarget.select()
+}
+
+const showModelInjection = computed(() => isHandsOffDelegationCondition(condition))
+const injectionJson = ref('')
+const injecting = ref(false)
+const injectionResult = ref('')
+const injectionError = ref('')
+
+async function injectUserModel(): Promise<void> {
+  injecting.value = true
+  injectionResult.value = ''
+  injectionError.value = ''
+  try {
+    const count = await replaceUserModelFromJson(injectionJson.value)
+    injectionResult.value = `Replaced the user model with ${count} propositions.`
+  } catch (error) {
+    injectionError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    injecting.value = false
+  }
 }
 </script>
 
@@ -73,5 +95,30 @@ function selectPrompt(event: FocusEvent): void {
       <icon-lucide-copy class="size-3" />
       {{ copied ? 'Copied' : 'Copy test prompt' }}
     </button>
+    <div v-if="showModelInjection" class="mt-2 border-t border-amber-200 pt-2">
+      <p class="mb-1 text-[10px] font-bold tracking-wider text-amber-700 uppercase">
+        Inject user model (JSON)
+      </p>
+      <textarea
+        v-model="injectionJson"
+        rows="3"
+        data-test-id="study-inject-user-model-json"
+        placeholder='{"propositions": [{"text": "…", "confidence": 0.8}]} or a bare array'
+        class="w-full resize-y rounded-lg border border-amber-200 bg-white px-2.5 py-2 text-xs leading-4 outline-none focus:border-amber-500"
+      />
+      <div class="mt-1.5 flex items-center gap-2">
+        <button
+          type="button"
+          data-test-id="study-inject-user-model"
+          :disabled="injecting || injectionJson.trim() === ''"
+          class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          @click="injectUserModel"
+        >
+          {{ injecting ? 'Replacing…' : 'Replace user model' }}
+        </button>
+        <p v-if="injectionResult" class="text-[11px] text-emerald-700">{{ injectionResult }}</p>
+        <p v-if="injectionError" class="text-[11px] text-red-600">{{ injectionError }}</p>
+      </div>
+    </div>
   </aside>
 </template>

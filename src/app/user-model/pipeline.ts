@@ -13,6 +13,13 @@ import {
 } from '@/app/user-model/ask-user/prompt'
 import type { AskUserRetrievalTrace, UserModelAskUserBatch } from '@/app/user-model/ask-user/types'
 import {
+  FEEDBACK_SYSTEM_MID_RUN_FEEDBACK,
+  RATIONALE_SYSTEM_MID_RUN_FEEDBACK,
+  feedbackMidRunFeedbackPrompt,
+  rationaleMidRunFeedbackPrompt
+} from '@/app/user-model/mid-run-feedback/prompt'
+import type { UserModelMidRunFeedbackBatch } from '@/app/user-model/mid-run-feedback/types'
+import {
   FEEDBACK_SYSTEM,
   PROPOSE_SYSTEM,
   RATIONALE_SYSTEM,
@@ -100,6 +107,7 @@ export type RevisionPurpose =
   | 'revise-from-feedback'
   | 'revise-from-ask-user'
   | 'revise-from-user-initiated'
+  | 'revise-from-mid-run-feedback'
 
 export interface UserModelDeps {
   /** Vision call over the frames. Returns the model's raw text. */
@@ -250,6 +258,8 @@ export interface UserModel {
   observeAskUser(batch: UserModelAskUserBatch): Promise<void>
   /** Explicit feedback collected from reviewed reasoning checkpoints. */
   observeUserInitiated(batch: UserModelReasoningFeedbackBatch): Promise<void>
+  /** Messages the user sent while the agent was executing (ask-user condition). */
+  observeMidRunFeedback(batch: UserModelMidRunFeedbackBatch): Promise<void>
   /** Seed from disk. Replaces whatever is held. */
   load(propositions: SavedProposition[]): void
   clear(): void
@@ -733,7 +743,10 @@ export function createUserModel(options: UserModelOptions): UserModel {
     evidenceTexts: readonly string[]
     purpose: Extract<
       RevisionPurpose,
-      'revise-from-feedback' | 'revise-from-ask-user' | 'revise-from-user-initiated'
+      | 'revise-from-feedback'
+      | 'revise-from-ask-user'
+      | 'revise-from-user-initiated'
+      | 'revise-from-mid-run-feedback'
     >
     stamp: string
   }
@@ -945,6 +958,51 @@ export function createUserModel(options: UserModelOptions): UserModel {
     }
   }
 
+  /** Unprompted mid-run messages carry no question framing, so each message is
+   * direct user evidence. Every message is embedded independently and the
+   * neighbour union is revised in one request-level call, with the agent's
+   * executed actions supplied as context only. */
+  async function observeMidRunFeedback(batch: UserModelMidRunFeedbackBatch): Promise<void> {
+    if (batch.messages.length === 0) return
+    if (frameRun) await frameRun
+    if (running) return
+    running = true
+    try {
+      stage('revising')
+      const now = Date.now()
+      const shown = new Map<string, Proposition>()
+      const vectors = await deps.embed(
+        batch.messages.map((message) =>
+          [`Original request: ${batch.request}`, `User message: ${message}`].join('\n')
+        )
+      )
+      for (const [index] of batch.messages.entries()) {
+        for (const near of nearestPropositionScores(vectors[index] ?? [], propositions, now)) {
+          shown.set(near.proposition.id, near.proposition)
+        }
+      }
+
+      const stamp = new Date(now).toISOString()
+      await reviseFromExplicitEvidence({
+        propositionSystem: FEEDBACK_SYSTEM_MID_RUN_FEEDBACK,
+        propositionPrompt: feedbackMidRunFeedbackPrompt(
+          batch,
+          [...shown.values()].map((proposition) => describe(proposition, now))
+        ),
+        rationaleSystem: RATIONALE_SYSTEM_MID_RUN_FEEDBACK,
+        rationalePrompt: (changed) => rationaleMidRunFeedbackPrompt(batch, changed, propositions),
+        evidenceTexts: batch.messages,
+        purpose: 'revise-from-mid-run-feedback',
+        stamp
+      })
+    } catch (error) {
+      options.onError?.(error)
+    } finally {
+      running = false
+      stage('idle')
+    }
+  }
+
   return {
     get propositions() {
       return propositions
@@ -953,6 +1011,7 @@ export function createUserModel(options: UserModelOptions): UserModel {
     observeFeedback,
     observeAskUser,
     observeUserInitiated,
+    observeMidRunFeedback,
 
     load(saved) {
       // A file predating drift tracking has no original, so take where it is

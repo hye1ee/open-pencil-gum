@@ -50,8 +50,11 @@ import {
   recordStepUsage,
   resetRunSteps
 } from '@/app/ai/tools'
+import { targetNodeIds } from '@/app/ai/chat/tool-targets'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { noteAgentPlan } from '@/app/meta-agent/hosts/lencanvas/events'
+import { lencanvasHandsOffAnnotations } from '@/app/meta-agent/hosts/lencanvas/hands-off'
+import { actionsSoFar } from '@/app/meta-agent/hosts/lencanvas/input'
 import {
   completeFeedbackReplay,
   currentFeedbackReplayStep
@@ -64,10 +67,15 @@ import {
   createAskUserTool,
   formatAskUserLifecycleEvent
 } from '@/app/study/ask-user'
+import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
-import { observeAskUserAnswers } from '@/app/user-model/use'
+import { observeAskUserAnswers, observeMidRunFeedback } from '@/app/user-model/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
+
+function isToolArgumentRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 // Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
 const SYSTEM_PROMPT =
@@ -317,6 +325,19 @@ export function createToolLoopTransport({
       if (diff) logIntervention(diff)
       for (const text of userMessages) logUserMessage(text)
 
+      // In the ask-user condition, a message sent while the agent works is
+      // explicit user evidence: feed it to the shared user model alongside the
+      // usual injection into the step. Fire-and-forget so the step never waits.
+      if (studyRuntime.askUserEnabled && studyRuntime.updateUserModel && userMessages.length > 0) {
+        void observeMidRunFeedback({
+          requestId: askUserRequestId,
+          request: askUserRequest,
+          stepNumber: currentRunStepNumber(store),
+          executedActions: actionsSoFar(store),
+          messages: userMessages
+        })
+      }
+
       if (stepNumber === 0) {
         plan = await runPlan(planningModel, store, lastUserText(messages), image, null)
         // The meta-agent needs it to tell a decision the agent made from one the
@@ -405,6 +426,17 @@ export function createToolLoopTransport({
         logTurnAbandoned('aborted zero-usage step excluded from progress count')
         return
       }
+      if (isHandsOffDelegationCondition(studyRuntime.condition) && mutatingCalls.length > 0) {
+        // Hold before the next step's `step-boundary` gate so the participant
+        // can judge the executed step before the agent moves on.
+        lencanvasHandsOffAnnotations.beginStepActionAnnotation(
+          currentRunStepNumber(store),
+          mutatingCalls.map((call) => call.toolName),
+          mutatingCalls.flatMap((call) =>
+            isToolArgumentRecord(call.input) ? targetNodeIds(call.toolName, call.input) : []
+          )
+        )
+      }
       if (replayedStep !== null && mutatingCalls.length === 0) {
         recordAuxUsage(recorded, store)
         return
@@ -420,6 +452,10 @@ export function createToolLoopTransport({
           request: askUserRequest,
           answers
         })
+      }
+      if (isHandsOffDelegationCondition(studyRuntime.condition) && finishReason === 'stop') {
+        // Collected after the run with no hold, so nothing is left paused.
+        lencanvasHandsOffAnnotations.beginFinalResponseAnnotation()
       }
       // Also flushes the buffer, so the file is complete the moment a run ends.
       logRunEnd(`${finishReason}  ${steps.length} steps`)
