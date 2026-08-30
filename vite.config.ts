@@ -16,6 +16,7 @@ import { pageCapturePlugin } from './vite/page-capture'
 import { openPencilPwaPlugin } from './vite/pwa'
 import { rawMarkdownPlugin } from './vite/raw-markdown'
 import { createDevServerOptions, devRouteLinksPlugin } from './vite/server'
+import { studySurveyPlugin } from './vite/study-survey'
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -31,6 +32,7 @@ export default defineConfig(async ({ command }) => ({
     devRouteLinksPlugin(),
     agentLogPlugin(__dirname),
     pageCapturePlugin(__dirname),
+    studySurveyPlugin(__dirname),
     rawMarkdownPlugin(),
     copyCanvasKitAssetsPlugin(),
     tailwindcss(),

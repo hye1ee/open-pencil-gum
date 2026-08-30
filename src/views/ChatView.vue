@@ -10,6 +10,7 @@ import HandsOffAnnotationStage from '@/components/Conversation/HandsOffAnnotatio
 import MessageList from '@/components/Conversation/MessageList.vue'
 import UserModelDrawer from '@/components/Conversation/UserModelDrawer.vue'
 import StudyScenarioPanel from '@/components/StudyScenario/StudyScenarioPanel.vue'
+import StudySessionSurveyOverlay from '@/components/StudySurvey/StudySessionSurveyOverlay.vue'
 import { ConversationStore } from '@/app/conversation/session'
 import {
   conversationApiKey,
@@ -82,6 +83,7 @@ const handsOffStageVisible = computed(
 
 const settingsOpen = ref(false)
 const userModelOpen = ref(false)
+const surveyOpen = ref(false)
 const displayedConversationModelId = computed({
   get: conversationModelIdValue,
   set: (modelId: string) => {
@@ -141,6 +143,7 @@ function finishHandsOffStage(): void {
     @open="store.openConversation($event)"
     @delete="store.removeConversation($event)"
     @user-model="userModelOpen = true"
+    @end-session="surveyOpen = true"
   >
     <div v-if="!initialized" class="flex flex-1 items-center justify-center text-sm text-slate-500">
       <icon-lucide-loader-circle class="mr-2 size-4 animate-spin text-blue-600" />
@@ -320,4 +323,5 @@ function finishHandsOffStage(): void {
     />
   </ConversationShell>
   <StudyScenarioPanel host="lenchat" :condition="runtime.condition" />
+  <StudySessionSurveyOverlay :open="surveyOpen" @close="surveyOpen = false" />
 </template>

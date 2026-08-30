@@ -10,6 +10,7 @@ defineEmits<{
   open: [id: string]
   delete: [id: string]
   userModel: []
+  endSession: []
 }>()
 </script>
 
@@ -76,6 +77,13 @@ defineEmits<{
         </div>
       </nav>
       <div>
+        <button
+          data-test-id="study-end-session"
+          class="flex w-full cursor-pointer items-center gap-2 border-t border-slate-200 p-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-blue-700"
+          @click="$emit('endSession')"
+        >
+          <icon-lucide-flag class="size-4" />End session
+        </button>
         <button
           class="flex w-full cursor-pointer items-center gap-2 p-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-blue-700"
           @click="$emit('new')"

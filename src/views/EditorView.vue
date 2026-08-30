@@ -28,6 +28,7 @@ import MobileHud from '@/components/MobileHud/MobileHud.vue'
 import PropertiesPanel from '@/components/PropertiesPanel.vue'
 import SafariBanner from '@/components/SafariBanner.vue'
 import StudyScenarioPanel from '@/components/StudyScenario/StudyScenarioPanel.vue'
+import StudySessionSurveyOverlay from '@/components/StudySurvey/StudySessionSurveyOverlay.vue'
 import TabBar from '@/components/TabBar.vue'
 import Tip from '@/components/ui/Tip.vue'
 import Toolbar from '@/components/Toolbar/Toolbar.vue'
@@ -44,6 +45,7 @@ watch(
 )
 const params = useUrlSearchParams('history')
 const showChrome = !('no-chrome' in params)
+const surveyOpen = ref(false)
 
 const createdInitialTab = tabCount() === 0
 const firstTab = createdInitialTab ? createTab() : (activeTab.value ?? createTab())
@@ -175,7 +177,7 @@ onUnmounted(() => {
         <div
           class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5"
         >
-          <CollabPanel />
+          <CollabPanel @end-session="surveyOpen = true" />
         </div>
         <PropertiesPanel />
       </SplitterPanel>
@@ -236,4 +238,5 @@ onUnmounted(() => {
     </div>
   </div>
   <StudyScenarioPanel host="lencanvas" :condition="studyCondition" />
+  <StudySessionSurveyOverlay :open="surveyOpen" @close="surveyOpen = false" />
 </template>
