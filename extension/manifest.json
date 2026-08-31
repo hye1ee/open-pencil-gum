@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "User model manager",
+  "version": "0.1.0",
+  "description": "Bridges the Open Pencil web app with extension-local storage.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:1420/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
