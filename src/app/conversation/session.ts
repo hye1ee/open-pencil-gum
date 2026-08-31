@@ -41,8 +41,14 @@ import { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
 import { createChatMonitor } from '@/app/meta-agent/hosts/lenchat/monitor'
 import { AskUserSession, formatAskUserLifecycleEvent } from '@/app/study/ask-user'
 import type { AskUserQuestion } from '@/app/study/ask-user'
-import { createHandsOffChatSession } from '@/app/study/hands-off/chat-session'
-import type { HandsOffChatTextSelection } from '@/app/study/hands-off/chat-session'
+import {
+  logAskUserLifecycleMetric,
+  logFeedbackNoteCreatedMetric,
+  logFeedbackNoteOutcomeMetric,
+  logStudyMetricEvent
+} from '@/app/study/metrics/log'
+import { createOutputQualitySurveySession } from '@/app/study/output-survey/session'
+import type { OutputQualitySurveyAnswerValues } from '@/app/study/output-survey/submission'
 import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import {
@@ -77,7 +83,7 @@ export class ConversationStore {
     hold: () => this.gate.hold(),
     release: () => this.gate.resume()
   })
-  private readonly handsOffSession = createHandsOffChatSession()
+  private readonly outputQualitySurveySession = createOutputQualitySurveySession()
   private revisionFeedback: string | null = null
   private revisionRun = 0
   private revisionPending = false
@@ -102,11 +108,11 @@ export class ConversationStore {
   readonly reasoningChunks = shallowRef<ConversationReasoningChunk[]>([])
   readonly reasoningReviews = this.reasoningReviewSession.reviews
   readonly askUserQuestion = shallowRef<AskUserQuestion | null>(null)
-  readonly handsOffPhase = this.handsOffSession.phase
-  readonly handsOffReasoningBlocks = this.handsOffSession.reasoningBlocks
-  readonly handsOffAnnotations = this.handsOffSession.annotations
-  readonly handsOffFinalAnswerText = this.handsOffSession.finalAnswerText
-  readonly handsOffAnnotationPending = computed(() => this.handsOffSession.isAnnotationPending())
+  readonly outputSurveyPending = computed(
+    () => this.outputQualitySurveySession.pendingRequest.value !== null
+  )
+  readonly outputSurveySubmitting = this.outputQualitySurveySession.submitting
+  readonly outputSurveyErrorKorean = this.outputQualitySurveySession.submitErrorKorean
   readonly lastError = ref('')
 
   readonly messages = computed(() => this.chatRef.value?.messages ?? [])
@@ -125,7 +131,10 @@ export class ConversationStore {
   constructor(options: ConversationStoreOptions) {
     this.options = options
     this.askUserSession = new AskUserSession({
-      onEvent: (event) => logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+      onEvent: (event) => {
+        logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+        logAskUserLifecycleMetric(event)
+      }
     })
     this.askUserSession.subscribe((snapshot) => {
       this.askUserQuestion.value = snapshot.pendingQuestion
@@ -148,8 +157,22 @@ export class ConversationStore {
 
   async send(text: string): Promise<void> {
     const clean = text.trim()
-    if (!clean || !this.configured.value || this.feedbackPending.value) return
+    // running: a send while a run streams would start a concurrent second run
+    // (there is no mid-run queue on LenChat), so it is refused outright.
+    // outputSurveyPending: a finished hands-off run must be rated first.
+    if (
+      !clean ||
+      !this.configured.value ||
+      this.feedbackPending.value ||
+      this.running.value ||
+      this.outputSurveyPending.value
+    ) {
+      return
+    }
     await this.preferenceUpdate.catch(() => undefined)
+    // Re-checked after the await: a second send can slip past the guards above
+    // while the first one waits out an in-flight user-model update.
+    if (this.running.value || this.outputSurveyPending.value) return
     this.lastError.value = ''
     this.revisionRun += 1
     this.revising.value = false
@@ -168,7 +191,6 @@ export class ConversationStore {
     this.resetMetaAgentMonitor()
     logRunStart(clean)
     const runtime = this.options.runtime()
-    if (isHandsOffDelegationCondition(runtime.condition)) this.handsOffSession.beginRun(clean)
     const enabledTools = this.options.enabledTools()
     const activeTools = [...enabledTools, ...(runtime.askUserEnabled ? ['ask_user'] : [])]
     logStudyRuntime(runtime.host, runtime.condition)
@@ -177,6 +199,7 @@ export class ConversationStore {
     )
     const chat = this.chatRef.value
     if (!chat) return
+    logStudyMetricEvent({ type: 'user-request', source: 'new-request', text: clean })
     const userMessage: UIMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -195,7 +218,7 @@ export class ConversationStore {
   async stop(): Promise<void> {
     this.gate.abandon()
     this.reasoningReviewSession.reset()
-    this.handsOffSession.reset()
+    this.outputQualitySurveySession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     this.feedbackNotes.value = []
@@ -216,21 +239,8 @@ export class ConversationStore {
     this.reasoningReviewSession.continueReview(reviewId)
   }
 
-  addHandsOffAnnotation(selection: HandsOffChatTextSelection): void {
-    this.handsOffSession.addAnnotation(selection)
-  }
-
-  finishHandsOffReasoningAnnotation(): void {
-    const lastAssistantMessage = [...this.messages.value]
-      .reverse()
-      .find((message) => message.role === 'assistant')
-    this.handsOffSession.finishReasoningAnnotation(
-      lastAssistantMessage ? messageText(lastAssistantMessage) : ''
-    )
-  }
-
-  finishHandsOffFinalAnswerAnnotation(): void {
-    this.handsOffSession.finishFinalAnswerAnnotation()
+  async submitOutputQualitySurvey(answerValues: OutputQualitySurveyAnswerValues): Promise<void> {
+    await this.outputQualitySurveySession.submit(answerValues)
   }
 
   reviseFromReasoning(reviewId: string, feedback: string, selectedReasoning: string | null): void {
@@ -256,6 +266,7 @@ export class ConversationStore {
     )
     this.recordFeedbackOutcome(continuedNote)
     logChatFeedbackLifecycle('continued', `note=${continuedNote.id} topic=${continuedNote.topic}`)
+    logFeedbackNoteOutcomeMetric(continuedNote.id, 0)
     this.queueLearn(continuedNote)
     void this.finishFeedbackReview()
   }
@@ -287,6 +298,7 @@ export class ConversationStore {
     )
     this.recordFeedbackOutcome(answeredNote)
     logChatFeedbackLifecycle('answered', `note=${answeredNote.id} topic=${answeredNote.topic}`)
+    logFeedbackNoteOutcomeMetric(answeredNote.id, cleanItems.length)
     this.queueLearn(answeredNote)
     void this.finishFeedbackReview()
   }
@@ -298,7 +310,6 @@ export class ConversationStore {
     this.createdAt = Date.now()
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
-    this.handsOffSession.reset()
     lenChatFeedbackHistory.reset()
     this.feedbackNoteHistory = []
     this.actions.value = []
@@ -318,7 +329,6 @@ export class ConversationStore {
     this.createdAt = record.createdAt
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
-    this.handsOffSession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     lenChatFeedbackHistory.reset()
@@ -364,7 +374,7 @@ export class ConversationStore {
     this.askUserSession.endRequest('chat-reconfigured')
     this.feedbackNotes.value = []
     this.reasoningReviewSession.reset()
-    this.handsOffSession.reset()
+    this.outputQualitySurveySession.reset()
     this.reasoningRevisionScheduled = false
     this.reasoningFeedbackOutcomes = []
     this.revisionPending = true
@@ -406,9 +416,7 @@ export class ConversationStore {
       : null
     this.resetMetaAgentMonitor = monitor ? () => monitor.reset() : () => undefined
     let observer = monitor?.observer ?? NOOP_REASONING_OBSERVER
-    if (isHandsOffDelegationCondition(runtime.condition)) {
-      observer = this.handsOffSession.observer
-    } else if (runtime.allowFreeIntervention) {
+    if (runtime.allowFreeIntervention) {
       observer = this.reasoningReviewSession.observer
     }
     const transport = createConversationTransport({
@@ -450,7 +458,7 @@ export class ConversationStore {
           )
           if (event.isAbort || event.isDisconnect || event.isError) return
           if (isHandsOffDelegationCondition(this.options.runtime().condition)) {
-            this.handsOffSession.completeAgentRun()
+            this.outputQualitySurveySession.open(lastUserRequest(event.messages))
           }
           void this.checkpoint(event.messages)
         }
@@ -547,6 +555,7 @@ export class ConversationStore {
     }
     this.feedbackNotes.value = [...this.feedbackNotes.value, conversationNote]
     if (note.representation.type !== 'text') void this.fillVisualRepresentation(note)
+    logFeedbackNoteCreatedMetric(conversationNote.id, conversationNote.topic)
     logChatFeedbackLifecycle(
       'note',
       `note=${conversationNote.id} topic=${conversationNote.topic} pending=${this.feedbackPending.value ? 'yes' : 'no'}`

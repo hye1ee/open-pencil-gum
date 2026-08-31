@@ -22,6 +22,7 @@ import { createChatSessionManager } from '@/app/ai/chat/transports'
 import { resolveModelSlot } from '@/app/ai/model-routing'
 import { exposeChatTransportOverride } from '@/app/browser-bridge'
 import { getActiveEditorStore } from '@/app/editor/active-store'
+import { lencanvasOutputQualitySurvey } from '@/app/study/output-survey/session'
 import { getStudyRuntime, studyRuntime } from '@/app/study/runtime'
 
 /** The right-hand panel's tabs. `user-model` only exists in dev builds. */
@@ -55,7 +56,17 @@ const chatSession = createChatSessionManager({
   getStudyRuntime
 })
 
-watch(studyRuntime, chatSession.markTransportDirty, { flush: 'sync' })
+watch(
+  studyRuntime,
+  () => {
+    chatSession.markTransportDirty()
+    // A pending output survey belongs to the condition whose run produced it;
+    // a condition or host switch discards it so it cannot be submitted (and
+    // stamped) under the new condition.
+    lencanvasOutputQualitySurvey.reset()
+  },
+  { flush: 'sync' }
+)
 
 registerAIChatEffects(chatSession.markTransportDirty)
 

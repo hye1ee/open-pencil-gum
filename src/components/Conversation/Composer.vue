@@ -13,6 +13,9 @@ const input = ref('')
 const textarea = ref<HTMLTextAreaElement>()
 
 function submit(): void {
+  // Enter mid-run would start a concurrent second run (LenChat has no mid-run
+  // queue); returning before the clear keeps the typed text for after the run.
+  if (status === 'submitted' || status === 'streaming') return
   const text = input.value.trim()
   if (!text) return
   emit('submit', text)

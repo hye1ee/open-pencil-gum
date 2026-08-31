@@ -17,6 +17,10 @@ import type { FeedbackNote, FeedbackNoteHistoryItem } from '@/app/meta-agent/fee
 import type { FeedbackNoteRepresentationProvider } from '@/app/meta-agent/core/representation'
 import { runMetaAgent } from '@/app/meta-agent/core/runtime'
 import {
+  logFeedbackNoteCreatedMetric,
+  logFeedbackNoteOutcomeMetric
+} from '@/app/study/metrics/log'
+import {
   DESIGN_FEEDBACK_NOTE_SYSTEM,
   renderDesignFeedbackNotePrompt
 } from '@/app/meta-agent/domains/canvas/prompt'
@@ -180,6 +184,7 @@ export async function createFeedbackNotes(
       const index = feedbackNoteState.notes.push(note) - 1
       const storedNote = feedbackNoteState.notes[index]
       rememberNote(storedNote)
+      logFeedbackNoteCreatedMetric(storedNote.id, storedNote.topic)
       void fillRepresentation(storedNote, representationProvider)
       return [storedNote]
     })
@@ -245,6 +250,7 @@ export async function resolveFeedbackNote(id: string): Promise<void> {
   const feedbackItems = openPencilFeedbackHistory.forNote(id)
   recordFeedbackOutcome(note, feedbackItems)
   setHistoryStatus(id, feedbackItems.length > 0 ? 'answered' : 'continued')
+  logFeedbackNoteOutcomeMetric(id, feedbackItems.length)
   setHistoryOutcome(id, feedbackItems)
   const wasActive = feedbackNoteState.activeId === id
   feedbackNoteState.notes = feedbackNoteState.notes.filter((note) => note.id !== id)

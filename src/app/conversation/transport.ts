@@ -9,7 +9,6 @@ import { withChatModelTrace } from '@/app/meta-agent/hosts/lenchat/model-trace'
 import type { ChatReasoningObserver } from '@/app/meta-agent/hosts/lenchat/types'
 import { ASK_USER_AGENT_INSTRUCTIONS, createAskUserTool } from '@/app/study/ask-user'
 import type { AskUserSession } from '@/app/study/ask-user'
-import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import type { Proposition } from '@/app/user-model/pipeline'
 
@@ -56,9 +55,7 @@ export function createConversationTransport(
     awaitReasoningReviews: options.awaitReasoningReviews,
     reasoningMode: () => ({
       observe:
-        (runtime.metaAgentEnabled ||
-          runtime.allowFreeIntervention ||
-          isHandsOffDelegationCondition(runtime.condition)) &&
+        (runtime.metaAgentEnabled || runtime.allowFreeIntervention) &&
         !options.isSilentRevision(),
       reveal: runtime.showRawReasoning && !options.isSilentRevision()
     }),

@@ -50,10 +50,9 @@ import {
   recordStepUsage,
   resetRunSteps
 } from '@/app/ai/tools'
-import { targetNodeIds } from '@/app/ai/chat/tool-targets'
 import type { getActiveEditorStore } from '@/app/editor/active-store'
 import { noteAgentPlan } from '@/app/meta-agent/hosts/lencanvas/events'
-import { lencanvasHandsOffAnnotations } from '@/app/meta-agent/hosts/lencanvas/hands-off'
+import { lencanvasOutputQualitySurvey } from '@/app/study/output-survey/session'
 import { actionsSoFar } from '@/app/meta-agent/hosts/lencanvas/input'
 import {
   completeFeedbackReplay,
@@ -67,15 +66,12 @@ import {
   createAskUserTool,
   formatAskUserLifecycleEvent
 } from '@/app/study/ask-user'
+import { logAskUserLifecycleMetric } from '@/app/study/metrics/log'
 import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyRuntimeConfig } from '@/app/study/runtime'
 import { observeAskUserAnswers, observeMidRunFeedback } from '@/app/user-model/use'
 
 type EditorStore = ReturnType<typeof getActiveEditorStore>
-
-function isToolArgumentRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 // Mirrors the RENDER flag in packages/core/src/tools/registry-core.ts — keep in sync.
 const SYSTEM_PROMPT =
@@ -249,6 +245,8 @@ export function createToolLoopTransport({
   let plan: string | null = null
   let askUserRequestId = ''
   let askUserRequest = ''
+  // This run's submitted request, captured for the hands-off output survey.
+  let submittedRunRequest = ''
 
   const conditionInstructions = studyRuntime.askUserEnabled
     ? `${SYSTEM_PROMPT}\n\n${ASK_USER_AGENT_INSTRUCTIONS}\n\n${LENCANVAS_ASK_USER_INSTRUCTIONS}`
@@ -269,6 +267,7 @@ export function createToolLoopTransport({
       // First, so the log reset it performs can't wipe lines written below it.
       const sent = (options as { messages?: readonly ModelMessage[] }).messages ?? []
       const submittedRequest = takeRequest() || lastUserText(sent)
+      submittedRunRequest = submittedRequest
       if (studyRuntime.askUserEnabled) {
         askUserRequestId = crypto.randomUUID()
         askUserRequest = submittedRequest
@@ -426,17 +425,6 @@ export function createToolLoopTransport({
         logTurnAbandoned('aborted zero-usage step excluded from progress count')
         return
       }
-      if (isHandsOffDelegationCondition(studyRuntime.condition) && mutatingCalls.length > 0) {
-        // Hold before the next step's `step-boundary` gate so the participant
-        // can judge the executed step before the agent moves on.
-        lencanvasHandsOffAnnotations.beginStepActionAnnotation(
-          currentRunStepNumber(store),
-          mutatingCalls.map((call) => call.toolName),
-          mutatingCalls.flatMap((call) =>
-            isToolArgumentRecord(call.input) ? targetNodeIds(call.toolName, call.input) : []
-          )
-        )
-      }
       if (replayedStep !== null && mutatingCalls.length === 0) {
         recordAuxUsage(recorded, store)
         return
@@ -454,8 +442,9 @@ export function createToolLoopTransport({
         })
       }
       if (isHandsOffDelegationCondition(studyRuntime.condition) && finishReason === 'stop') {
-        // Collected after the run with no hold, so nothing is left paused.
-        lencanvasHandsOffAnnotations.beginFinalResponseAnnotation()
+        // Collected after the run with no hold, so nothing is left paused. A
+        // step-limit finish is not 'stop', so the Continue button stays usable.
+        lencanvasOutputQualitySurvey.open(submittedRunRequest)
       }
       // Also flushes the buffer, so the file is complete the moment a run ends.
       logRunEnd(`${finishReason}  ${steps.length} steps`)
@@ -483,7 +472,10 @@ export function createChatSessionManager({
   const askUserQuestion =
     shallowRef<ReturnType<AskUserSession['snapshot']>['pendingQuestion']>(null)
   const askUserSession = new AskUserSession({
-    onEvent: (event) => logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+    onEvent: (event) => {
+      logAskUserLifecycle(formatAskUserLifecycleEvent(event))
+      logAskUserLifecycleMetric(event)
+    }
   })
   askUserSession.subscribe((snapshot) => {
     askUserQuestion.value = snapshot.pendingQuestion

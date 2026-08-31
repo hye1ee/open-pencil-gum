@@ -2,6 +2,7 @@ import { readonly, shallowRef } from 'vue'
 import type { DeepReadonly, ShallowRef } from 'vue'
 
 import type { ReasoningObserver } from '@/app/meta-agent/core/reasoning-observer'
+import { logStudyMetricEvent } from '@/app/study/metrics/log'
 
 export type ReasoningReviewStatus = 'pending' | 'continued' | 'answered'
 
@@ -81,6 +82,12 @@ export function createReasoningReviewSession(
           createdAt: Date.now()
         }
       ]
+      logStudyMetricEvent({
+        type: 'reasoning-chunk-shown',
+        reviewId: `reasoning-${streamId}-${chunkIndex}`,
+        streamId,
+        chunkIndex
+      })
       // One hold covers the whole batch of reasoning that precedes the next
       // action/final boundary. Further chunks stay visible immediately while
       // that hold remains active; the last reviewed card releases it.
@@ -102,6 +109,7 @@ export function createReasoningReviewSession(
       reviews.value = reviews.value.map((candidate) =>
         candidate.id === id ? { ...candidate, status: 'continued' } : candidate
       )
+      logStudyMetricEvent({ type: 'reasoning-chunk-continued', reviewId: id })
       if (!hasPending()) options.release()
       return true
     },
@@ -114,6 +122,7 @@ export function createReasoningReviewSession(
       reviews.value = reviews.value.map((candidate) =>
         candidate.id === id ? answeredReview : candidate
       )
+      logStudyMetricEvent({ type: 'reasoning-chunk-answered', reviewId: id })
       if (!hasPending()) options.release()
       return {
         review: answeredReview,

@@ -17,7 +17,6 @@ import {
   currentFeedbackNoteGeneration,
   settleFeedbackNoteStep
 } from '@/app/meta-agent/hosts/lencanvas/feedback-note/use'
-import { lencanvasHandsOffAnnotations } from '@/app/meta-agent/hosts/lencanvas/hands-off'
 import { lencanvasReasoningReviews } from '@/app/meta-agent/hosts/lencanvas/user-initiated'
 
 interface OpenPencilReasoningContext {
@@ -33,7 +32,6 @@ interface OpenPencilReasoningContext {
 interface ReasoningObserverOptions {
   isEnabled(): boolean
   isUserInitiated(): boolean
-  isHandsOffDelegation(): boolean
   getStore(): EditorStore | null
   getRequest(): string
   getPlan(): string | null
@@ -47,7 +45,6 @@ function selectObserver(
   options: ReasoningObserverOptions,
   metaAgentObserver: ReasoningObserver
 ): ReasoningObserver {
-  if (options.isHandsOffDelegation()) return lencanvasHandsOffAnnotations.observer
   if (options.isUserInitiated()) return lencanvasReasoningReviews.observer
   if (options.isEnabled()) return metaAgentObserver
   return NOOP_REASONING_OBSERVER
@@ -57,7 +54,6 @@ export function resetFeedbackNoteStreams(): void {
   reasoningController?.reset()
   streamObservers.clear()
   lencanvasReasoningReviews.reset()
-  lencanvasHandsOffAnnotations.reset()
 }
 
 export function installReasoningObserver(options: ReasoningObserverOptions): void {

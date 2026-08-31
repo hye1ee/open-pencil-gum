@@ -1,3 +1,4 @@
+import { logStudyMetricEvent } from '@/app/study/metrics/log'
 import { getStudyRuntime } from '@/app/study/runtime'
 import type { StudyCondition, StudyHost } from '@/app/study/runtime'
 import { snapshotProposition } from '@/app/study/survey/types'
@@ -11,15 +12,23 @@ import { propositions } from '@/app/user-model/store'
 const BASELINE_ENDPOINT = '/__study-baseline'
 const SURVEY_ENDPOINT = '/__study-survey'
 
-export async function saveStudyBaseline(baseline: StudyBaselineFile): Promise<void> {
-  const response = await fetch(BASELINE_ENDPOINT, {
+export async function postStudyJson(
+  endpoint: string,
+  payload: unknown,
+  failureLabel: string
+): Promise<void> {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(baseline, null, 2)
+    body: JSON.stringify(payload, null, 2)
   })
   if (!response.ok) {
-    throw new Error(`Baseline save failed (${response.status}).`)
+    throw new Error(`${failureLabel} (${response.status}).`)
   }
+}
+
+export async function saveStudyBaseline(baseline: StudyBaselineFile): Promise<void> {
+  await postStudyJson(BASELINE_ENDPOINT, baseline, 'Baseline save failed')
 }
 
 /** The parsed file before validation; every field untrusted. */
@@ -66,14 +75,7 @@ export async function fetchStudyBaseline(
 }
 
 export async function submitStudySurvey(submission: StudySurveySubmission): Promise<void> {
-  const response = await fetch(SURVEY_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(submission, null, 2)
-  })
-  if (!response.ok) {
-    throw new Error(`Survey save failed (${response.status}).`)
-  }
+  await postStudyJson(SURVEY_ENDPOINT, submission, 'Survey save failed')
 }
 
 /** Snapshot the model that was just injected/seeded as this session's
@@ -90,4 +92,7 @@ export async function captureStudyBaselineNow(participantId: string): Promise<vo
     savedAt: new Date().toISOString(),
     propositions: propositions.value.map(snapshotProposition)
   })
+  // The baseline moment opens the metric window: the summary counts events at
+  // and after the LAST session-started marker.
+  logStudyMetricEvent({ type: 'session-started' })
 }

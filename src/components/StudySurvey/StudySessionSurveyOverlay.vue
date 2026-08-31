@@ -9,6 +9,7 @@ import {
   FEEDBACK_METHOD_RATING_KEY_PREFIX,
   WHOLE_MODEL_RATING_KEY_PREFIX
 } from '@/app/study/survey/classification'
+import { finalizeStudyMetricsSession } from '@/app/study/metrics/storage'
 import { FEEDBACK_METHOD_QUESTIONS, WHOLE_MODEL_QUESTIONS } from '@/app/study/survey/questions'
 import { loadStoredParticipantId } from '@/app/study/survey/participant-storage'
 import { fetchStudyBaseline, submitStudySurvey } from '@/app/study/survey/storage'
@@ -62,6 +63,10 @@ async function prepareSurvey(): Promise<void> {
     stage.value = 'error'
     return
   }
+
+  // Fire-and-forget: writes the session-ended marker and the aggregate metrics
+  // summary even when the survey below errors or is abandoned.
+  void finalizeStudyMetricsSession()
 
   try {
     await awaitUserModelSettled()

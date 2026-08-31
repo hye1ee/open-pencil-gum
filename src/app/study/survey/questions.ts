@@ -73,6 +73,35 @@ export const FEEDBACK_METHOD_QUESTIONS: FeedbackMethodQuestionDefinition[] = [
   }
 ]
 
+export type OutputQualityQuestionKey =
+  | 'request-fulfillment'
+  | 'overall-quality'
+  | 'preference-alignment'
+  | 'implicit-knowledge-alignment'
+
+export interface OutputQualityQuestionDefinition {
+  key: OutputQualityQuestionKey
+  questionKorean: string
+}
+
+/** Asked after every finished hands-off run, on the shared 7-point scale. */
+export const OUTPUT_QUALITY_QUESTIONS: OutputQualityQuestionDefinition[] = [
+  {
+    key: 'request-fulfillment',
+    questionKorean: '이 결과물은 내가 요청한 내용을 정확히 수행했다.'
+  },
+  { key: 'overall-quality', questionKorean: '이 결과물의 전반적인 품질이 높다.' },
+  {
+    key: 'preference-alignment',
+    questionKorean: '이 결과물은 나의 취향과 선호를 잘 반영하고 있다.'
+  },
+  {
+    key: 'implicit-knowledge-alignment',
+    questionKorean:
+      '이 결과물은 나의 암묵적인 지식(명시적으로 말하지 않은 기준이나 노하우)을 잘 반영하고 있다.'
+  }
+]
+
 export interface PropositionChangeLabelPresentation {
   displayName: string
   chipClasses: string
