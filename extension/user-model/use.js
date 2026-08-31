@@ -25,8 +25,10 @@
  */
 
 import { canBuildUserModel, modelCalls } from './calls.js'
+import { getStudyLanguage } from './language.js'
 import { createUserModel } from './pipeline.js'
 import { clearSaved, load, save } from './storage.js'
+import { appendTrace } from './trace.js'
 
 export { canBuildUserModel, clearSaved }
 
@@ -37,6 +39,10 @@ const CAPTURE_PERIOD_SECONDS = 5
 export const CALIBRATING_KEY = '__calibrating'
 
 let model = null
+/** The language the current `model` was created with. A service worker can
+ * outlive one session, so a later session with the other toggle must not
+ * reuse a model whose prompts are baked to the old language. */
+let modelLanguage = null
 let calibrating = false
 
 function setCalibrating(value) {
@@ -44,17 +50,35 @@ function setCalibrating(value) {
   chrome.storage.local.set({ [CALIBRATING_KEY]: value })
 }
 
-function ensureModel() {
-  if (model) return model
+function ensureModel(language) {
+  if (model && modelLanguage === language) return model
   model = createUserModel({
     deps: modelCalls(),
+    language,
     onChange: (propositions) => {
       void save(propositions)
     },
+    // The trace (see trace.js) records how propositions come to be, mainly so
+    // SIMILARITY_FLOOR can be judged against real Korean similarities.
+    onCandidates: (candidates) => {
+      void appendTrace({ type: 'propose', candidates })
+    },
+    onRetrieval: (retrieval) => {
+      void appendTrace({ type: 'retrieval', ...retrieval })
+    },
+    onRevision: (revision) => {
+      void appendTrace({ type: 'revision', ...revision })
+    },
+    onIdle: (pixelChange) => {
+      void appendTrace({ type: 'idle-skip', pixelChange })
+    },
     onError: (error) => {
       console.warn('[user-model] pipeline failed:', error)
+      void appendTrace({ type: 'error', message: error instanceof Error ? error.message : String(error) })
     }
   })
+  modelLanguage = language
+  void appendTrace({ type: 'model-created', language })
   void load().then((saved) => {
     if (saved.length > 0) model.load(saved)
   })
@@ -81,7 +105,10 @@ async function captureActiveTab() {
 
 async function captureTick() {
   const blob = await captureActiveTab()
-  if (blob) ensureModel().addFrame(blob)
+  // Re-read the language every tick: the service worker (and its module
+  // state) can be evicted between alarms, and this is what rebuilds the
+  // model correctly afterwards.
+  if (blob) ensureModel(await getStudyLanguage()).addFrame(blob)
 }
 
 export async function startCalibration() {
@@ -89,7 +116,7 @@ export async function startCalibration() {
   if (!(await canBuildUserModel())) {
     return { ok: false, error: 'Missing Google/OpenAI API key — set both in Settings' }
   }
-  ensureModel()
+  ensureModel(await getStudyLanguage())
   setCalibrating(true)
   chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: CAPTURE_PERIOD_SECONDS / 60 })
   // The alarm's first firing is a full period away; capture once now so

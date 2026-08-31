@@ -13,17 +13,50 @@ import type { StudyFileIdentity } from './study-files'
 
 /**
  * Dev-only persistence for the study: the user-model baseline captured at
- * injection time, the end-of-session survey submissions, and the per-run
- * output-quality surveys from the hands-off condition. Files live under
+ * injection time, the updated user model archived when a session ends, the
+ * end-of-session survey submissions, and the per-run output-quality surveys
+ * from the hands-off condition. Files live under
  * `captures/study/<participantId>/` so one participant's four condition runs
  * sit side by side.
  */
 const BASELINE_ENDPOINT = '/__study-baseline'
+const FINAL_USER_MODEL_ENDPOINT = '/__study-final-user-model'
 const SURVEY_ENDPOINT = '/__study-survey'
 const OUTPUT_SURVEY_ENDPOINT = '/__study-output-survey'
 
 export function studySurveyPlugin(root: string): Plugin {
   const fileTargets = createStudyFileTargets(root)
+
+  // POST-only sink writing the body verbatim as `<host>-<condition>-<suffix>.json`,
+  // overwritten on every write — same rule as the baseline: ending a session
+  // twice should leave the latest state, not a pile of near-duplicates.
+  function overwritingJsonPostHandler(suffix: string) {
+    return (req: Connect.IncomingMessage, res: ServerResponse) => {
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.end()
+        return
+      }
+      void collectBody(req)
+        .then((body) => {
+          const identity = JSON.parse(body) as StudyFileIdentity
+          const targets = fileTargets(identity)
+          if (!targets) {
+            res.statusCode = 400
+            res.end(STUDY_IDENTITY_ERROR_MESSAGE)
+            return
+          }
+          mkdirSync(targets.dir, { recursive: true })
+          writeFileSync(resolve(targets.dir, `${targets.baseName}-${suffix}.json`), body)
+          res.statusCode = 204
+          res.end()
+        })
+        .catch((e: unknown) => {
+          res.statusCode = 500
+          res.end(String(e))
+        })
+    }
+  }
 
   // POST-only sink writing the body verbatim as
   // `<host>-<condition>-<suffix>-<timestamp>.json`; one file per submission.
@@ -109,6 +142,10 @@ export function studySurveyPlugin(root: string): Plugin {
           })
       })
 
+      server.middlewares.use(
+        FINAL_USER_MODEL_ENDPOINT,
+        overwritingJsonPostHandler('final-user-model')
+      )
       server.middlewares.use(SURVEY_ENDPOINT, timestampedJsonPostHandler('survey'))
       server.middlewares.use(OUTPUT_SURVEY_ENDPOINT, timestampedJsonPostHandler('output-survey'))
     }

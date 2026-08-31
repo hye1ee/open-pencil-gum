@@ -3,28 +3,26 @@
  * Vite dev-server endpoint; there is no dev server here, so this persists to
  * `chrome.storage.local` under the `user_model` key instead, using the same
  * shape as the app's file (`{ updatedAt, propositions }`). Not scoped by
- * participant id — the id is only carried in the export filename (see
+ * user name — the name is only carried in the export filenames (see
  * popup.js), not in the stored structure, matching the app's file exactly.
  * There is no per-session audit JSONL either, for the same reason as the dev
  * server: nowhere to append it to.
  */
 
-const PID_KEY = '__pid'
-/** Matches the popup's frozen "P" + digits field until that's unlocked. */
-const DEFAULT_PID = 'P0'
+const USER_NAME_KEY = '__user_name'
 const USER_MODEL_KEY = 'user_model'
 
-export function getPid() {
+export function getUserName() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(PID_KEY, (items) => {
-      resolve(items[PID_KEY] || DEFAULT_PID)
+    chrome.storage.local.get(USER_NAME_KEY, (items) => {
+      resolve(items[USER_NAME_KEY] || '')
     })
   })
 }
 
-export function setPid(pid) {
+export function setUserName(name) {
   return new Promise((resolve) => {
-    chrome.storage.local.set({ [PID_KEY]: pid }, resolve)
+    chrome.storage.local.set({ [USER_NAME_KEY]: name }, resolve)
   })
 }
 

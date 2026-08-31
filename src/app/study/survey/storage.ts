@@ -10,6 +10,7 @@ import type {
 import { propositions } from '@/app/user-model/store'
 
 const BASELINE_ENDPOINT = '/__study-baseline'
+const FINAL_USER_MODEL_ENDPOINT = '/__study-final-user-model'
 const SURVEY_ENDPOINT = '/__study-survey'
 
 export async function postStudyJson(
@@ -95,4 +96,28 @@ export async function captureStudyBaselineNow(participantId: string): Promise<vo
   // The baseline moment opens the metric window: the summary counts events at
   // and after the LAST session-started marker.
   logStudyMetricEvent({ type: 'session-started' })
+}
+
+/**
+ * Archives the model as it stands when the session ends, full fidelity —
+ * `captures/user-model.json` alone would be overwritten the moment the next
+ * condition's base model is injected. The extra identity fields don't disturb
+ * re-injection: the study panel's drop zone reads only `propositions`.
+ */
+export async function saveStudyFinalUserModel(participantId: string): Promise<void> {
+  if (participantId === '') {
+    throw new Error('Enter a participant ID before archiving the final user model.')
+  }
+  const runtime = getStudyRuntime()
+  await postStudyJson(
+    FINAL_USER_MODEL_ENDPOINT,
+    {
+      participantId,
+      host: runtime.host,
+      condition: runtime.condition,
+      savedAt: new Date().toISOString(),
+      propositions: propositions.value
+    },
+    'Final user-model archive failed'
+  )
 }

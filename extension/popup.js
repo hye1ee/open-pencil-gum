@@ -4,14 +4,13 @@ import {
   setGoogleApiKey,
   setOpenaiApiKey
 } from './user-model/calls.js'
-import { getPid, setPid } from './user-model/storage.js'
-
-/** Flip to false to let the digit suffix be edited; everything else already
- * treats the id as ordinary input. */
-const PID_LOCKED = true
+import { getStudyLanguage, setStudyLanguage } from './user-model/language.js'
+import { getUserName, setUserName } from './user-model/storage.js'
+import { loadTrace } from './user-model/trace.js'
 
 const STATUS_KEY = '__status'
 const CALIBRATING_KEY = '__calibrating'
+const LANGUAGE_KEY = '__study_language'
 const STATUS_LABELS = {
   idle: 'idle',
   'received-data': 'received data',
@@ -27,15 +26,18 @@ const closeSettingsButton = document.getElementById('close-settings')
 const statusEl = document.getElementById('status')
 const dataLabelEl = document.getElementById('data-label')
 const dataEl = document.getElementById('data')
-const pidSuffixInput = document.getElementById('pid-suffix')
+const userNameInput = document.getElementById('user-name')
+const languageField = document.getElementById('language-field')
+const languageButtons = [...languageField.querySelectorAll('button')]
 const googleApiKeyInput = document.getElementById('google-api-key')
 const openaiApiKeyInput = document.getElementById('openai-api-key')
 const calibrationHint = document.getElementById('calibration-hint')
 const calibrationStateEl = document.getElementById('calibration-state')
-const startButton = document.getElementById('start-calibration')
-const stopButton = document.getElementById('stop-calibration')
+const startButton = document.getElementById('start-session')
+const endButton = document.getElementById('end-session')
 const exportButton = document.getElementById('export')
 const restartButton = document.getElementById('restart')
+const downloadTraceButton = document.getElementById('download-trace')
 
 let calibrating = false
 
@@ -67,25 +69,38 @@ function withoutEmbeddings(proposition) {
   return rest
 }
 
-function fullPid() {
-  return `P${pidSuffixInput.value.trim() || '0'}`
+function userName() {
+  return userNameInput.value.trim()
+}
+
+/** The name goes into download filenames; only path-hostile characters go. */
+function filenameSafeUserName() {
+  return userName().replaceAll(/[/\\:*?"<>|]/g, '-') || 'unnamed'
 }
 
 function updateDataLabel() {
-  dataLabelEl.textContent = `${fullPid()}'s user model`
+  dataLabelEl.textContent = userName() === '' ? 'User model' : `${userName()}'s user model`
 }
 
-/** All three fields have to be filled before calibration can start. Called on
- * every keystroke as well as on storage updates, since `render` alone would
- * only react after a field is committed. */
+/** All three fields have to be filled before a session can start (the language
+ * always has a value — English is the default). Called on every keystroke as
+ * well as on storage updates, since `render` alone would only react after a
+ * field is committed. */
 function updateButtons() {
   const ready =
-    pidSuffixInput.value.trim() !== '' &&
-    googleApiKeyInput.value.trim() !== '' &&
-    openaiApiKeyInput.value.trim() !== ''
+    userName() !== '' && googleApiKeyInput.value.trim() !== '' && openaiApiKeyInput.value.trim() !== ''
   calibrationHint.hidden = ready
   startButton.disabled = calibrating || !ready
-  stopButton.disabled = !calibrating
+  endButton.disabled = !calibrating
+  // Locked while a session runs: a language flip mid-session would mix two
+  // languages inside one model and break its embedding retrieval.
+  for (const button of languageButtons) button.disabled = calibrating
+}
+
+function renderLanguage(language) {
+  for (const button of languageButtons) {
+    button.dataset.selected = String(button.dataset.language === language)
+  }
 }
 
 function render(items) {
@@ -100,6 +115,7 @@ function render(items) {
     2
   )
 
+  renderLanguage(items[LANGUAGE_KEY] || 'english')
   calibrating = items[CALIBRATING_KEY] === true
   calibrationStateEl.textContent = calibrating ? 'running' : 'off'
   calibrationStateEl.dataset.calibrating = String(calibrating)
@@ -108,9 +124,8 @@ function render(items) {
 
 chrome.storage.local.get(null, render)
 
-void getPid().then((pid) => {
-  pidSuffixInput.value = pid.replace(/^P/, '')
-  pidSuffixInput.disabled = PID_LOCKED
+void getUserName().then((name) => {
+  userNameInput.value = name
   updateDataLabel()
   updateButtons()
 })
@@ -132,16 +147,22 @@ chrome.storage.onChanged.addListener((_changes, area) => {
   chrome.storage.local.get(null, render)
 })
 
-pidSuffixInput.addEventListener('input', () => {
-  // Digits only — the "P" prefix is fixed, this is just what follows it.
-  pidSuffixInput.value = pidSuffixInput.value.replace(/\D/g, '')
+userNameInput.addEventListener('input', () => {
   updateDataLabel()
   updateButtons()
 })
 
-pidSuffixInput.addEventListener('change', () => {
-  void setPid(fullPid())
+userNameInput.addEventListener('change', () => {
+  void setUserName(userName())
 })
+
+for (const button of languageButtons) {
+  button.addEventListener('click', () => {
+    if (calibrating) return
+    renderLanguage(button.dataset.language)
+    void setStudyLanguage(button.dataset.language)
+  })
+}
 
 googleApiKeyInput.addEventListener('input', updateButtons)
 googleApiKeyInput.addEventListener('change', () => {
@@ -153,6 +174,47 @@ openaiApiKeyInput.addEventListener('change', () => {
   void setOpenaiApiKey(openaiApiKeyInput.value.trim())
 })
 
+// Colon-free, so the filename is valid on every OS, not just the ones that
+// allow it in a name.
+function timestamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-')
+}
+
+function downloadJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+/** Full fidelity, embeddings included — unlike the in-popup preview, this is a
+ * real backup of what was captured. Flat like `captures/user-model.json`, plus
+ * a `language` field so the file says which study language produced it. */
+async function exportedUserModel(items) {
+  const language = await getStudyLanguage()
+  const model = userModel(items)
+  return { updatedAt: model.updatedAt, language, propositions: model.propositions }
+}
+
+async function exportData(items) {
+  downloadJson(await exportedUserModel(items), `usermodel-${filenameSafeUserName()}-${timestamp()}.json`)
+}
+
+exportButton.addEventListener('click', () => {
+  chrome.storage.local.get(null, (items) => {
+    void exportData(items)
+  })
+})
+
+downloadTraceButton.addEventListener('click', () => {
+  void loadTrace().then((entries) => {
+    downloadJson(entries, `trace-${filenameSafeUserName()}-${timestamp()}.json`)
+  })
+})
+
 startButton.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'START_CALIBRATION' }, (result) => {
     if (result && result.ok === false) {
@@ -161,33 +223,15 @@ startButton.addEventListener('click', () => {
   })
 })
 
-stopButton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'STOP_CALIBRATION' })
-})
-
-// Colon-free, so the filename is valid on every OS, not just the ones that
-// allow it in a name.
-function timestamp() {
-  return new Date().toISOString().replace(/[:.]/g, '-')
-}
-
-async function exportData(items) {
-  // Full fidelity here, embeddings included — unlike the in-popup preview,
-  // this is meant to be a real backup of what was captured. Flat, matching
-  // `captures/user-model.json` — not wrapped under a `user_model` key.
-  const pid = await getPid()
-  const blob = new Blob([JSON.stringify(userModel(items), null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `usermodel-${pid}-${timestamp()}.json`
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-exportButton.addEventListener('click', () => {
-  chrome.storage.local.get(null, (items) => {
-    void exportData(items)
+// Stop first, then download: the file should be the model as it stood when the
+// session ended, not race one last in-flight revision.
+endButton.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'STOP_CALIBRATION' }, () => {
+    chrome.storage.local.get(null, (items) => {
+      void exportedUserModel(items).then((file) => {
+        downloadJson(file, `${filenameSafeUserName()}-base-model.json`)
+      })
+    })
   })
 })
 

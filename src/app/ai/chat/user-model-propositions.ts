@@ -1,5 +1,6 @@
 import { isHandsOffDelegationCondition } from '@/app/study/runtime'
 import type { StudyCondition } from '@/app/study/runtime'
+import { cosine } from '@/app/user-model/pipeline'
 
 /**
  * The user model's propositions, written out for the agents that build rather
@@ -31,12 +32,11 @@ export function outOfTen(confidence: number): number {
 export const TASK_AGENT_PROPOSITION_LIMIT = 5
 
 /**
- * Which propositions the Task Agent is told, uniformly across conditions: the
- * top five by confidence. Hands-off is the exception and receives everything —
- * that session evaluates the model itself, so nothing may be withheld.
- * Selection is deliberately confidence-based rather than embedding-based, so it
- * is deterministic and language-independent. The store arrives sorted by
- * recency; sort a copy, never the shared array.
+ * The confidence fallback: top five by confidence. Hands-off receives
+ * everything — that session evaluates the model itself, so nothing may be
+ * withheld. Ties are common because confidence is quantized to ten levels;
+ * within a tie the input order survives (stable sort). Sort a copy, never the
+ * shared array.
  */
 export function selectTaskAgentPropositions<T extends { confidence: number }>(
   propositions: readonly T[],
@@ -46,6 +46,37 @@ export function selectTaskAgentPropositions<T extends { confidence: number }>(
   return [...propositions]
     .sort((first, second) => second.confidence - first.confidence)
     .slice(0, TASK_AGENT_PROPOSITION_LIMIT)
+}
+
+/**
+ * Which propositions the Task Agent is told, uniformly across the three
+ * feedback conditions: the top five by embedding similarity to the user's
+ * task request, so what goes in is what this task can actually use. No
+ * similarity floor — the count stays at five so prompt size is uniform across
+ * conditions, and the rendering header already frames weakly related items as
+ * observations to ignore. Hands-off is the exception and receives everything.
+ * A null request embedding (no key, or the call failed) falls back to the
+ * confidence selection above rather than blocking the run.
+ */
+export function selectTaskAgentPropositionsByRelevance<
+  T extends { confidence: number; embedding: number[] }
+>(
+  propositions: readonly T[],
+  condition: StudyCondition,
+  requestEmbedding: number[] | null
+): T[] {
+  if (isHandsOffDelegationCondition(condition)) return [...propositions]
+  if (!requestEmbedding || requestEmbedding.length === 0) {
+    return selectTaskAgentPropositions(propositions, condition)
+  }
+  return propositions
+    .map((proposition) => ({
+      proposition,
+      similarity: cosine(requestEmbedding, proposition.embedding)
+    }))
+    .sort((first, second) => second.similarity - first.similarity)
+    .slice(0, TASK_AGENT_PROPOSITION_LIMIT)
+    .map((scored) => scored.proposition)
 }
 
 const HEADER = `# What we have observed about this person

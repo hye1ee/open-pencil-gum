@@ -87,9 +87,10 @@ a new page.
 
 **Header icons:**
 
-- **Download** — exports the current data as `usermodel-<pid>-<timestamp>.json`.
-- **Restart** (red) — exports the current data, stops calibration if running,
-  then clears all data (the API keys, Participant ID, and calibration state
+- **Download** — exports the current data as
+  `usermodel-<username>-<timestamp>.json`.
+- **Restart** (red) — exports the current data, stops the session if running,
+  then clears all data (the API keys, user name, language, and session state
   are preserved) and resets status to `idle`.
 - **Settings (gear)** — opens the Settings view; the back arrow there returns
   to the main view.
@@ -99,30 +100,38 @@ a new page.
 - **status** — `idle`, `received data`, `received data request`, or
   `proceed data request`. Set by the background worker as it handles each
   `GET_DATA`/`SET_DATA` message from the site; there's no auto-return to
-  `idle`. Calibration doesn't touch this — it's a separate concern.
-- **`<pid>'s user model`** (label above the data box) — the `user_model`
+  `idle`. A running session doesn't touch this — it's a separate concern.
+- **`<username>'s user model`** (label above the data box) — the `user_model`
   value from `chrome.storage.local`, flat and unwrapped: `{ updatedAt,
   propositions }`, the same shape as `captures/user-model.json` in the main
-  app (never `{ "user_model": { ... } }`). The participant id is not part of
-  this structure — only the label above it and the export filename carry it.
+  app (never `{ "user_model": { ... } }`). The user name is not part of
+  this structure — only the label above it and the export filenames carry it.
   This is specifically the captured model, not a dump of everything in
   storage — arbitrary keys the site sets via `SEND_DATA` (see Protocol above)
   aren't shown here.
 - A "Go to settings and fill these in first." link, shown until both API keys
-  and the Participant ID are set — clicking it opens Settings directly.
-- **Start calibration / Stop calibration** — Start stays disabled until the
-  Participant ID and both API keys are filled in. See below for what
-  calibration does.
+  and the user name are set — clicking it opens Settings directly.
+- **Start session / End session** — Start stays disabled until the user name
+  and both API keys are filled in; it runs the calibration capture loop (see
+  below). End stops the loop and immediately downloads the captured model as
+  `<username>-base-model.json` — that file is what gets dropped into the main
+  app's Study panel before each condition.
 
 **Settings view:**
 
-- **Participant ID** — a fixed `P` prefix plus a digit suffix (`P0`, `P1`, …).
-  Currently frozen to `0` — the digit input is `disabled` in `popup.html` and
-  `PID_LOCKED` in `popup.js` is what's gating it; flip that to `false` to let
-  it be edited. Stored under `__pid`; shown in the "Current data" label above
-  and in the export filename, but not inside the stored `user_model` value
-  itself (see Calibration below).
-- **Google API key** / **OpenAI API key** — both required before calibration
+- **User name** — free text, stored under `__user_name`; shown in the label
+  above the data box and used in both download filenames, but not inside the
+  stored `user_model` value itself (see Calibration below). Use the same
+  participant id here as in the main app's Study panel.
+- **Language** — English/Korean segment, default English, stored under
+  `__study_language`. Decides which language propose/revise write the
+  propositions in (see `user-model/language.js` — unconditional, unlike the
+  app's "if the input is in Korean" sentence, because the input here is
+  screenshots). Locked while a session runs: one model must never mix
+  languages, or its embedding retrieval degrades. Keep it matched to the main
+  app's `VITE_STUDY_LANGUAGE` for the participant. Exports carry the value as
+  a top-level `language` field so a file says which setting produced it.
+- **Google API key** / **OpenAI API key** — both required before a session
   can start (see Calibration below for why there are two). Stored under
   `__google_api_key`/`__openai_api_key`, so excluded from "Current data" and
   preserved across a Restart.
@@ -181,8 +190,23 @@ platform doesn't offer what the app's versions rely on:
   pipeline) are carried over for fidelity but never called — there's no
   meta-agent here producing that feedback yet.
 
-Click **Start calibration**: it checks for both API keys, then captures once
-immediately and every 5 seconds after via a `chrome.alarms` alarm, feeding
-`pipeline.js` until you click **Stop calibration**. Calibration state
+Click **Start session**: it checks for both API keys, reads the study
+language, then captures once immediately and every 5 seconds after via a
+`chrome.alarms` alarm, feeding `pipeline.js` until you click **End session**
+(which also downloads `<username>-base-model.json`). Calibration state
 (`__calibrating`) is in `chrome.storage.local` so it's correct on reopening
-the popup even if calibration kept running while it was closed.
+the popup even if the session kept running while it was closed.
+
+## Pipeline trace
+
+`trace.js` records how the model comes to be, one entry per event: the
+candidates PROPOSE read off a batch, each candidate's retrieval scores
+against every existing proposition (raw cosine and the staleness-discounted
+score, with the floor and which ones were actually retrieved), what REVISE
+changed, idle-skipped batches, and pipeline errors. It exists to answer an
+empirical question: `SIMILARITY_FLOOR` (0.3, in `pipeline.js`) was chosen on
+English text, and whether Korean cosine similarities clear it has to be read
+off real runs. Download it from Settings ("Download pipeline trace",
+`trace-<username>-<timestamp>.json`). Stored under `pipeline_trace` — no
+`__` prefix on purpose, so a Restart wipes it along with the model. Capped
+at the most recent 2000 entries.

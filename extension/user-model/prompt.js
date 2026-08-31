@@ -3,12 +3,18 @@
  * user model knows about this product. Adapted from Shaikh et al.,
  * arXiv:2505.10831, §3.1 and §5.3.
  *
- * Prompt text is unchanged from the source. `FEEDBACK_SYSTEM`/`RATIONALE_SYSTEM`
- * and their prompt builders are carried over for fidelity but are not exercised
- * by this extension yet — see pipeline.js.
+ * The system prompts are functions of the study language where the app bakes
+ * `koreanOutputInstruction()` in at build time — this extension has no build
+ * step, so the language arrives as an argument instead (see language.js).
+ * `feedbackSystem`/`rationaleSystem` and their prompt builders are carried
+ * over for fidelity but are not exercised by this extension yet — see
+ * pipeline.js.
  */
 
-export const PROPOSE_SYSTEM = `TASK
+import { koreanOutputInstruction, rationaleLanguageSentence } from './language.js'
+
+export function proposeSystem(language) {
+  return `TASK
 
 Read a series of screenshots of someone working on a design canvas, and infer what they are doing.
 
@@ -52,9 +58,11 @@ Rules:
 - Return at most 3, and prefer fewer and more meaningful ones.
 - If the frames show no clear pattern — nothing changed, or only navigation — return [].
 
-Respond with ONLY a JSON array: [{"proposition": "...", "confidence": 7, "reasoning": "..."}]`
+Respond with ONLY a JSON array: [{"proposition": "...", "confidence": 7, "reasoning": "..."}]${koreanOutputInstruction(language)}`
+}
 
-export const REVISE_SYSTEM = `TASK
+export function reviseSystem(language) {
+  return `TASK
 
 Fold one new observation into a user model: a set of propositions about one person, built up from watching them work on a design canvas.
 
@@ -92,7 +100,8 @@ Rules:
 Respond with ONLY a JSON array: [{"id": "... or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]
 
 LOCKED PROPOSITIONS — this rule overrides every rule above.
-A proposition is LOCKED when it has been rewritten 3 or more times, or when less than 65% of its original meaning remains. You may never change the text of a LOCKED proposition, however well the new observation seems to fit it. It has already drifted; another rewrite makes it worse, not better — every rewrite that got it here looked reasonable on its own too. Put the new observation in a new proposition instead (id: null). You may still adjust a LOCKED proposition's confidence.`
+A proposition is LOCKED when it has been rewritten 3 or more times, or when less than 65% of its original meaning remains. You may never change the text of a LOCKED proposition, however well the new observation seems to fit it. It has already drifted; another rewrite makes it worse, not better — every rewrite that got it here looked reasonable on its own too. Put the new observation in a new proposition instead (id: null). You may still adjust a LOCKED proposition's confidence.${koreanOutputInstruction(language)}`
+}
 
 const outOfTen = (value) => (value * 9 + 1).toFixed(0)
 
@@ -127,7 +136,8 @@ Existing propositions closest to it:
 ${existing}`
 }
 
-export const FEEDBACK_SYSTEM = `TASK
+export function feedbackSystem(language) {
+  return `TASK
 
 Update a user model from one fully reviewed step of Interactive Feedback Notes. A user model is a set of propositions about one person. Each proposition says something reusable about their task-relevant perspective and carries a confidence.
 
@@ -303,7 +313,8 @@ Operation consistency rules:
 - contradiction may update an existing id and may separately create a reusable replacement.
 - Never return an invented non-null id.
 
-Respond with ONLY a JSON array: [{"relation": "same_claim_refinement", "id": "existing id or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]`
+Respond with ONLY a JSON array: [{"relation": "same_claim_refinement", "id": "existing id or null", "text": "...", "confidence": 8, "decay": 3, "reasoning": "..."}]${koreanOutputInstruction(language)}`
+}
 
 const WHAT_THE_NOTE_SAID = {
   conflict: 'the note said the agent was about to go AGAINST that proposition',
@@ -387,7 +398,8 @@ The notes shown during this build:
 ${batch.notes.map(renderNote).join('\n\n')}`
 }
 
-export const RATIONALE_SYSTEM = `TASK
+export function rationaleSystem(language) {
+  return `TASK
 
 From the feedback a person just gave, infer the rationale behind the propositions in a user model. A proposition says what this person prefers. Its rationale says what that preference does for them.
 
@@ -521,13 +533,14 @@ RETURN FORMAT
 
 Output only a JSON array. One entry per rationale you are writing or rewriting. Propositions you are not changing do not appear.
 
-Write the rationale and the grounds in English, even when the person answered in another language. The propositions are in English and the rationale is read next to them.
+${rationaleLanguageSentence(language)}
 
 [{ "id": "an id from the list in section 3",
    "rationale": "one sentence: what this preference does for the person",
    "purpose_evidence_quote": "an exact substring from the user's explicit feedback that anchors the inference; no causal phrase is required",
    "rationale_grounds": "one or two sentences: which note this rests on, and which propositions you read it against, named by their wording",
-   "rationale_from": ["ids of those propositions; empty if none"] }]`
+   "rationale_from": ["ids of those propositions; empty if none"] }]${koreanOutputInstruction(language)}`
+}
 
 function renderChange(change) {
   const head = change.wasNew

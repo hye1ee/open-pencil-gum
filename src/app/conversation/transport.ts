@@ -4,7 +4,7 @@ import type { ChatTransport, ModelMessage, UIMessage } from 'ai'
 
 import {
   renderUserModelPropositions,
-  selectTaskAgentPropositions
+  selectTaskAgentPropositionsByRelevance
 } from '@/app/ai/chat/user-model-propositions'
 import { CHAT_TASK_SYSTEM, conversationToolInstructions } from '@/app/conversation/prompt'
 import type { ConversationToolId } from '@/app/conversation/settings'
@@ -27,6 +27,7 @@ interface ConversationTransportOptions {
   isSilentRevision(): boolean
   gate: ChatTurnGate
   getPropositions(): readonly Proposition[]
+  getRequestEmbedding(): number[] | null
   takeRevisionFeedback(): string | null
   onActions(actions: string[]): void
 }
@@ -35,9 +36,10 @@ function taskInstructions(options: ConversationTransportOptions): string {
   const sections = [CHAT_TASK_SYSTEM, conversationToolInstructions(options.enabledTools)]
   if (options.runtime.askUserEnabled) sections.push(ASK_USER_AGENT_INSTRUCTIONS)
   if (options.runtime.taskAgentUsesUserModel) {
-    const selected = selectTaskAgentPropositions(
+    const selected = selectTaskAgentPropositionsByRelevance(
       options.getPropositions(),
-      options.runtime.condition
+      options.runtime.condition,
+      options.getRequestEmbedding()
     )
     const rendered = renderUserModelPropositions(selected, {
       askUserToolAvailable: options.runtime.askUserEnabled

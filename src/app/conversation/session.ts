@@ -57,6 +57,7 @@ import {
 } from '@/app/study/user-initiated/reasoning-review'
 import { renderReasoningFeedbackReport } from '@/app/study/user-initiated/report'
 import { canUpdateUserModelFromFeedback } from '@/app/user-model/calls'
+import { embedTaskRequest } from '@/app/user-model/request-embedding'
 import { propositions as sharedPropositions } from '@/app/user-model/store'
 import {
   clearUserModel as clearSharedUserModel,
@@ -90,6 +91,9 @@ export class ConversationStore {
   private reasoningRevisionScheduled = false
   private reasoningFeedbackOutcomes: ReasoningFeedbackOutcome[] = []
   private activeChatRequest: Promise<void> | null = null
+  /** The current request's embedding, set per send; null falls the Task Agent
+   * selection back to confidence order. */
+  private requestEmbedding: number[] | null = null
   private preferenceUpdate: Promise<void> = Promise.resolve()
   private resetMetaAgentMonitor: () => void = () => undefined
   private feedbackNoteHistory: FeedbackNoteHistoryItem[] = []
@@ -199,6 +203,14 @@ export class ConversationStore {
     )
     const chat = this.chatRef.value
     if (!chat) return
+    // The relevance selection ranks propositions against this request; awaited
+    // here so the very first streaming call already uses it. Hands-off injects
+    // everything, so the vector would be dead weight there. A failure inside
+    // resolves to null, which the selection treats as the confidence fallback.
+    this.requestEmbedding =
+      runtime.taskAgentUsesUserModel && !isHandsOffDelegationCondition(runtime.condition)
+        ? await embedTaskRequest(clean)
+        : null
     logStudyMetricEvent({ type: 'user-request', source: 'new-request', text: clean })
     const userMessage: UIMessage = {
       id: crypto.randomUUID(),
@@ -391,6 +403,7 @@ export class ConversationStore {
           getContext: () => ({
             messages: this.messages.value,
             request: lastUserRequest(this.messages.value),
+            requestEmbedding: this.requestEmbedding,
             propositions: this.propositions.value,
             completedActions: this.actions.value,
             previousNotes: this.feedbackNoteHistory
@@ -430,6 +443,7 @@ export class ConversationStore {
       isSilentRevision: () => this.revising.value,
       gate: this.gate,
       getPropositions: () => this.propositions.value,
+      getRequestEmbedding: () => this.requestEmbedding,
       takeRevisionFeedback: () => {
         const feedback = this.revisionFeedback
         this.revisionFeedback = null

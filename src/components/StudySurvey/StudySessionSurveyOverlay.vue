@@ -12,7 +12,11 @@ import {
 import { finalizeStudyMetricsSession } from '@/app/study/metrics/storage'
 import { FEEDBACK_METHOD_QUESTIONS, WHOLE_MODEL_QUESTIONS } from '@/app/study/survey/questions'
 import { loadStoredParticipantId } from '@/app/study/survey/participant-storage'
-import { fetchStudyBaseline, submitStudySurvey } from '@/app/study/survey/storage'
+import {
+  fetchStudyBaseline,
+  saveStudyFinalUserModel,
+  submitStudySurvey
+} from '@/app/study/survey/storage'
 import { snapshotProposition } from '@/app/study/survey/types'
 import type { ClassifiedProposition, StudyBaselineFile } from '@/app/study/survey/types'
 import { getStudyRuntime } from '@/app/study/runtime'
@@ -71,6 +75,15 @@ async function prepareSurvey(): Promise<void> {
   try {
     await awaitUserModelSettled()
     const runtime = getStudyRuntime()
+    // Fire-and-forget, like the metrics summary above: the archive exists so
+    // the updated model survives the next condition's base injection, and a
+    // failed write must not block the survey. Hands-off never updates the
+    // model, so there is nothing to keep there.
+    if (runtime.updateUserModel) {
+      saveStudyFinalUserModel(participantId.value).catch((error: unknown) => {
+        console.warn('[study] final user-model archive failed:', error)
+      })
+    }
     const loadedBaseline = await fetchStudyBaseline(
       participantId.value,
       runtime.host,

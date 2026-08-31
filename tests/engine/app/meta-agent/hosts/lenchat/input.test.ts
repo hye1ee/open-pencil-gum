@@ -22,7 +22,7 @@ const messages: UIMessage[] = [
   { id: 'assistant-tool', role: 'assistant', parts: [] }
 ]
 
-function proposition(id: string, confidence: number): Proposition {
+function proposition(id: string, confidence: number, embedding: number[] = []): Proposition {
   return {
     id,
     text: `Preference ${id}`,
@@ -35,7 +35,7 @@ function proposition(id: string, confidence: number): Proposition {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     observations: 1,
-    embedding: [],
+    embedding,
     originalText: `Preference ${id}`,
     originalEmbedding: [],
     revisions: 0
@@ -55,6 +55,7 @@ describe('LenChat Meta Agent input', () => {
     const input = buildLenChatFeedbackNoteInput({
       messages,
       request: 'Compare these approaches.',
+      requestEmbedding: null,
       reasoning: 'I will prioritize peer-reviewed evidence.',
       propositions: [proposition('shown', 0.8), proposition('also-shown', 0.2)],
       completedActions: ['google_search']
@@ -71,10 +72,11 @@ describe('LenChat Meta Agent input', () => {
     ])
   })
 
-  test('marks propositions beyond the top-five confidence selection as withheld', () => {
+  test('without a request embedding, falls back to the top-five confidence selection', () => {
     const input = buildLenChatFeedbackNoteInput({
       messages,
       request: 'Compare these approaches.',
+      requestEmbedding: null,
       reasoning: 'I will prioritize peer-reviewed evidence.',
       propositions: [
         proposition('first', 0.9),
@@ -97,10 +99,38 @@ describe('LenChat Meta Agent input', () => {
     ])
   })
 
+  test('with a request embedding, shownToAgent follows similarity rather than confidence', () => {
+    const input = buildLenChatFeedbackNoteInput({
+      messages,
+      request: 'Compare these approaches.',
+      requestEmbedding: [1, 0],
+      reasoning: 'I will prioritize peer-reviewed evidence.',
+      propositions: [
+        proposition('confident-but-far', 1, [0, 1]),
+        proposition('near-1', 0.2, [1, 0]),
+        proposition('near-2', 0.2, [0.9, 0.1]),
+        proposition('near-3', 0.2, [0.8, 0.2]),
+        proposition('near-4', 0.2, [0.7, 0.3]),
+        proposition('near-5', 0.2, [0.6, 0.4])
+      ],
+      completedActions: []
+    })
+
+    expect(input.propositions.map((item) => [item.id, item.shownToAgent])).toEqual([
+      ['confident-but-far', false],
+      ['near-1', true],
+      ['near-2', true],
+      ['near-3', true],
+      ['near-4', true],
+      ['near-5', true]
+    ])
+  })
+
   test('renders general Chat context with all representation choices and no canvas anchor', () => {
     const input = buildLenChatFeedbackNoteInput({
       messages,
       request: 'Compare these approaches.',
+      requestEmbedding: null,
       reasoning: 'I will prioritize peer-reviewed evidence.',
       propositions: [proposition('evidence', 0.8)],
       completedActions: ['google_search']

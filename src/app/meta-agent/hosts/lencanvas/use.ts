@@ -1,5 +1,5 @@
 import { logMetaAgentLifecycle } from '@/app/ai/chat/agent-log'
-import { selectTaskAgentPropositions } from '@/app/ai/chat/user-model-propositions'
+import { selectTaskAgentPropositionsByRelevance } from '@/app/ai/chat/user-model-propositions'
 import type { EditorStore } from '@/app/editor/active-store'
 import type { Proposition } from '@/app/meta-agent/core/types'
 import { propositionsForRun } from '@/app/meta-agent/hosts/lencanvas/context'
@@ -12,10 +12,11 @@ import {
   installReasoningObserver,
   resetFeedbackNoteStreams
 } from '@/app/meta-agent/hosts/lencanvas/reasoning-observer'
+import { embedTaskRequest } from '@/app/user-model/request-embedding'
 import { load as loadSavedUserModel } from '@/app/user-model/storage'
 import { propositions as currentUserModelPropositions } from '@/app/user-model/store'
 import { awaitUserModelSettled } from '@/app/user-model/use'
-import { getStudyRuntime } from '@/app/study/runtime'
+import { getStudyRuntime, isHandsOffDelegationCondition } from '@/app/study/runtime'
 
 let request = ''
 let runPropositions: Proposition[] = []
@@ -44,7 +45,14 @@ export async function startMetaAgentTurn(
   await awaitUserModelSettled()
   const inMemory = currentUserModelPropositions.value
   const userModel = inMemory.length > 0 ? inMemory : await loadSavedUserModel()
-  const selected = selectTaskAgentPropositions(userModel, getStudyRuntime().condition)
+  const condition = getStudyRuntime().condition
+  // Ranked against this turn's request; hands-off injects everything, so the
+  // vector would be dead weight there. Null (no key / failed call) falls the
+  // selection back to confidence order.
+  const requestEmbedding = isHandsOffDelegationCondition(condition)
+    ? null
+    : await embedTaskRequest(userText)
+  const selected = selectTaskAgentPropositionsByRelevance(userModel, condition, requestEmbedding)
   const selectedIds = new Set(selected.map((proposition) => proposition.id))
   runPropositions = propositionsForRun(userModel, selectedIds)
   const withheld = runPropositions.filter((proposition) => !proposition.shownToAgent).length

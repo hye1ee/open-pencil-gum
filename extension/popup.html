@@ -79,32 +79,33 @@
         border-radius: 6px;
         font-size: 12px;
       }
-      .pid-field {
+      .language-field {
         display: flex;
-        align-items: stretch;
         border: 1px solid #d8d8d8;
         border-radius: 6px;
         overflow: hidden;
       }
-      .pid-field .prefix {
-        padding: 6px 8px;
-        background: #f0f0f0;
-        color: #666;
-        font-weight: 600;
-        font-size: 12px;
-        border-right: 1px solid #d8d8d8;
-      }
-      .pid-field input {
+      .language-field button {
         flex: 1;
-        min-width: 0;
+        margin: 0;
+        padding: 6px 0;
         border: none;
         border-radius: 0;
-        padding: 6px 8px;
+        background: #fff;
         font-size: 12px;
+        color: #666;
       }
-      .pid-field input:disabled {
-        background: #fafafa;
-        color: #999;
+      .language-field button + button {
+        border-left: 1px solid #d8d8d8;
+      }
+      .language-field button[data-selected='true'] {
+        background: #dde8fd;
+        color: #2554c7;
+        font-weight: 600;
+      }
+      .language-field button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
       .note {
         margin: 6px 0 0;
@@ -205,9 +206,9 @@
 
       <button class="hint" id="calibration-hint">Go to settings and fill these in first.</button>
 
-      <div class="label">Calibration — <span class="state" id="calibration-state">off</span></div>
-      <button id="start-calibration">Start calibration</button>
-      <button id="stop-calibration">Stop calibration</button>
+      <div class="label">Session — <span class="state" id="calibration-state">off</span></div>
+      <button id="start-session">Start session</button>
+      <button id="end-session">End session</button>
     </div>
 
     <div id="settings-view" hidden>
@@ -222,11 +223,18 @@
         <div style="width: 28px"></div>
       </div>
 
-      <div class="label">Participant ID</div>
-      <div class="pid-field">
-        <span class="prefix">P</span>
-        <input type="text" id="pid-suffix" inputmode="numeric" autocomplete="off" />
+      <div class="label">User name</div>
+      <input type="text" id="user-name" placeholder="p01" autocomplete="off" />
+
+      <div class="label">Language</div>
+      <div class="language-field" id="language-field">
+        <button type="button" data-language="english" data-selected="true">English</button>
+        <button type="button" data-language="korean" data-selected="false">한국어</button>
       </div>
+      <p class="note">
+        Which language the propositions are written in. Locked while a session is running —
+        one model must never mix languages. Match the main app's VITE_STUDY_LANGUAGE.
+      </p>
 
       <div class="label">Google API key</div>
       <input type="password" id="google-api-key" placeholder="AIza..." autocomplete="off" />
@@ -236,6 +244,13 @@
       <p class="note">
         Google runs propose/revise (reading screenshots, updating the model); OpenAI is used
         for embeddings only — matching the main app's actual setup.
+      </p>
+
+      <button id="download-trace">Download pipeline trace</button>
+      <p class="note">
+        Every propose candidate, its retrieval scores against the existing model, and what
+        revise did — for checking how Korean similarities sit against the retrieval floor.
+        Cleared by Restart.
       </p>
     </div>
 

@@ -54,24 +54,40 @@ function selectPrompt(event: FocusEvent): void {
   if (event.currentTarget instanceof HTMLTextAreaElement) event.currentTarget.select()
 }
 
-const injectionJson = ref('')
+const modelFileInput = ref<HTMLInputElement | null>(null)
+const draggingOverModelFile = ref(false)
 const injecting = ref(false)
 const injectionResult = ref('')
 const injectionError = ref('')
 
-async function injectUserModel(): Promise<void> {
+async function injectUserModelFile(file: File): Promise<void> {
   injecting.value = true
   injectionResult.value = ''
   injectionError.value = ''
   try {
-    const count = await replaceUserModelFromJson(injectionJson.value)
+    const count = await replaceUserModelFromJson(await file.text())
     await captureStudyBaselineNow(participantId.value)
-    injectionResult.value = `Replaced the user model with ${count} propositions. Baseline saved.`
+    injectionResult.value = `${file.name}: replaced the user model with ${count} propositions. Baseline saved.`
   } catch (error) {
-    injectionError.value = error instanceof Error ? error.message : String(error)
+    injectionError.value = `${file.name}: ${error instanceof Error ? error.message : String(error)}`
   } finally {
     injecting.value = false
   }
+}
+
+function handleModelFileDrop(event: DragEvent): void {
+  draggingOverModelFile.value = false
+  if (injecting.value) return
+  const file = event.dataTransfer?.files[0]
+  if (file) void injectUserModelFile(file)
+}
+
+function handleModelFilePicked(event: Event): void {
+  if (!(event.target instanceof HTMLInputElement)) return
+  const file = event.target.files?.[0]
+  // Reset so picking the same file again still fires a change event.
+  event.target.value = ''
+  if (file) void injectUserModelFile(file)
 }
 </script>
 
@@ -149,28 +165,34 @@ async function injectUserModel(): Promise<void> {
       />
       <p v-if="seedError" class="mb-1 text-[11px] text-red-600">{{ seedError }}</p>
       <p class="mb-1 text-[10px] font-bold tracking-wider text-amber-700 uppercase">
-        Inject user model (JSON)
+        Replace user model (drop a JSON file)
       </p>
-      <textarea
-        v-model="injectionJson"
-        rows="3"
-        data-test-id="study-inject-user-model-json"
-        placeholder='{"propositions": [{"text": "…", "confidence": 0.8}]} or a bare array'
-        class="w-full resize-y rounded-lg border border-amber-200 bg-white px-2.5 py-2 text-xs leading-4 outline-none focus:border-amber-500"
+      <button
+        type="button"
+        data-test-id="study-user-model-drop-zone"
+        :disabled="injecting"
+        class="flex w-full cursor-pointer flex-col items-center gap-1 rounded-lg border-2 border-dashed bg-white px-2.5 py-3 text-xs text-amber-800 disabled:opacity-50"
+        :class="draggingOverModelFile ? 'border-amber-600 bg-amber-100' : 'border-amber-300'"
+        @click="modelFileInput?.click()"
+        @dragover.prevent="draggingOverModelFile = true"
+        @dragleave="draggingOverModelFile = false"
+        @drop.prevent="handleModelFileDrop"
+      >
+        <icon-lucide-file-json class="size-4" />
+        {{ injecting ? 'Replacing…' : 'Drop the exported user-model JSON here, or click to browse' }}
+      </button>
+      <input
+        ref="modelFileInput"
+        type="file"
+        accept=".json,application/json"
+        data-test-id="study-user-model-file-input"
+        class="hidden"
+        @change="handleModelFilePicked"
       />
-      <div class="mt-1.5 flex items-center gap-2">
-        <button
-          type="button"
-          data-test-id="study-inject-user-model"
-          :disabled="injecting || injectionJson.trim() === ''"
-          class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-          @click="injectUserModel"
-        >
-          {{ injecting ? 'Replacing…' : 'Replace user model' }}
-        </button>
-        <p v-if="injectionResult" class="text-[11px] text-emerald-700">{{ injectionResult }}</p>
-        <p v-if="injectionError" class="text-[11px] text-red-600">{{ injectionError }}</p>
-      </div>
+      <p v-if="injectionResult" class="mt-1.5 text-[11px] text-emerald-700">
+        {{ injectionResult }}
+      </p>
+      <p v-if="injectionError" class="mt-1.5 text-[11px] text-red-600">{{ injectionError }}</p>
     </div>
   </aside>
 </template>

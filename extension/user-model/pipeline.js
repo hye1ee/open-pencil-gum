@@ -12,12 +12,12 @@
  */
 
 import {
-  FEEDBACK_SYSTEM,
-  PROPOSE_SYSTEM,
-  RATIONALE_SYSTEM,
-  REVISE_SYSTEM,
+  feedbackSystem,
   feedbackUserPrompt,
+  proposeSystem,
+  rationaleSystem,
   rationaleUserPrompt,
+  reviseSystem,
   reviseUserPrompt
 } from './prompt.js'
 
@@ -213,23 +213,30 @@ export function ageInDecayUnits(isoTimestamp, now) {
   return Number.isNaN(at) ? 0 : Math.max(0, (now - at) / AGE_UNIT_MS)
 }
 
+/** Every proposition scored, best first, nothing dropped — the raw cosine and
+ * the staleness-discounted score both kept so a trace can show how far below
+ * (or above) the floor each pair landed. */
+function allPropositionScores(embedding, propositions, now) {
+  return propositions
+    .map((proposition) => {
+      const cosineSimilarity = cosine(embedding, proposition.embedding)
+      return {
+        proposition,
+        cosineSimilarity,
+        score:
+          cosineSimilarity *
+          Math.exp(-proposition.decay * DECAY_K * ageInDecayUnits(proposition.updatedAt, now))
+      }
+    })
+    .sort((a, b) => b.score - a.score)
+}
+
 /** Discounted by how stale each expects to be, so tomorrow's candidate is
  * compared against what persists rather than against yesterday's noise. */
 function nearestPropositionScores(embedding, propositions, now) {
-  return propositions
-    .map((proposition) => ({
-      proposition,
-      score:
-        cosine(embedding, proposition.embedding) *
-        Math.exp(-proposition.decay * DECAY_K * ageInDecayUnits(proposition.updatedAt, now))
-    }))
+  return allPropositionScores(embedding, propositions, now)
     .filter((scored) => scored.score >= SIMILARITY_FLOOR)
-    .sort((a, b) => b.score - a.score)
     .slice(0, MAX_NEIGHBOURS)
-}
-
-function nearestPropositions(embedding, propositions, now) {
-  return nearestPropositionScores(embedding, propositions, now).map((scored) => scored.proposition)
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -237,6 +244,9 @@ function nearestPropositions(embedding, propositions, now) {
 export function createUserModel(options) {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE
   const { deps } = options
+  /** Which language the model calls write in — fixed for the model's lifetime
+   * so one model never mixes languages (that breaks embedding retrieval). */
+  const language = options.language ?? 'english'
 
   let propositions = []
   let buffer = []
@@ -385,9 +395,24 @@ export function createUserModel(options) {
 
     // Sequential: each revision changes what the next one retrieves.
     for (const [i, candidate] of candidates.entries()) {
-      const neighbours = nearestPropositions(embeddings[i] ?? [], propositions, now)
+      const scored = allPropositionScores(embeddings[i] ?? [], propositions, now)
+      const neighbours = scored
+        .filter((entry) => entry.score >= SIMILARITY_FLOOR)
+        .slice(0, MAX_NEIGHBOURS)
+        .map((entry) => entry.proposition)
+      options.onRetrieval?.({
+        candidate: { text: candidate.text, confidence: candidate.confidence },
+        floor: SIMILARITY_FLOOR,
+        scored: scored.map((entry) => ({
+          id: entry.proposition.id,
+          text: entry.proposition.text,
+          cosineSimilarity: entry.cosineSimilarity,
+          score: entry.score,
+          retrieved: neighbours.includes(entry.proposition)
+        }))
+      })
       const raw = await deps.revise({
-        system: REVISE_SYSTEM,
+        system: reviseSystem(language),
         purpose: 'revise-from-frames',
         prompt: reviseUserPrompt(
           candidate,
@@ -406,7 +431,7 @@ export function createUserModel(options) {
       stage('proposing')
       const candidates = readCandidatePropositions(
         await deps.propose({
-          system: PROPOSE_SYSTEM,
+          system: proposeSystem(language),
           images: frames,
           instruction: PROPOSE_INSTRUCTION,
           context
@@ -471,7 +496,7 @@ export function createUserModel(options) {
       options.onFeedbackRetrieval?.({ notes: retrievalNotes, shownIds: [...shown.keys()] })
 
       const raw = await deps.revise({
-        system: FEEDBACK_SYSTEM,
+        system: feedbackSystem(language),
         purpose: 'revise-from-feedback',
         prompt: feedbackUserPrompt(
           batch,
@@ -492,7 +517,7 @@ export function createUserModel(options) {
       // written across the whole model, which the first call must not see.
       stage('reasoning')
       const rawRationales = await deps.revise({
-        system: RATIONALE_SYSTEM,
+        system: rationaleSystem(language),
         purpose: 'revise-from-feedback',
         prompt: rationaleUserPrompt(batch, changed.map(describeChange), propositions)
       })
