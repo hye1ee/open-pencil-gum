@@ -35,7 +35,7 @@ const CONDITION_CONFIGS: Record<StudyCondition, ConditionConfig> = {
     askUserEnabled: true,
     showRawReasoning: false,
     allowFreeIntervention: false,
-    taskAgentUsesUserModel: false,
+    taskAgentUsesUserModel: true,
     updateUserModel: true,
     feedbackExecution: 'tool-resume'
   },
@@ -44,7 +44,7 @@ const CONDITION_CONFIGS: Record<StudyCondition, ConditionConfig> = {
     askUserEnabled: false,
     showRawReasoning: false,
     allowFreeIntervention: true,
-    taskAgentUsesUserModel: false,
+    taskAgentUsesUserModel: true,
     updateUserModel: true,
     feedbackExecution: 'silent-retry'
   },

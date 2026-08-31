@@ -1,3 +1,6 @@
+import { isHandsOffDelegationCondition } from '@/app/study/runtime'
+import type { StudyCondition } from '@/app/study/runtime'
+
 /**
  * The user model's propositions, written out for the agents that build rather
  * than the one that judges.
@@ -25,26 +28,24 @@ export function outOfTen(confidence: number): number {
   return Math.round(confidence * 9 + 1)
 }
 
-/** Out of ten, so it is the number a person reads in the panel and the log. */
-const SHOWN_TO_AGENT_MIN = 5
+export const TASK_AGENT_PROPOSITION_LIMIT = 5
 
 /**
- * Whether the building agents are told this one.
- *
- * Handing over everything we believe made the agent follow all of it, which
- * sounds like the point and costs the only way we had of finding out whether any
- * of it was true. Nothing can confirm a belief the agent was told to hold: it
- * complies, nobody objects, and the confidence rises on the strength of our own
- * sentence. Below the line the agent decides for itself, and what it decides is
- * evidence — it either reaches for the thing we believe, or it does not and the
- * person gets a Feedback Note to disagree with.
- *
- * The cost is paid on those builds. A withheld belief that happens to be right
- * produces a worse result until the person says so, and saying so is the
- * strongest evidence this system takes. That trade is the whole design.
+ * Which propositions the Task Agent is told, uniformly across conditions: the
+ * top five by confidence. Hands-off is the exception and receives everything —
+ * that session evaluates the model itself, so nothing may be withheld.
+ * Selection is deliberately confidence-based rather than embedding-based, so it
+ * is deterministic and language-independent. The store arrives sorted by
+ * recency; sort a copy, never the shared array.
  */
-export function shownToAgent(confidence: number): boolean {
-  return outOfTen(confidence) >= SHOWN_TO_AGENT_MIN
+export function selectTaskAgentPropositions<T extends { confidence: number }>(
+  propositions: readonly T[],
+  condition: StudyCondition
+): T[] {
+  if (isHandsOffDelegationCondition(condition)) return [...propositions]
+  return [...propositions]
+    .sort((first, second) => second.confidence - first.confidence)
+    .slice(0, TASK_AGENT_PROPOSITION_LIMIT)
 }
 
 const HEADER = `# What we have observed about this person
@@ -73,21 +74,31 @@ What to do with it:
   you are following one, and do not ask them to confirm one. This is background
   you were handed, not a subject to raise.`
 
+const ASK_USER_TOOL_EXCEPTION = `- **The ask_user tool is the exception to the last rule.** Asking about the
+  current task's open decisions is part of this task — but even there, never ask
+  them to confirm an observation from this list.`
+
+export interface RenderUserModelPropositionsOptions {
+  askUserToolAvailable?: boolean
+}
+
 /**
- * `null` when there is nothing to say, so the caller can leave the block out
- * entirely. A heading followed by an empty list spends tokens telling the agent
- * that we know nothing, which it can assume.
+ * Renders an already-selected list (see selectTaskAgentPropositions — no
+ * filtering happens here). `null` when there is nothing to say, so the caller
+ * can leave the block out entirely. A heading followed by an empty list spends
+ * tokens telling the agent that we know nothing, which it can assume.
  */
 export function renderUserModelPropositions(
-  propositions: readonly UserModelProposition[]
+  propositions: readonly UserModelProposition[],
+  options: RenderUserModelPropositionsOptions = {}
 ): string | null {
-  const shown = propositions.filter((proposition) => shownToAgent(proposition.confidence))
-  if (shown.length === 0) return null
-  const lines = shown.map((proposition) => {
+  if (propositions.length === 0) return null
+  const header = options.askUserToolAvailable ? `${HEADER}\n${ASK_USER_TOOL_EXCEPTION}` : HEADER
+  const lines = propositions.map((proposition) => {
     const head = `- ${proposition.text} (${outOfTen(proposition.confidence)}/10)`
     // Only where there is one. A "why: —" under every line is a column of
     // dashes, and this list goes into a prompt that is cached and re-sent.
     return proposition.rationale === null ? head : `${head}\n    why: ${proposition.rationale}`
   })
-  return `${HEADER}\n\n${lines.join('\n')}`
+  return `${header}\n\n${lines.join('\n')}`
 }

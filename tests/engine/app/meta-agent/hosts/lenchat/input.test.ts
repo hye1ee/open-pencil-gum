@@ -56,15 +56,43 @@ describe('LenChat Meta Agent input', () => {
       messages,
       request: 'Compare these approaches.',
       reasoning: 'I will prioritize peer-reviewed evidence.',
-      propositions: [proposition('shown', 0.8), proposition('withheld', 0.2)],
+      propositions: [proposition('shown', 0.8), proposition('also-shown', 0.2)],
       completedActions: ['google_search']
     })
 
     expect(input.plan).toBeNull()
     expect(input.reasoning).toBe('I will prioritize peer-reviewed evidence.')
     expect(input.completedActions).toEqual(['google_search'])
+    // With five or fewer propositions the whole model fits the task-agent
+    // selection, so everything counts as shown.
     expect(input.propositions.map((item) => [item.id, item.shownToAgent])).toEqual([
       ['shown', true],
+      ['also-shown', true]
+    ])
+  })
+
+  test('marks propositions beyond the top-five confidence selection as withheld', () => {
+    const input = buildLenChatFeedbackNoteInput({
+      messages,
+      request: 'Compare these approaches.',
+      reasoning: 'I will prioritize peer-reviewed evidence.',
+      propositions: [
+        proposition('first', 0.9),
+        proposition('second', 0.8),
+        proposition('third', 0.7),
+        proposition('fourth', 0.6),
+        proposition('fifth', 0.5),
+        proposition('withheld', 0.2)
+      ],
+      completedActions: []
+    })
+
+    expect(input.propositions.map((item) => [item.id, item.shownToAgent])).toEqual([
+      ['first', true],
+      ['second', true],
+      ['third', true],
+      ['fourth', true],
+      ['fifth', true],
       ['withheld', false]
     ])
   })

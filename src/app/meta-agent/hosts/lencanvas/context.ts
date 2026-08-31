@@ -1,15 +1,18 @@
-import { shownToAgent } from '@/app/ai/chat/user-model-propositions'
 import type { Proposition } from '@/app/meta-agent/core/types'
 import type { SavedProposition } from '@/app/user-model/pipeline'
 
-/** `shownToAgent` comes from the same function the building side filters with,
- * so the two can never disagree about what the agent was told. */
-export function propositionsForRun(saved: readonly SavedProposition[]): Proposition[] {
+/** `shownToAgent` is derived from the id set the Task Agent was actually given
+ * (see selectTaskAgentPropositions), so the flag can never disagree with what
+ * the agent was told. */
+export function propositionsForRun(
+  saved: readonly SavedProposition[],
+  selectedIds: ReadonlySet<string>
+): Proposition[] {
   return saved.map((proposition) => ({
     id: proposition.id,
     text: proposition.text,
     confidence: proposition.confidence,
     rationale: proposition.rationale ?? null,
-    shownToAgent: shownToAgent(proposition.confidence)
+    shownToAgent: selectedIds.has(proposition.id)
   }))
 }

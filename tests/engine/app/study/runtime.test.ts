@@ -23,11 +23,11 @@ describe('study runtime', () => {
     expect(createStudyRuntimeConfig('lencanvas', 'userlens').host).toBe('lencanvas')
   })
 
-  test('keeps the two baseline conditions isolated from UserLens behavior', () => {
+  test('gives the baselines the task-agent user model without UserLens interventions', () => {
     const askUser = createStudyRuntimeConfig('lenchat', 'ask-user')
     expect(askUser.metaAgentEnabled).toBeFalse()
     expect(askUser.askUserEnabled).toBeTrue()
-    expect(askUser.taskAgentUsesUserModel).toBeFalse()
+    expect(askUser.taskAgentUsesUserModel).toBeTrue()
     expect(askUser.feedbackExecution).toBe('tool-resume')
 
     const userInitiated = createStudyRuntimeConfig('lencanvas', 'user-initiated')
@@ -35,6 +35,7 @@ describe('study runtime', () => {
     expect(userInitiated.askUserEnabled).toBeFalse()
     expect(userInitiated.showRawReasoning).toBeFalse()
     expect(userInitiated.allowFreeIntervention).toBeTrue()
+    expect(userInitiated.taskAgentUsesUserModel).toBeTrue()
   })
 
   test('runs hands-off delegation with the injected model and no interventions', () => {

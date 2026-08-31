@@ -2,6 +2,10 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { DirectChatTransport, stepCountIs, ToolLoopAgent } from 'ai'
 import type { ChatTransport, ModelMessage, UIMessage } from 'ai'
 
+import {
+  renderUserModelPropositions,
+  selectTaskAgentPropositions
+} from '@/app/ai/chat/user-model-propositions'
 import { CHAT_TASK_SYSTEM, conversationToolInstructions } from '@/app/conversation/prompt'
 import type { ConversationToolId } from '@/app/conversation/settings'
 import type { ChatTurnGate } from '@/app/meta-agent/hosts/lenchat/gate'
@@ -27,20 +31,18 @@ interface ConversationTransportOptions {
   onActions(actions: string[]): void
 }
 
-function preferenceInstructions(propositions: readonly Proposition[]): string {
-  if (propositions.length === 0) return ''
-  const lines = propositions
-    .filter((item) => item.confidence >= 0.35)
-    .map((item) => `- ${item.text}`)
-  if (lines.length === 0) return ''
-  return `\n\nCONVERSATIONAL USER MODEL\nUse these as soft preferences unless the current request says otherwise:\n${lines.join('\n')}`
-}
-
 function taskInstructions(options: ConversationTransportOptions): string {
   const sections = [CHAT_TASK_SYSTEM, conversationToolInstructions(options.enabledTools)]
   if (options.runtime.askUserEnabled) sections.push(ASK_USER_AGENT_INSTRUCTIONS)
   if (options.runtime.taskAgentUsesUserModel) {
-    sections.push(preferenceInstructions(options.getPropositions()))
+    const selected = selectTaskAgentPropositions(
+      options.getPropositions(),
+      options.runtime.condition
+    )
+    const rendered = renderUserModelPropositions(selected, {
+      askUserToolAvailable: options.runtime.askUserEnabled
+    })
+    if (rendered) sections.push(rendered)
   }
   return sections.filter(Boolean).join('\n\n')
 }

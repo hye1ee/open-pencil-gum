@@ -1,4 +1,5 @@
 import { logMetaAgentLifecycle } from '@/app/ai/chat/agent-log'
+import { selectTaskAgentPropositions } from '@/app/ai/chat/user-model-propositions'
 import type { EditorStore } from '@/app/editor/active-store'
 import type { Proposition } from '@/app/meta-agent/core/types'
 import { propositionsForRun } from '@/app/meta-agent/hosts/lencanvas/context'
@@ -35,21 +36,21 @@ export async function startMetaAgentTurn(
 
   resetFeedbackNotes()
   resetFeedbackNoteStreams()
-  if (!enabled) {
-    runPropositions = []
-    logMetaAgentLifecycle('disabled for the active study condition')
-    return
-  }
 
-  // A feedback retry may start while its user-model update is still running.
-  // Wait so the retried reasoning is compared against the corrected model.
+  // The Task Agent receives the model in every condition, so the load happens
+  // before the meta-agent gate. A feedback retry may start while its
+  // user-model update is still running; wait so the retried reasoning is
+  // compared against the corrected model.
   await awaitUserModelSettled()
-
   const inMemory = currentUserModelPropositions.value
   const userModel = inMemory.length > 0 ? inMemory : await loadSavedUserModel()
-  runPropositions = propositionsForRun(userModel)
+  const selected = selectTaskAgentPropositions(userModel, getStudyRuntime().condition)
+  const selectedIds = new Set(selected.map((proposition) => proposition.id))
+  runPropositions = propositionsForRun(userModel, selectedIds)
   const withheld = runPropositions.filter((proposition) => !proposition.shownToAgent).length
   logMetaAgentLifecycle(`loaded ${runPropositions.length} propositions, ${withheld} withheld`)
+
+  if (!enabled) logMetaAgentLifecycle('disabled for the active study condition')
 }
 
 // Registered here because the reasoning tap must not import model setup.

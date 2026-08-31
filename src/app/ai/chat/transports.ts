@@ -292,7 +292,10 @@ export function createToolLoopTransport({
       plan = null
       resumeTurn()
       await startMetaAgentTurn(store, submittedRequest, studyRuntime.metaAgentEnabled)
-      const userModelPropositions = renderUserModelPropositions(runUserModel())
+      const userModelPropositions = renderUserModelPropositions(
+        runUserModel().filter((proposition) => proposition.shownToAgent),
+        { askUserToolAvailable: studyRuntime.askUserEnabled }
+      )
       if (userModelPropositions) logUserModelPropositions(userModelPropositions)
       showAgentCursor(store)
       const instructions =
